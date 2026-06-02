@@ -1,0 +1,100 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# mypy / ruff / pytype caches
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Sensitive
+.env*
+secrets.json
+credentials.json
+*.key
+*.pem
+*.p12
+private_key*
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
+
+# setuptools_scm generated version file
+gridstate/_version.py
+
+# Local settings and Claude memory (not committed)
+.claude/
+
+# One-off debug scripts
+scripts/
+
+# Heavy test data. Only small samples are kept in the repo
+# (see tests/test_data/README.md); full measurement logs are external.
+tests/test_data/**/*.log
+!tests/test_data/**/*_sample.log
+
+# Local-only specs / extracted material
+.specs/
