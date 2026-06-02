@@ -1,0 +1,186 @@
+[build-system]
+requires = ["setuptools>=45", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gridstate"
+dynamic = ["version"]
+description = "Power-system State Estimation: pure-Python WLS/IPM on numpy/scipy, input via a versioned file contract (npz)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Evgeny Istomin", email = "gena@alpisto.eu"},
+]
+keywords = [
+    "state estimation",
+    "power system",
+    "WLS",
+    "IPM",
+    "electrical network",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+# No vendor dependencies: both runtime and tests are self-contained. The runtime
+# core works at the npz contract boundary (proven by tests/test_no_psc_runtime);
+# test fixtures are built via gridstate.working.Working.empty() from the contract.
+# Dependencies are numpy/scipy only.
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+numba = ["numba>=0.57"]
+
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "mypy>=1.0.0",
+    "ruff==0.15.12",  # pin: must match the version in .pre-commit-config.yaml
+    "pre-commit>=3.0.0",
+    "commitizen>=3.0.0",
+    "build>=0.10.0",
+    "twine>=4.0.0",
+]
+
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "hypothesis>=6.0.0",
+]
+
+build = [
+    "cython>=3.0",
+    "numpy>=1.24",
+    "setuptools>=45",
+    "setuptools_scm[toml]>=6.2",
+    "build>=0.10.0",
+    "wheel",
+]
+
+# [project.urls] — fill in once the GitHub repository exists:
+# [project.urls]
+# Homepage = "https://github.com/<user>/gridstate"
+# Repository = "https://github.com/<user>/gridstate.git"
+# Issues = "https://github.com/<user>/gridstate/issues"
+
+# PyInstaller hook: when shipped as compiled extensions the package has no .py
+# for static analysis to discover, so the hook is registered explicitly.
+[project.entry-points."pyinstaller40"]
+hook-dirs = "gridstate.__pyinstaller:get_hook_dirs"
+
+[tool.setuptools.packages.find]
+include = ["gridstate*"]
+exclude = ["tests*", "docs*"]
+
+# After build_cython.py --remove-py, only .so/.pyd plus __init__.py / _version.py
+# remain in gridstate/. Without explicit package-data, setuptools would ship only
+# the .py files. The patterns below include the compiled extensions across all
+# gridstate/ subpackages.
+[tool.setuptools.package-data]
+gridstate = ["py.typed", "*.so", "*.pyd", "**/*.so", "**/*.pyd"]
+
+[tool.setuptools_scm]
+write_to = "gridstate/_version.py"
+version_scheme = "release-branch-semver"
+local_scheme = "no-local-version"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "numba.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+    "gridstate/_version.py",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF",
+]
+ignore = [
+    "E501",    # long lines — handled by the formatter
+    "RUF001",  # ambiguous Cyrillic/Latin characters in strings
+    "RUF002",  # same, in docstrings
+    "RUF003",  # same, in comments
+    "N802",    # power-system math functions: _dSbus_dV, _dSbr_dV (pandapower convention)
+    "N803",    # uppercase math arguments (V, G, dVm, dVa)
+    "N806",    # matrices conventionally uppercase (H, G, R, Y)
+    "N815",    # power-system-style attributes (rank_H in IRMatrix)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["gridstate"]
+lines-after-imports = 2
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"gridstate/__pyinstaller/hook-*.py" = ["N999"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+]
+markers = [
+    "slow: slow tests",
+]
+
+[tool.coverage.run]
+source = ["gridstate"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+# version comes from setuptools_scm (latest git tag), not pyproject — it's dynamic.
+version_provider = "scm"
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+annotated_tag = true
