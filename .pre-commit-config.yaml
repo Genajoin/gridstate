@@ -1,0 +1,40 @@
+# Pre-commit hooks for gridstate.
+#
+# Install:
+#   .venv/bin/pip install pre-commit
+#   .venv/bin/pre-commit install
+#
+# The same hooks run in CI (.github/workflows/ci.yml -> pre-commit/action).
+# The ruff version here must match the pin in pyproject.toml ([dev]), otherwise
+# the local hook and CI may diverge on rules.
+
+exclude: '^(tests/test_data/|\.venv/|build/|dist/)'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=3000']
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: debug-statements
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.10.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
