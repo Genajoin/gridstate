@@ -14,6 +14,8 @@ unobservable → Gain matrix singular. Чтобы этого избежать, �
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from gridstate.z_vector import (
@@ -27,13 +29,17 @@ from gridstate.z_vector import (
 )
 
 
+if TYPE_CHECKING:
+    from gridstate.working import Working
+
+
 __all__ = ["add_pseudo_measurements"]
 
 
 def _add_pseudo_measurements_on_arrays(
-    nodes_arr,
-    branches_arr,
-    meas_arr,
+    nodes_arr: np.ndarray,
+    branches_arr: np.ndarray,
+    meas_arr: np.ndarray,
     node_load_props: dict[int, dict] | None,
     *,
     add_voltage_priors: bool = True,
@@ -369,7 +375,7 @@ def _add_pseudo_measurements_on_arrays(
 
 
 def add_pseudo_measurements(
-    model,
+    model: Working,
     *,
     add_voltage_priors: bool = True,
     add_zero_injections: bool = True,

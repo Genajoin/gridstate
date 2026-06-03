@@ -336,9 +336,9 @@ def build_ipm_setup(
     active_nids = nodes_arr["id"][active_mask].astype(np.int64)
     active_positions: list[int] = []
     for nid in active_nids.tolist():
-        pos = bus_id_to_pos.get(int(nid))
-        if pos is not None:
-            active_positions.append(pos)
+        active_pos = bus_id_to_pos.get(int(nid))
+        if active_pos is not None:
+            active_positions.append(active_pos)
     n_balance = len(active_positions)
 
     # ---- Prior-meas: z=0, σ² индивидуальные. Только для box-var с σ²>0 ----

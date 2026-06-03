@@ -15,9 +15,13 @@ stats — vendor-free) + тонкий адаптер (``to_numpy().copy()`` → 
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gridstate.units import BASE_MVA
+
+
+if TYPE_CHECKING:
+    from gridstate.working import Working
 
 
 # Некоторые входные форматы подменяют ветви-«короткозамыкатели» с R=X=0
@@ -26,7 +30,7 @@ from gridstate.units import BASE_MVA
 _BREAKER_X_SENTINEL_OHM = 1.0
 
 
-def apply_reactors_to_node_shunt(model, *, sign: int = 1) -> dict[str, int | float]:
+def apply_reactors_to_node_shunt(model: Working, *, sign: int = 1) -> dict[str, int | float]:
     """Сложить B/G активных реакторов в ``shunt_b/g`` их узлов.
 
     XML целевой системы хранит ШР (шунтирующие реакторы) в отдельной таблице
@@ -126,7 +130,7 @@ def _apply_reactors_on_arrays(
     return {"applied": applied, "sum_b_added_S": sum_b, "sum_g_added_S": sum_g}
 
 
-def normalize_breaker_reactance(model, *, eps_pu: float = 1e-3) -> dict[str, int | float]:
+def normalize_breaker_reactance(model: Working, *, eps_pu: float = 1e-3) -> dict[str, int | float]:
     """Привести X ветвей-«короткозамыкателей» к volt-aware значению ``X_pu=eps_pu``.
 
     XmlFormat подменяет ветви с ``R=X=0`` (секции, выключатели, блок-связи) на

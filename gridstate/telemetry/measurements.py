@@ -5,8 +5,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-def resolve_merged_measurement_conflicts(model) -> dict[str, int]:
+import numpy as np
+
+
+if TYPE_CHECKING:
+    from gridstate.working import Working
+
+
+def resolve_merged_measurement_conflicts(model: Working) -> dict[str, int]:
     """Слить дубликаты measurements на одном объекте.
 
     Контекст: исторически использовалось после
@@ -40,7 +48,7 @@ def resolve_merged_measurement_conflicts(model) -> dict[str, int]:
     return stats
 
 
-def _resolve_merged_on_arrays(meas_arr) -> dict[str, int]:
+def _resolve_merged_on_arrays(meas_arr: np.ndarray) -> dict[str, int]:
     """ЯДРО: слияние дубль-measurements над контрактным массивом.
 
     Группирует active NODE-меры (``object_type==0``, ``measurement_type∈{2,4,5}``)
@@ -112,7 +120,7 @@ def _resolve_merged_on_arrays(meas_arr) -> dict[str, int]:
     return stats
 
 
-def deactivate_orphan_measurements(model) -> dict[str, int]:
+def deactivate_orphan_measurements(model: Working) -> dict[str, int]:
     """Деактивировать measurements, чьи объекты `status=False` или отсутствуют.
 
     Когда ветвь/узел/генератор отключается (через ON_LINE-формулу,
@@ -142,7 +150,12 @@ def deactivate_orphan_measurements(model) -> dict[str, int]:
     return stats
 
 
-def _deactivate_orphan_on_arrays(meas_arr, nodes_arr, branches_arr, gens_arr) -> dict[str, int]:
+def _deactivate_orphan_on_arrays(
+    meas_arr: np.ndarray,
+    nodes_arr: np.ndarray,
+    branches_arr: np.ndarray,
+    gens_arr: np.ndarray,
+) -> dict[str, int]:
     """ЯДРО: деактивация measurements осиротевших объектов над контрактом.
 
     Строит множества active-id из ``branches_arr``/``nodes_arr``/``gens_arr``, для

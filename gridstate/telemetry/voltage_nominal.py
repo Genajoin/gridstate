@@ -5,8 +5,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-def apply_voltage_nominal_resolved(model, vn_by_id: dict[int, float]) -> dict[str, int]:
+
+if TYPE_CHECKING:
+    from gridstate.working import Working
+
+
+def apply_voltage_nominal_resolved(model: Working, vn_by_id: dict[int, float]) -> dict[str, int]:
     """Заполнить ``voltage_nominal=0`` узлов из готовой карты ``vn_by_id``.
 
     Контрактное применение: пишет ``voltage_nominal`` только там, где он 0

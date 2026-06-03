@@ -135,7 +135,7 @@ def aggregate_qualities(qualities: list[int]) -> int:
 
 
 def tm_code_histogram(
-    snapshot,
+    snapshot: dict[str, object],
     classifier: Callable[[str], int] = strict_classifier,
 ) -> dict[str, int]:
     """Подсчитать распределение классов в snapshot для данного classifier.

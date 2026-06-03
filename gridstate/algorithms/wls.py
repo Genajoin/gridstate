@@ -152,9 +152,7 @@ def _solve_in_trust_region(
         scale = tr_radius / max(step_lo, 1e-30)
         return d_lo * scale, tr_radius, lam_floor, True
 
-    if d_hi is None:
-        return np.zeros_like(rhs), 0.0, lam_hi, False
-
+    # Здесь loop вышел через break ⇒ d_hi гарантированно присвоен (не None).
     lam_lo = lam_floor
     for _ in range(20):
         lam_mid = float(np.sqrt(lam_lo * lam_hi))

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -34,6 +35,7 @@ from gridstate.units import BASE_MVA, NetworkPU
 
 
 if TYPE_CHECKING:
+    from gridstate.result import SEResult
     from gridstate.working import Working, _ArrayCollection
     from gridstate.z_vector import MeasurementIndex
 
@@ -541,14 +543,14 @@ def _max_voltage_ratio(model: Working) -> float:
 
 def refine_anti_overshoot(
     model: Working,
-    result,
-    resolve,
+    result: SEResult,
+    resolve: Callable[[], SEResult],
     *,
     ceiling: float = 1.15,
     inj_sigma: float = 2.0,
     max_iters: int = 5,
     mid_start: int = 760_000_000,
-):
+) -> tuple[SEResult, dict[str, int | float | bool]]:
     """Anti-overshoot пост-solve уточнение V со САМО-ВАЛИДАЦИЕЙ (revert).
 
     Слабонаблюдаемые radial-узлы (нет real-V-меры, рыхлый Q-pseudo) могут получить
