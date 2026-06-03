@@ -4,7 +4,7 @@
     - переопределённая 3-узловая сеть полностью наблюдаема;
     - ``n_meas < n_state`` → ``is_observable == False``;
     - узел без измерений → попадает в ``unobservable_buses``;
-    - пустой ``MeasurementCollection`` → отчёт об отсутствии измерений.
+    - пустая коллекция измерений → отчёт об отсутствии измерений.
 """
 
 from __future__ import annotations

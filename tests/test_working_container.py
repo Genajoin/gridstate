@@ -1,13 +1,12 @@
-"""Бит-в-бит эквивалентность ``gridstate.working.Working`` рабочему PSC-слою.
+"""Бит-в-бит эквивалентность ``gridstate.working.Working`` модели-источнику.
 
-Шаг 1 миграции Фазы 4: контейнер ``Working`` (numpy-backed + row-proxy) обязан
-воспроизводить ровно ту поверхность model-API, которую читает/пишет working-слой
-``pipeline.run``, и быть бит-в-бит совместимым с ``PowerSystemModel`` на ней.
+Контейнер ``Working`` (numpy-backed + row-proxy) обязан воспроизводить ровно ту
+поверхность model-API, которую читает/пишет working-слой ``pipeline.run``, и быть
+бит-в-бит совместимым с моделью-источником на ней.
 
-Основной субъект — небольшая модель, собранная программно (всегда доступна,
-быстро). Дополнительно — реальная ``.specs/<регион>/model.xml`` (если есть): на
-ней проверяем поле-в-поле равенство ``to_numpy()`` и атрибутов прокси для ВСЕХ
-строк (включая ``measurement.weight`` — единственную PSC-property-колонку).
+Субъект — небольшая модель, собранная программно: проверяем поле-в-поле
+равенство ``to_numpy()`` и атрибутов прокси для всех строк (включая
+``measurement.weight`` — единственную производную-колонку).
 """
 
 from __future__ import annotations
@@ -42,7 +41,7 @@ MEAS_READ_ATTRS = (
 # контракта. Пайплайн в object-итерации (z_vector/post_processing) читает только
 # numeric-атрибуты (не усекаются); бит-в-бит самой ``name``-колонки (репрезентация
 # массива, на которой работает пайплайн) проверяется в to_numpy-тестах.
-# Сравнивать proxy.name (репрезентация массива) с PSC-объектом.name (полная строка)
+# Сравнивать proxy.name (репрезентация массива) с объектом-источником.name (полная строка)
 # некорректно — это расхождение лишь ширины dtype, не контейнера.
 
 
@@ -51,11 +50,11 @@ MEAS_READ_ATTRS = (
 
 @pytest.fixture
 def small_model():
-    """Маленькая PSC-модель: 3 узла, 2 ветви, 2 генератора, 4 измерения.
+    """Маленькая модель-источник: 3 узла, 2 ветви, 2 генератора, 4 измерения.
 
     Покрывает все ветки proxy-типов: int (id/object_type), bool (status/
     is_pseudo), float (value/variance/voltage_magnitude), str (name), и
-    измерение БЕЗ явного weight (PSC посчитает property 1/variance).
+    измерение БЕЗ явного weight (weight посчитается как 1/variance).
     """
     m = Working.empty()
     m.nodes.add(
@@ -205,13 +204,13 @@ def small_model():
 
 
 def test_from_model_to_numpy_field_for_field(small_model):
-    """(1) ``to_numpy()`` каждой коллекции поле-в-поле == PSC."""
+    """(1) ``to_numpy()`` каждой коллекции поле-в-поле == источник."""
     w = Working.from_model(small_model)
     for name in ("nodes", "branches", "measurements", "generators"):
-        psc_arr = getattr(small_model, name).to_numpy()
+        src_arr = getattr(small_model, name).to_numpy()
         w_arr = getattr(w, name).to_numpy()
-        assert w_arr.dtype == psc_arr.dtype, name
-        assert np.array_equal(w_arr, psc_arr), f"{name} массивы не идентичны"
+        assert w_arr.dtype == src_arr.dtype, name
+        assert np.array_equal(w_arr, src_arr), f"{name} массивы не идентичны"
 
 
 def test_raw_tables_deepcopied(small_model):
@@ -224,47 +223,47 @@ def test_raw_tables_deepcopied(small_model):
     assert small_model.raw_tables["reactors"][0]["susceptance"] == 1.5
 
 
-def test_measurement_iteration_attrs_match_psc(small_model):
-    """(2) Итерация measurements: все читаемые атрибуты == PSC, тот же порядок."""
+def test_measurement_iteration_attrs_match_source(small_model):
+    """(2) Итерация measurements: все читаемые атрибуты == источник, тот же порядок."""
     w = Working.from_model(small_model)
-    psc_list = list(small_model.measurements)
+    src_list = list(small_model.measurements)
     w_list = list(w.measurements)
-    assert len(w_list) == len(psc_list)
-    for psc_m, w_m in zip(psc_list, w_list, strict=True):
+    assert len(w_list) == len(src_list)
+    for src_m, w_m in zip(src_list, w_list, strict=True):
         for attr in MEAS_READ_ATTRS:
-            psc_v = getattr(psc_m, attr)
+            src_v = getattr(src_m, attr)
             w_v = getattr(w_m, attr)
-            assert type(w_v) is type(psc_v), f"{attr}: тип {type(w_v)} != {type(psc_v)}"
-            if isinstance(psc_v, float):
-                assert w_v == pytest.approx(psc_v), f"{attr}: {w_v} != {psc_v}"
+            assert type(w_v) is type(src_v), f"{attr}: тип {type(w_v)} != {type(src_v)}"
+            if isinstance(src_v, float):
+                assert w_v == pytest.approx(src_v), f"{attr}: {w_v} != {src_v}"
             else:
-                assert w_v == psc_v, f"{attr}: {w_v} != {psc_v}"
+                assert w_v == src_v, f"{attr}: {w_v} != {src_v}"
 
 
 def test_measurement_weight_is_property_value(small_model):
-    """``weight`` (PSC property = 1/variance) материализован в колонку идентично."""
+    """``weight`` (= 1/variance) материализован в колонку идентично."""
     w = Working.from_model(small_model)
-    for psc_m, w_m in zip(list(small_model.measurements), list(w.measurements), strict=True):
-        assert w_m.weight == pytest.approx(psc_m.weight)
+    for src_m, w_m in zip(list(small_model.measurements), list(w.measurements), strict=True):
+        assert w_m.weight == pytest.approx(src_m.weight)
     # узел id=1000 variance=0.25 -> weight=4.0
     m1000 = w.measurements.get_by_id(1000)
     assert m1000.weight == pytest.approx(4.0)
 
 
 def test_node_get_by_id_and_update(small_model):
-    """(3) get_by_id().V == PSC; update точечно меняет только одну строку."""
+    """(3) get_by_id().V == источник; update точечно меняет только одну строку."""
     w = Working.from_model(small_model)
     for nid in (1, 2, 3):
-        psc_n = small_model.nodes.get_by_id(nid)
+        src_n = small_model.nodes.get_by_id(nid)
         w_n = w.nodes.get_by_id(nid)
-        assert w_n.voltage_magnitude == pytest.approx(psc_n.voltage_magnitude)
-        assert w_n.voltage_angle == pytest.approx(psc_n.voltage_angle)
-        assert w_n.status == psc_n.status
-        assert w_n.node_type == psc_n.node_type
+        assert w_n.voltage_magnitude == pytest.approx(src_n.voltage_magnitude)
+        assert w_n.voltage_angle == pytest.approx(src_n.voltage_angle)
+        assert w_n.status == src_n.status
+        assert w_n.node_type == src_n.node_type
     assert w.nodes.get_by_id(99999) is None
 
     before = w.nodes.to_numpy()
-    # PSC-стиль (позиционный dict)
+    # dict-стиль (позиционный dict)
     w.nodes.update(2, {"voltage_magnitude": 100.0})
     # kwargs-стиль
     w.nodes.update(2, voltage_angle=-0.2)
@@ -283,10 +282,10 @@ def test_node_get_by_id_and_update(small_model):
 
 
 def test_branch_get_by_id(small_model):
-    """get_by_id на ветвях: ключевые/working-колонки == PSC."""
+    """get_by_id на ветвях: ключевые/working-колонки == источник."""
     w = Working.from_model(small_model)
     for bid in (10, 11):
-        psc_b = small_model.branches.get_by_id(bid)
+        src_b = small_model.branches.get_by_id(bid)
         w_b = w.branches.get_by_id(bid)
         for attr in (
             "id",
@@ -299,13 +298,13 @@ def test_branch_get_by_id(small_model):
             "tap_ratio",
             "branch_type",
         ):
-            psc_v = getattr(psc_b, attr)
+            src_v = getattr(src_b, attr)
             w_v = getattr(w_b, attr)
-            assert type(w_v) is type(psc_v), f"{attr}"
-            if isinstance(psc_v, float):
-                assert w_v == pytest.approx(psc_v), attr
+            assert type(w_v) is type(src_v), f"{attr}"
+            if isinstance(src_v, float):
+                assert w_v == pytest.approx(src_v), attr
             else:
-                assert w_v == psc_v, attr
+                assert w_v == src_v, attr
 
 
 def test_add_measurement_appends_and_uniqueness(small_model):
@@ -343,8 +342,8 @@ def test_add_measurement_appends_and_uniqueness(small_model):
         )
 
 
-def test_add_matches_psc_semantics(small_model):
-    """add в Working и в PSC дают идентичный to_numpy()."""
+def test_add_matches_source_semantics(small_model):
+    """add в исходный и в производный Working дают идентичный to_numpy()."""
     w = Working.from_model(small_model)
     row = {
         "id": 2001,
@@ -382,16 +381,16 @@ def test_update_from_array_roundtrip(small_model):
         w.nodes.update_from_array(w.measurements.to_numpy())
 
 
-def test_iteration_order_matches_to_numpy_and_psc(small_model):
-    """(6) порядок итерации == порядок to_numpy == порядок PSC-list."""
+def test_iteration_order_matches_to_numpy_and_source(small_model):
+    """(6) порядок итерации == порядок to_numpy == порядок list(источник)."""
     w = Working.from_model(small_model)
     for name in ("nodes", "branches", "measurements", "generators"):
         coll = getattr(w, name)
-        psc_coll = getattr(small_model, name)
+        src_coll = getattr(small_model, name)
         iter_ids = [int(p.id) for p in coll]
         numpy_ids = [int(x) for x in coll.to_numpy()["id"]]
-        psc_ids = [int(o.id) for o in psc_coll]
-        assert iter_ids == numpy_ids == psc_ids, name
+        src_ids = [int(o.id) for o in src_coll]
+        assert iter_ids == numpy_ids == src_ids, name
         assert coll.ids == numpy_ids
         assert coll.get_ids() == numpy_ids
 
@@ -408,12 +407,12 @@ def test_len_and_getitem(small_model):
 
 
 def test_from_model_does_not_mutate_input(small_model):
-    """Working независим от Input: правки working не текут в PSC-модель."""
+    """Working независим от Input: правки working не текут в модель-источник."""
     w = Working.from_model(small_model)
-    psc_before = small_model.nodes.to_numpy()
+    src_before = small_model.nodes.to_numpy()
     w.nodes.update(1, {"voltage_magnitude": 222.0})
     w.nodes.get_by_id(2).status = False
-    assert np.array_equal(small_model.nodes.to_numpy(), psc_before)
+    assert np.array_equal(small_model.nodes.to_numpy(), src_before)
 
 
 def test_array_collection_direct_construction():

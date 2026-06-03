@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel
+    from gridstate.working import Working
 
 
 # Не-бинарные состояния связности ветви (выводимые, не хранимые).
@@ -55,7 +55,7 @@ TO_OPEN = "to_open"  # ветвь активна, конец (to) отключё
 _LINE = 0  # BranchType.LINE
 
 
-def classify_branch_connectivity(model: PowerSystemModel) -> dict[int, str]:
+def classify_branch_connectivity(model: Working) -> dict[int, str]:
     """Вернуть node-status-производный статус связности каждой ветви.
 
     ⚠️ НЕ путать с STA эталонной SE: ``FROM_OPEN``/``TO_OPEN`` здесь выводятся из статусов
@@ -121,7 +121,7 @@ def _driving_point_shunt(
 
 
 def fold_one_sided_branches(
-    model: PowerSystemModel,
+    model: Working,
     *,
     require_charging: bool = True,
     eps_shunt_s: float = 1e-9,

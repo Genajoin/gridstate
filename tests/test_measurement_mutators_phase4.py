@@ -1,10 +1,10 @@
-"""Ф4.1 (слайс 6): float-ядра measurement-мутаторов над контрактными массивами.
+"""float-ядра measurement-мутаторов над контрактными массивами.
 
 4 функции (`apply_voltage_range_filter`, `apply_voltage_meas_calibration_for_gen_nodes`,
 `resolve_merged_measurement_conflicts`, `deactivate_orphan_measurements`) расщеплены на
-тонкий адаптер (резолв PSC-енумов object/measurement-type → готовые int) + ЯДРО
+тонкий адаптер (резолв контрактных енумов object/measurement-type → готовые int) + ЯДРО
 `_*_on_arrays`, читающее/мутирующее только контрактные колонки `SE_INPUT.measurements`
-(+ nodes/branches/generators), БЕЗ PSC/XML. Здесь — корректность ядер на голых массивах;
+(+ nodes/branches/generators), БЕЗ внешних зависимостей и XML. Здесь — корректность ядер на голых массивах;
 бит-в-бит публичного API — canon transitively + end-to-end дифф OLD-vs-NEW (4 региональные модели).
 """
 

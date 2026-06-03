@@ -33,7 +33,7 @@ from gridstate.z_vector import KIND_VOLTAGE, OBJ_NODE
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel  # type: ignore[import-not-found]
+    from gridstate.working import Working
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ __all__ = ["chain_pseudo_voltage_through_tap_links"]
 
 
 def chain_pseudo_voltage_through_tap_links(
-    model: PowerSystemModel,
+    model: Working,
     *,
     max_iterations: int = 5,
     min_sigma_frac: float = 0.01,
@@ -65,7 +65,7 @@ def chain_pseudo_voltage_through_tap_links(
     мало.
 
     Args:
-        model: PowerSystemModel (in-place).
+        model: Working (in-place).
         max_iterations: максимальное число проходов (≥1). Цепочка из K
             trafo-ветвей разрешается за K проходов.
         min_sigma_frac: минимальная σ как доля от Vn целевого узла.

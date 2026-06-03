@@ -19,7 +19,7 @@ def _apply_rpn_on_arrays(
 ) -> dict[str, int | float]:
     """Применить разрешённые №отпаек к ``tap_ratio``/``phase_shift``/шунту (мутирует ``branches_arr``).
 
-    PSC-free float-ядро Ф4.1 (CLASS-2): читает ТОЛЬКО контракт — ``branch.{id,tap_ratio,
+    vendor-free float-ядро (CLASS-2): читает ТОЛЬКО контракт — ``branch.{id,tap_ratio,
     conductance*,susceptance*}`` + raw ``shema_ktr.{type_rpn,num_a,num_r,ktr_a,ktr_r,
     ktr_a_vc,ktr_r_vc}``; пишет ``branch.{tap_ratio,phase_shift,conductance*,susceptance*}``.
     Вся float-математика (ktr_lookup, main-vs-vc выбор по близости к xml_tap, hypot/atan2

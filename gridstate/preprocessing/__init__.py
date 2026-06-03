@@ -2,8 +2,7 @@
 
 Топологическая чистка (`disable_orphan_branches`, `disable_disconnected_components`,
 `disable_isolated_nodes`, `refine_slack_to_one`, `refine_node_types_from_generators`)
-перенесена в ``gridstate.topology`` (Фаза 3 target-architecture; раньше жила в
-``power_system.topology``). Используется напрямую::
+живёт в ``gridstate.topology``. Используется напрямую::
 
     from gridstate.topology import (
         disable_orphan_branches,

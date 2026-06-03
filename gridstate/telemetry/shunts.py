@@ -1,10 +1,10 @@
 """Шунты/реактансы: реакторы→node.shunt_b, нормализация X короткозамыкателей.
 
-Выделено из telemetry/topology.py (Ф4 раскол по концернам).
+Выделено из telemetry/topology.py (раскол по концернам).
 
-**Ф4.1 (слайс 2):** обе функции расщеплены на ``_*_on_arrays``-**ядро над
+**Декомпозиция:** обе функции расщеплены на ``_*_on_arrays``-**ядро над
 контрактными numpy-массивами** (мутирует переданные массивы in-place, возвращает
-stats — PSC-free) + тонкий адаптер (``to_numpy().copy()`` → ядро →
+stats — vendor-free) + тонкий адаптер (``to_numpy().copy()`` → ядро →
 ``update_from_array``). Массивные операции дословно прежние (тот же порядок
 обхода, те же float-вычисления) → бит-в-бит; обе функции **уже** писали через
 ``update_from_array`` (``normalize_breaker_reactance`` — первый шаг каждого
@@ -20,10 +20,9 @@ from typing import Any
 from gridstate.units import BASE_MVA
 
 
-# XmlFormat (power-system-core) подменяет ветви-«короткозамыкатели» с R=X=0
-# на R=0, X=`_X_MIN_OHM`=1.0 Ом (см. `power_system/formats/xml_format.py`).
-# Значение фиксировано в Омах → в p.u. зависит от класса напряжения узла.
-# Константа должна совпадать с `_X_MIN_OHM` в загрузчике.
+# Некоторые входные форматы подменяют ветви-«короткозамыкатели» с R=X=0
+# на R=0, X=1.0 Ом. Значение фиксировано в Омах → в p.u. зависит от класса
+# напряжения узла. Константа должна совпадать с sentinel-X загрузчика.
 _BREAKER_X_SENTINEL_OHM = 1.0
 
 
@@ -63,7 +62,7 @@ def apply_reactors_to_node_shunt(model, *, sign: int = 1) -> dict[str, int | flo
     будущих combo (когда недостающие данные будут восстановлены легально).
 
     Args:
-        model: PowerSystemModel от XmlFormat.
+        model: Working от XmlFormat.
         sign: знак при сложении B/G. ``1`` (default) — историческое
             поведение; ``-1`` — физически корректный по Q-балансу (но
             регрессирует V/δ как production-default, см. выше).
@@ -148,7 +147,7 @@ def normalize_breaker_reactance(model, *, eps_pu: float = 1e-3) -> dict[str, int
     на части моделей — точный no-op (сентинелей нет). Нейтрально по dSta.
 
     Args:
-        model: PowerSystemModel от XmlFormat.
+        model: Working от XmlFormat.
         eps_pu: целевой ``X_pu`` (default ``1e-3``, рецепт ``rastr_format_quirks`` #4).
 
     Returns:

@@ -20,13 +20,13 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel
+    from gridstate.working import Working
 
 _SLACK_NODE_TYPE = 2
 
 
 def disable_dead_generator_nodes(
-    model: PowerSystemModel,
+    model: Working,
     *,
     max_degree: int = 1,
     load_eps: float = 1e-6,

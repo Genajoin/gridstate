@@ -843,12 +843,13 @@ def _emit(on_event: Callable[[dict], None] | None, event: dict) -> None:
 
 
 def _build_working(model: Any) -> Any:
-    """Рабочий слой = gridstate-native ``Working``-контейнер (заменил full-clone).
+    """Рабочий слой = gridstate-native ``Working``-контейнер.
 
-    Принимает ``PowerSystemModel`` (строит Working из его коллекций) ИЛИ уже
-    готовый :class:`~gridstate.working.Working` (pass-through) — последнее даёт
-    PSC-free вход (Фаза 5): вызывающий собирает ``Working.from_arrays(...)`` без
-    ``power-system-core`` и передаёт прямо в ``run``.
+    Принимает либо объект-модель с коллекциями (строит ``Working`` из его
+    ``nodes``/``branches``/``measurements``/``generators``), либо уже готовый
+    :class:`~gridstate.working.Working` (pass-through). Последнее — vendor-free
+    вход: вызывающий собирает ``Working.from_arrays(...)`` из numpy-массивов и
+    передаёт прямо в ``run``.
     """
     if isinstance(model, Working):
         return model

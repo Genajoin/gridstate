@@ -1,4 +1,4 @@
-"""Тесты конвертации PowerSystemModel ↔ NetworkPU (``gridstate.units``)."""
+"""Тесты конвертации модели сети ↔ NetworkPU (``gridstate.units``)."""
 
 from __future__ import annotations
 

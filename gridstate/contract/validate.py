@@ -1,14 +1,13 @@
-"""Валидация входа против контракта :mod:`gridstate.contract.tables` (Фаза 0).
+"""Валидация входа против контракта :mod:`gridstate.contract.tables`.
 
 Проверяет, что источник данных несёт **обязательные** колонки входного слоя
 (роли KEY/INPUT/WORKING) и что его версия контракта совместима со встроенной.
 Это превращает молчаливое предположение «в таблицах есть нужные поля» в явную,
 раннюю и понятную диагностику.
 
-**Статус (Фаза 0):** объявлено, но НЕ подключено в :func:`gridstate.pipeline.run`.
-Подключение на входе — Фаза 1 плана ``docs/se_target_architecture.md``. Здесь
-функция уже работает на ``PowerSystemModel`` (через ``.<table>.to_numpy().dtype``)
-и на простом ``Mapping[str, np.ndarray]``, чтобы будущий адаптер мог её звать.
+Функция работает и на объекте-модели ``Working`` (через
+``.<table>.to_numpy().dtype``), и на простом ``Mapping[str, np.ndarray]``, чтобы
+внешний адаптер мог её звать на готовых массивах.
 """
 
 from __future__ import annotations
@@ -60,7 +59,7 @@ class ContractValidationError(ValueError):
 def _available_columns(source: Any, table_name: str) -> set[str] | None:
     """Имена колонок таблицы ``table_name`` в источнике (или ``None``, если нет).
 
-    Поддерживает ``PowerSystemModel`` (атрибут-коллекция с ``.to_numpy()``) и
+    Поддерживает ``Working`` (атрибут-коллекция с ``.to_numpy()``) и
     ``Mapping[str, np.ndarray]`` (structured array по ключу).
     """
     if isinstance(source, Mapping):
@@ -110,7 +109,7 @@ def validate_input(
     """Проверить источник входных данных против входного контракта.
 
     Args:
-        source: ``PowerSystemModel`` или ``Mapping[str, np.ndarray]`` с таблицами
+        source: ``Working`` или ``Mapping[str, np.ndarray]`` с таблицами
             (плюс опц. ``"metadata"`` и сырые таблицы по ключам).
         schema: контракт (по умолчанию :data:`gridstate.contract.tables.SE_INPUT`).
         data_version: версия контракта данных. Если ``None`` — берётся из

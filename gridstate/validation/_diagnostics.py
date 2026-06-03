@@ -1,5 +1,5 @@
 """Внутренние утилиты валидации: пересборка ``r``, ``H``, ``R⁻¹`` из текущего
-состояния ``PowerSystemModel`` (после ``estimate()``).
+состояния ``Working`` (после ``estimate()``).
 
 Используется ``chi2_test`` и ``bad_data`` — оба нуждаются в одних и тех же
 сводных величинах, поэтому собрано в один файл.
@@ -20,9 +20,8 @@ from gridstate.z_vector import build_z_and_r
 
 
 if TYPE_CHECKING:
-    from power_system import MeasurementCollection, PowerSystemModel
-
     from gridstate.units import NetworkPU
+    from gridstate.working import Working, _ArrayCollection
     from gridstate.z_vector import MeasurementIndex
 
 
@@ -38,9 +37,7 @@ class Diagnostics(NamedTuple):
     network_pu: NetworkPU
 
 
-def state_from_model(
-    model: PowerSystemModel, network_pu: NetworkPU
-) -> tuple[np.ndarray, np.ndarray]:
+def state_from_model(model: Working, network_pu: NetworkPU) -> tuple[np.ndarray, np.ndarray]:
     """Прочитать ``(v_pu, delta_rad)`` длины ``n_bus`` из текущего состояния ``model``.
 
     Узлы без записи ``voltage_magnitude > 0`` инициализируются как ``V=1.0`` p.u.,
@@ -67,8 +64,8 @@ def state_from_model(
 
 
 def compute_diagnostics(
-    model: PowerSystemModel,
-    measurements: MeasurementCollection,
+    model: Working,
+    measurements: _ArrayCollection,
 ) -> Diagnostics:
     """Пересобрать ``r``, ``H``, ``R⁻¹`` для текущего состояния ``model``."""
     network_pu = model_to_pu(model)

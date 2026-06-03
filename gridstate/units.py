@@ -1,10 +1,10 @@
-"""Конвертация ``PowerSystemModel`` (именованные единицы) ↔ внутреннее
+"""Конвертация ``Working`` (именованные единицы) ↔ внутреннее
 p.u.-представление SE.
 
 Внутри SE всё считается в системе p.u. с ``base_mva = 100`` и базой
 напряжения, равной ``NodeCollection.voltage_nominal`` для соответствующей
 шины. В именованных единицах работают только входные данные и итоговые записи
-обратно в ``PowerSystemModel``.
+обратно в ``Working``.
 
 Соглашения:
 
@@ -17,7 +17,7 @@ p.u.-представление SE.
 
 Для алгоритмов SE используются *позиционные* индексы шин (``0..n_bus−1``);
 оригинальные ``id`` из ``NODE_DTYPE`` сохраняются в ``NetworkPU.bus_ids`` —
-по ним результаты пишутся обратно в коллекции ``PowerSystemModel``.
+по ним результаты пишутся обратно в коллекции ``Working``.
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ import numpy as np
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel
     from scipy.sparse import csr_matrix
+
+    from gridstate.working import Working
 
 
 BASE_MVA: float = 100.0
@@ -83,17 +84,16 @@ class NetworkPU:
 
 
 # ---------------------------------------------------------------------------
-# Внешний → внутренний (PowerSystemModel → NetworkPU)
+# Внешний → внутренний (Working → NetworkPU)
 # ---------------------------------------------------------------------------
 
 
-def model_to_pu(model: PowerSystemModel) -> NetworkPU:
-    """Собрать ``NetworkPU`` из ``PowerSystemModel`` (тонкая обёртка-адаптер).
+def model_to_pu(model: Working) -> NetworkPU:
+    """Собрать ``NetworkPU`` из ``Working`` (тонкая обёртка-адаптер).
 
     Извлекает контрактные таблицы узлов/ветвей (``to_numpy()``) и делегирует
     числовую конвертацию :func:`network_pu_from_tables`. Сам перевод в p.u.
-    работает только над массивами контракта — модель здесь лишь источник
-    таблиц (Фаза 2 ``docs/se_target_architecture.md``: конвертеры на контракт).
+    работает только над массивами контракта — модель здесь лишь источник таблиц.
     """
     return network_pu_from_tables(model.nodes.to_numpy(), model.branches.to_numpy())
 
@@ -104,8 +104,8 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
     **Массивное ядро** входного конвертера: вход — структурированные массивы
     входного слоя контракта (``SEInput`` nodes/branches; колонки —
     :data:`gridstate.contract.tables.NODES` / ``BRANCHES``), выход — внутреннее
-    p.u.-представление SE. Зависимости от ``PowerSystemModel`` нет (Фаза 5 —
-    снятие рантайм-зависимости PSC — обращается сюда напрямую).
+    p.u.-представление SE. Зависимости от ``Working`` нет — массивный путь
+    обращается сюда напрямую.
 
     Учитываются только активные узлы (``status=True``) и активные ветви.
     Импедансы и проводимости ветвей трактуются как заданные на стороне «от».
@@ -115,7 +115,7 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
             или ветвь ссылается на несуществующий узел.
     """
     if len(nodes_arr) == 0:
-        raise ValueError("PowerSystemModel пустой: нет узлов")
+        raise ValueError("Working пустой: нет узлов")
 
     # Активные узлы; индексация позиционная по полученному фильтру.
     active_nodes = nodes_arr[nodes_arr["status"]]
@@ -132,9 +132,7 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
 
     slack_positions = np.where(bus_type == 2)[0]
     if slack_positions.size == 0:
-        raise ValueError(
-            "В PowerSystemModel нет slack-узла (node_type=SLACK). SE требует ровно один slack."
-        )
+        raise ValueError("В Working нет slack-узла (node_type=SLACK). SE требует ровно один slack.")
     if slack_positions.size > 1:
         # Если несколько — берём с минимальным balance_priority (т.е. первичный).
         priorities = active_nodes["balance_priority"][slack_positions]
@@ -270,7 +268,7 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
 
 
 # ---------------------------------------------------------------------------
-# Внутренний → внешний (запись результатов SE в PowerSystemModel)
+# Внутренний → внешний (запись результатов SE в Working)
 # ---------------------------------------------------------------------------
 
 
@@ -283,7 +281,7 @@ def compute_node_results_pu(
 ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
     """Числовое ядро записи по узлам: pu-решение → именованные величины (массивы).
 
-    Чистая функция над массивами (без ``PowerSystemModel``): переводит модули
+    Чистая функция над массивами (без ``Working``): переводит модули
     напряжений в кВ и, при заданной ``ybus``, считает узловые инъекции
     ``S = V·conj(Ybus·V)·base_mva`` (МВт/МВАр).
 
@@ -312,7 +310,7 @@ def compute_branch_results_pu(
 ]:
     """Числовое ядро записи по ветвям: pu-решение + Yf/Yt → перетоки/токи/потери.
 
-    Чистая функция над массивами (без ``PowerSystemModel``). Все величины — в
+    Чистая функция над массивами (без ``Working``). Все величины — в
     именованных единицах (МВт/МВАр/А), в порядке ``network_pu.branch_ids``.
 
     Returns:
@@ -355,7 +353,7 @@ def compute_branch_results_pu(
 
 
 def write_results_to_model(
-    model: PowerSystemModel,
+    model: Working,
     v_pu: np.ndarray,
     delta_rad: np.ndarray,
     network_pu: NetworkPU,
@@ -363,10 +361,10 @@ def write_results_to_model(
     yt: csr_matrix | None = None,
     ybus: csr_matrix | None = None,
 ) -> None:
-    """Записать результат SE обратно в ``PowerSystemModel`` (именованные единицы).
+    """Записать результат SE обратно в ``Working`` (именованные единицы).
 
     Args:
-        model: ``PowerSystemModel``, обновляется in-place.
+        model: ``Working``, обновляется in-place.
         v_pu: (n_bus,) — модули напряжений в p.u. (соответствуют ``network_pu.bus_ids``).
         delta_rad: (n_bus,) — углы напряжений в радианах.
         network_pu: внутреннее представление, использованное для расчёта.

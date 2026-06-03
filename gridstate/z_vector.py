@@ -1,6 +1,6 @@
 """Сборка вектора измерений ``z``, ковариации ``R`` и индекса ``MeasurementIndex``.
 
-Читает ``MeasurementCollection`` (из ``power-system-core``) и превращает её во
+Читает коллекцию измерений (``Working.measurements``) и превращает её во
 входы, которые ожидает ``gridstate.algebra.base.BaseAlgebra``:
 
 - ``z`` — вектор значений измерений в p.u. (с учётом конвертации из именованных
@@ -13,8 +13,8 @@
 
 **Сторона ветви** определяется так:
 
-1. если в ``MEASUREMENT_DTYPE`` есть поле ``branch_side`` (расширение
-   ``power-system-core``, см. ТЗ §4.2) — берётся напрямую;
+1. если в ``MEASUREMENT_DTYPE`` есть поле ``branch_side`` (контрактное
+   поле) — берётся напрямую;
 2. иначе — обратный поиск: по ``id`` измерения проверяются ссылки
    ``ti_p_from / ti_q_from / ti_p_to / ti_q_to`` в строке ``BRANCH_DTYPE``
    соответствующей ветви.
@@ -33,16 +33,15 @@ from scipy.sparse import csr_matrix, diags
 
 
 if TYPE_CHECKING:
-    from power_system import MeasurementCollection, PowerSystemModel
-
     from gridstate.units import NetworkPU
+    from gridstate.working import Working, _ArrayCollection
 
 
 logger = logging.getLogger(__name__)
 
 
 # Кодировка типа измерения в ``MeasurementIndex.kind`` совпадает с
-# ``MeasurementType`` из ``power_system.utils.constants``.
+# ``gridstate.constants.MeasurementType``.
 KIND_POWER_P = 0
 KIND_POWER_Q = 1
 KIND_VOLTAGE = 2
@@ -108,8 +107,8 @@ class MeasurementIndex:
 
 
 def build_z_and_r(
-    model: PowerSystemModel,
-    measurements: MeasurementCollection,
+    model: Working,
+    measurements: _ArrayCollection,
     network_pu: NetworkPU,
 ) -> tuple[np.ndarray, csr_matrix, MeasurementIndex]:
     """Собрать ``(z, R, meas_index)`` из активных измерений.
@@ -237,7 +236,7 @@ def build_z_and_r(
         meas_ids.append(int(meas.id))
 
     if not z_values:
-        logger.warning("В MeasurementCollection не оказалось ни одного валидного измерения")
+        logger.warning("В _ArrayCollection не оказалось ни одного валидного измерения")
 
     z = np.array(z_values, dtype=np.float64)
     variance_arr = np.array(variances, dtype=np.float64)
@@ -293,8 +292,8 @@ def _convert_branch_meas(
 def _detect_branch_side(meas, branch_row, kind: int) -> int:
     """Определить сторону ветви для измерения.
 
-    Сначала ищется поле ``branch_side`` в ``MEASUREMENT_DTYPE`` (если
-    `power-system-core` уже расширён). Иначе — реверс-поиск по ссылкам
+    Сначала ищется поле ``branch_side`` в ``MEASUREMENT_DTYPE`` (если оно
+    присутствует). Иначе — реверс-поиск по ссылкам
     ``ti_p_from/ti_q_from/ti_p_to/ti_q_to`` в строке ветви.
     """
     # Прямое поле, если расширено.

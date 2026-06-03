@@ -28,7 +28,7 @@ import numpy as np
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel
+    from gridstate.working import Working
 
 
 # Поля выхода солвера по слоям модели — Output-контейнер ``OutputTables``
@@ -203,7 +203,7 @@ class OutputTables:
         return {name: row[name].item() for name in arr.dtype.names}
 
 
-def extract_output_tables(model: PowerSystemModel) -> OutputTables:
+def extract_output_tables(model: Working) -> OutputTables:
     """Извлечь :class:`OutputTables` из рабочей модели после записи результатов."""
     return OutputTables(
         nodes=_select_output_fields(model.nodes.to_numpy(), NODE_OUTPUT_FIELDS),
@@ -217,7 +217,7 @@ class SEResult:
     """Результат одного запуска ``estimate()``.
 
     Attributes:
-        model: ссылка на обновлённый ``PowerSystemModel`` (тот же объект, что
+        model: ссылка на обновлённый ``Working`` (тот же объект, что
             был передан в ``estimate``).
         success: сошёлся ли итерационный процесс.
         iterations: число выполненных итераций.
@@ -238,7 +238,7 @@ class SEResult:
             Пустой, если анализ не проводился.
     """
 
-    model: PowerSystemModel
+    model: Working
     success: bool = False
     iterations: int = 0
     objective_value: float = float("nan")

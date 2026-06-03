@@ -301,7 +301,7 @@ def test_empty_measurements_returns_zero_jacobian() -> None:
     m = _build_three_bus()
     pu = model_to_pu(m)
     ybus, yf, yt = build_ybus(pu)
-    # Пустой MeasurementCollection
+    # Пустая коллекция измерений
     from gridstate.working import Working
 
     empty = Working.empty().measurements

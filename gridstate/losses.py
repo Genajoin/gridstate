@@ -6,7 +6,7 @@
 
 Конвенции:
 
-* В ``PowerSystemModel`` (конвенция входного формата) ``branch.susceptance`` —
+* В ``Working`` (конвенция входного формата) ``branch.susceptance`` —
   это **полная** ёмкостная проводимость ветви B (См). В Π-схеме она
   делится пополам: B/2 в шунт «от» и B/2 в шунт «до». То же для
   ``branch.conductance`` (активные потери на корону).
@@ -101,7 +101,7 @@ from gridstate.ybus import build_ybus
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel
+    from gridstate.working import Working
 
 
 # Знак Q-шунта в отчёте о потерях. Наша storage-susceptance инвертирована
@@ -197,7 +197,7 @@ def _branch_is_trafo_pu(
 
 
 def compute_system_losses(
-    model: PowerSystemModel,
+    model: Working,
     v_pu: np.ndarray | None = None,
     delta_rad: np.ndarray | None = None,
 ) -> SystemLosses:
@@ -213,7 +213,7 @@ def compute_system_losses(
     результаты SE; см. ``write_results_to_model``).
 
     Args:
-        model: ``PowerSystemModel`` после ``estimate()``.
+        model: ``Working`` после ``estimate()``.
         v_pu: (n_bus_active,) — модули V в p.u. (опционально).
         delta_rad: (n_bus_active,) — углы в радианах (опционально).
 

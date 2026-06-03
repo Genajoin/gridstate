@@ -1,4 +1,4 @@
-"""gridstate — power-system State Estimation.
+"""gridstate — power system State Estimation.
 
 The public API is gathered here; see the README for an overview and the
 individual function docstrings for usage.

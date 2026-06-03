@@ -48,7 +48,7 @@ def apply_voltage_range_filter(
       если ``voltage_max == 0`` — fallback ``V_ном · upper_fallback_factor``.
 
     Args:
-        model: PowerSystemModel с применённой телеметрией.
+        model: Working с применённой телеметрией.
         upper_margin_pct: запас сверху над voltage_max (default 10 %).
             voltage_max — «допустимое в норм. режиме», для фильтра
             битых ТИ берём `voltage_max · 1.10`. На узле Vn=10.5,
@@ -84,7 +84,7 @@ def apply_voltage_range_filter(
         ``{"checked": N, "out_of_range": N,
         "downweighted_nominal_substitution": N, "by_vnom": {kv: N}}``
     """
-    # Блокатор-4 нет: енумы object/measurement-type резолвятся здесь (PSC-константы),
+    # Енумы object/measurement-type резолвятся здесь (gridstate.constants),
     # ядро принимает готовые int и читает только контрактные колонки.
     if action not in ("downweight", "deactivate"):
         raise ValueError(f"action must be 'downweight' or 'deactivate', got {action!r}")
@@ -123,12 +123,12 @@ def _voltage_range_filter_on_arrays(
     nominal_substitution_eps: float,
     questionable_sigma2_multiplier: float,
 ) -> dict:
-    """Ф4.1-ЯДРО (слайс 6): V-range filter над контрактными массивами.
+    """ЯДРО: V-range filter над контрактными массивами.
 
     Мутирует ``meas_arr`` in place (``status``/``variance``/``weight``/``quality``),
     читает ``nodes_arr`` (``voltage_nominal``/``voltage_critical``/``voltage_min``/
     ``voltage_max``). Енумы object/measurement-type приходят готовыми int из
-    адаптера. БЕЗ PSC/XML. Последовательный цикл в исходном порядке → бит-в-бит.
+    адаптера. БЕЗ внешних зависимостей и XML. Последовательный цикл в исходном порядке → бит-в-бит.
     """
     node_by_id: dict[int, int] = {int(r["id"]): i for i, r in enumerate(nodes_arr)}
 
@@ -249,7 +249,7 @@ def apply_voltage_meas_calibration_for_gen_nodes(
     хвостов.
 
     Args:
-        model: ``PowerSystemModel`` после aggregate_generators_to_node
+        model: ``Working`` после aggregate_generators_to_node
             и apply_voltage_range_filter.
         sigma2: целевая σ² для V-меры (p.u. или kV² — единицы как у
             существующих V-measurements в model). Default 0.1
@@ -283,11 +283,11 @@ def _voltage_meas_calibration_on_arrays(
     mt_v: int,
     sigma2: float,
 ) -> dict:
-    """Ф4.1-ЯДРО (слайс 6): tight σ² для V-мер на gen/slack-узлах над контрактом.
+    """ЯДРО: tight σ² для V-мер на gen/slack-узлах над контрактом.
 
     Цели — узлы с ``generation_p_max != 0`` или ``node_type == SLACK`` (енумы
     готовыми int из адаптера). Мутирует ``meas_arr`` (``variance``/``weight``)
-    in place, читает ``nodes_arr``. БЕЗ PSC/XML.
+    in place, читает ``nodes_arr``. БЕЗ внешних зависимостей и XML.
     """
     target_ids: set[int] = set()
     for n in nodes_arr:

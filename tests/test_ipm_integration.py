@@ -1,6 +1,6 @@
 """Интеграционные тесты IPM-режима через ``gridstate.api.estimate``.
 
-Проверяют связку IPM-solver'а с power-system-моделью
+Проверяют связку IPM-solver'а с моделью сети
 (preprocessing + wrapper + writeback).
 """
 

@@ -43,7 +43,7 @@ from gridstate.z_vector import (
 
 
 class _Model:
-    """PSC-free носитель контрактных таблиц (заменяет ``PowerSystemModel``).
+    """vendor-free носитель контрактных таблиц (заменяет полноценную модель).
 
     ``run``/``_build_working`` копируют Input через ``Working.from_model`` ровно
     для НЕ-``Working`` носителей (``Working`` пробрасывается as-is). Этот тонкий

@@ -1,9 +1,9 @@
-"""Ф7b (слайс 7b): float-ядро применения телеметрии над контрактными массивами.
+"""float-ядро применения телеметрии над контрактными массивами.
 
 ``apply_xml_formulas_from_snapshot`` расщеплена на тонкий адаптер (BL4 пред-резолв
 XML/snapshot через ``_eval_formula`` + ``tm_code_classifier`` → ``resolved``) и ЯДРО
 ``_apply_telemetry_on_arrays``, читающее/мутирующее только контрактные колонки
-``SE_INPUT.measurements`` (+ nodes/branches), БЕЗ PSC/XML/FORMULE. Здесь —
+``SE_INPUT.measurements`` (+ nodes/branches), БЕЗ внешних зависимостей, XML и FORMULE. Здесь —
 корректность ядра на голых массивах + синтетическом ``resolved``/``arg_keys``;
 бит-в-бит публичного API — canon transitively + end-to-end дифф OLD-vs-NEW (4 региональные модели).
 """

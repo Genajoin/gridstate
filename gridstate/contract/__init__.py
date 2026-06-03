@@ -1,9 +1,9 @@
 """Контракт данных оценки состояния (``SEInput`` / ``SEOutput``).
 
 Выделенный, самодостаточный модуль gridstate, владеющий **схемой** входных и
-выходных таблиц SE и **версией** контракта (см. ``docs/se_target_architecture.md``).
-Цель — заменить неявную зависимость от класса ``power_system.PowerSystemModel``
-на явную, проверяемую, версионируемую зависимость от *данных*.
+выходных таблиц SE и **версией** контракта. Контракт делает зависимость SE от
+*данных* явной, проверяемой и версионируемой — вместо неявной зависимости от
+конкретного класса модели сети.
 
 Состав:
 
@@ -12,10 +12,7 @@
   :class:`TableSchema`).
 * :mod:`gridstate.contract.version` — :data:`CONTRACT_VERSION` + SemVer-логика
   совместимости (:class:`ContractVersion`).
-* :mod:`gridstate.contract.validate` — :func:`validate_input` (валидация входа;
-  в ``run()`` пока НЕ подключена — Фаза 1).
-
-Фаза 0: только объявление. Поведение пайплайна не меняется.
+* :mod:`gridstate.contract.validate` — :func:`validate_input` (валидация входа).
 """
 
 from gridstate.contract.derived import DerivedInputs

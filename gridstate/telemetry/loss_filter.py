@@ -260,7 +260,7 @@ def analyze_branch_loss_consistency(
     """Применить F1-F5 фильтр к ветвям модели.
 
     Args:
-        model: PowerSystemModel с уже применённой телеметрией.
+        model: Working с уже применённой телеметрией.
         sens_err_mw: абсолютный порог расхождения, МВт (default эталонной SE 25).
         sens_err_pct: относительный порог в % от max(|F|) (default эталонной SE 150).
         use_estimated_voltage: если True, использовать `node.voltage_magnitude`
