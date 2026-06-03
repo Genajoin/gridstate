@@ -4,6 +4,8 @@ The public API is gathered here; see the README for an overview and the
 individual function docstrings for usage.
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from gridstate.api import estimate
 from gridstate.contract import (
     SEInput,
@@ -45,6 +47,16 @@ from gridstate.validation.observability import (
 )
 
 
+try:
+    # Version is derived from git tags by setuptools_scm and baked into the
+    # package metadata at build/install time; read it back from there at
+    # runtime. The fallback only triggers in a bare source tree that was never
+    # installed or built.
+    __version__ = version("gridstate")
+except PackageNotFoundError:  # pragma: no cover - un-installed source tree
+    __version__ = "0+unknown"
+
+
 __all__ = [
     "BadDataResult",
     "Chi2Result",
@@ -57,6 +69,7 @@ __all__ = [
     "SEInput",
     "SEOutput",
     "SEResult",
+    "__version__",
     "analyze_observability",
     "chi2_analysis",
     "compute_normalized_residuals_report",
