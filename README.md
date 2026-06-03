@@ -1,6 +1,6 @@
 # gridstate
 
-**Power-system State Estimation in pure Python.**
+Power-system State Estimation in pure Python.
 
 `gridstate` reconstructs the most likely operating state of an electrical
 network from SCADA telemetry and a topology model: voltage magnitudes and
@@ -8,7 +8,7 @@ angles at every bus, plus the derived quantities — branch power flows,
 currents and nodal injections.
 
 The estimator is implemented on top of `numpy` and `scipy` only — there are
-**no proprietary or vendor dependencies**. Input and output cross a single,
+no proprietary or vendor dependencies. Input and output cross a single,
 explicit, versioned data contract (a `.npz` file), so the package is fully
 self-contained and decoupled from any particular network-model format.
 
@@ -21,22 +21,22 @@ self-contained and decoupled from any particular network-model format.
 
 ## Status
 
-**Pre-alpha.** The core pipeline runs end to end:
+Pre-alpha. The core pipeline runs end to end:
 
 - p.u. conversion of the working model (`gridstate.units`);
 - bus-admittance assembly `Ybus` / `Yf` / `Yt` (`gridstate.ybus`);
 - measurement vector `z`, weights `R`, measurement index (`gridstate.z_vector`);
-- **WLS** Gauss–Newton solve — measurement function `h(E)`, Jacobian
+- WLS Gauss–Newton solve — measurement function `h(E)`, Jacobian
   `H = ∂h/∂E`, step `ΔE = (HᵀR⁻¹H)⁻¹HᵀR⁻¹r` (`gridstate.algebra`,
   `gridstate.algorithms.wls`), with SHGM-IRLS robust re-weighting;
-- **IPM** interior-point estimator as an alternative solver;
+- IPM interior-point estimator as an alternative solver;
 - result write-back (V, δ, branch P/Q, currents, injections) into the output
   contract;
 - validation: χ² test (`gridstate.validation.chi2_test`), bad-data removal by
   normalized residuals / `rn_max` (`gridstate.validation.bad_data`),
   observability analysis (`gridstate.validation.observability`).
 
-**Tests:** 445 passing on Python 3.10–3.12, dependency-free
+Tests: 445 passing on Python 3.10–3.12, dependency-free
 (`numpy`/`scipy` only).
 
 ## Installation
@@ -81,7 +81,7 @@ lower-level `estimate(model, algorithm="wls", ...)` directly.
 
 ## Data contract
 
-Input and output are governed by an explicit, **versioned** schema
+Input and output are governed by an explicit, versioned schema
 (`gridstate.contract`):
 
 - `SE_INPUT` / `SE_OUTPUT` — table/column declarations with roles
@@ -139,7 +139,7 @@ GitHub Actions; see [`.github/workflows/`](.github/workflows/).
 
 ## License
 
-`gridstate` is released under the **MIT License** — see [`LICENSE`](LICENSE).
+`gridstate` is released under the MIT License — see [`LICENSE`](LICENSE).
 
 The estimation core (WLS/IPM linear algebra, χ² test and bad-data detection)
 is adapted from [pandapower](https://github.com/e2nIEE/pandapower), which is
