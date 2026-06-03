@@ -179,8 +179,8 @@ def mirror_voltage_through_unit_tap_links(
         tap_tolerance=tap_tolerance,
         mid_start=mid_start,
     )
-    for row in new_rows:
-        model.measurements.add(row)
+    # Пакетная вставка за одну конкатенацию (per-row .add() = O(n²)).
+    model.measurements.add_many(new_rows)
 
     logger.info("mirror_voltage_through_unit_tap_links: добавлено %d pseudo V-meas", len(new_rows))
     return len(new_rows)

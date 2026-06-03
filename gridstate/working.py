@@ -268,6 +268,51 @@ class _ArrayCollection:
         self._id_index[new_id] = new_idx
         return new_id
 
+    def add_many(self, rows: list[dict]) -> list[int]:
+        """Пакетно добавить строки в КОНЕЦ за ОДНУ конкатенацию массива.
+
+        Семантика каждой строки идентична :meth:`add` (обязательный уникальный
+        ``id``, дефолты конструктора, ``weight`` = 1/variance, лишние ключи
+        игнорируются). Отличие — ``self._arr`` растёт один раз на весь пакет.
+
+        ``add`` делает ``np.append`` (копию всего массива) на КАЖДЫЙ вызов: при
+        вставке ``k`` строк в массив длины ``n`` это O(k·n) — узкое место
+        псевдо-измерений на крупных моделях (десятки секунд → сотни). ``add_many``
+        вставляет за O(n+k).
+        """
+        if not rows:
+            return []
+
+        names = self._arr.dtype.names or ()
+        block = np.zeros(len(rows), dtype=self._dtype)
+        new_ids: list[int] = []
+        seen: set[int] = set()
+        for i, row_data in enumerate(rows):
+            if "id" not in row_data:
+                raise ValueError("id is required")
+            new_id = int(row_data["id"])
+            if new_id in self._id_index or new_id in seen:
+                raise ValueError(f"object with id={new_id} already exists")
+            seen.add(new_id)
+            # 1) ненулевые дефолты конструктора, 2) переданные значения (перекрывают).
+            for key, value in self._add_defaults.items():
+                if key in names:
+                    block[i][key] = value
+            for key, value in row_data.items():
+                if key in names:
+                    block[i][key] = value
+            # weight = 1/variance, если вес не задан явно.
+            if self._weight_from_variance and "weight" in names and "weight" not in row_data:
+                var = float(block[i]["variance"])
+                block[i]["weight"] = (1.0 / var) if var > 0 else 1.0
+            new_ids.append(new_id)
+
+        base = len(self._arr)
+        self._arr = np.concatenate([self._arr, block])
+        for offset, new_id in enumerate(new_ids):
+            self._id_index[new_id] = base + offset
+        return new_ids
+
     # --- протокол коллекции ---
 
     def __iter__(self) -> Iterator[_RowProxy]:

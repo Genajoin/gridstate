@@ -512,6 +512,7 @@ def add_pseudo_measurements(
         unobservable_v_exclude_incident_flow=unobservable_v_exclude_incident_flow,
         unobservable_v_min_vm_deviation=unobservable_v_min_vm_deviation,
     )
-    for r in new_rows:
-        model.measurements.add(r)
+    # Пакетная вставка за одну конкатенацию: per-row .add() даёт O(n²) на
+    # тысячах псевдо-измерений (узкое место крупных моделей).
+    model.measurements.add_many(new_rows)
     return stats

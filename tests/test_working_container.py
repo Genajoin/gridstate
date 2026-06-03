@@ -361,6 +361,56 @@ def test_add_matches_source_semantics(small_model):
     assert np.array_equal(w.measurements.to_numpy(), small_model.measurements.to_numpy())
 
 
+def test_add_many_matches_per_row_add(small_model):
+    """add_many(rows) бит-в-бит эквивалентен последовательным add(): та же
+    to_numpy(), тот же порядок, те же id-индексы. (O(n²)→O(n) оптимизация
+    вставки псевдо-измерений должна быть поведенчески нейтральной.)"""
+    rows = [
+        {
+            "id": 3000 + i,
+            "name": f"m{i}",
+            "object_type": 0,
+            "object_id": i,
+            "measurement_type": 4,
+            "value": float(i),
+            "variance": 2.0,  # weight = 1/variance = 0.5 (вес не задан явно)
+            "status": True,
+            "is_pseudo": True,
+        }
+        for i in range(5)
+    ]
+    w_seq = Working.from_model(small_model)
+    for r in rows:
+        w_seq.measurements.add(dict(r))
+    w_bulk = Working.from_model(small_model)
+    returned = w_bulk.measurements.add_many([dict(r) for r in rows])
+
+    assert returned == [3000 + i for i in range(5)]
+    assert np.array_equal(
+        w_bulk.measurements.to_numpy(), w_seq.measurements.to_numpy()
+    )
+    # weight посчитан из variance так же, как в add()
+    assert float(w_bulk.measurements.to_numpy()[-1]["weight"]) == 0.5
+    # id-индекс согласован: get_by_id находит все вставленные
+    for i in range(5):
+        assert w_bulk.measurements.get_by_id(3000 + i) is not None
+
+
+def test_add_many_rejects_duplicate_ids(small_model):
+    """add_many ловит дубль и с уже существующим id, и внутри пакета."""
+    w = Working.from_model(small_model)
+    existing = int(w.measurements.to_numpy()[0]["id"])
+    base = {"object_type": 0, "object_id": 1, "measurement_type": 4, "value": 1.0}
+    # дубль с существующим
+    with pytest.raises(ValueError):
+        w.measurements.add_many([{"id": existing, **base}])
+    # дубль внутри пакета
+    with pytest.raises(ValueError):
+        w.measurements.add_many([{"id": 4000, **base}, {"id": 4000, **base}])
+    # пустой пакет — no-op
+    assert w.measurements.add_many([]) == []
+
+
 def test_update_from_array_roundtrip(small_model):
     """(5) update_from_array: модификация колонки отражается, id→idx корректен."""
     w = Working.from_model(small_model)

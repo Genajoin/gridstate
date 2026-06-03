@@ -88,8 +88,8 @@ def apply_telemetry_resolved(
     )
 
     model.measurements.update_from_array(meas_arr)
-    for row in new_rows:
-        model.measurements.add(row)
+    # Пакетная вставка за одну конкатенацию (per-row .add() = O(n²)).
+    model.measurements.add_many(new_rows)
 
     return stats
 
