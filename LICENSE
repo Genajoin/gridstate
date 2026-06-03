@@ -1,0 +1,91 @@
+MIT License
+
+Copyright (c) 2026 Evgeny Istomin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+THIRD-PARTY SOFTWARE NOTICES
+================================================================================
+
+This project contains code adapted from the open-source project listed below.
+The adapted code retains the original copyright notice as required by its
+license.
+
+--------------------------------------------------------------------------------
+pandapower
+--------------------------------------------------------------------------------
+
+Copyright (c) 2016-2025 by University of Kassel and Fraunhofer Institute for
+Energy Economics and Energy System Technology (IEE), Kassel. All rights
+reserved.
+
+Licensed under the BSD 3-Clause License (full text below).
+Upstream: https://github.com/e2nIEE/pandapower
+
+Files adapted from pandapower into this project:
+
+    pandapower/estimation/algorithm/base.py
+        -> gridstate/algorithms/wls.py            (class WLSAlgorithm)
+    pandapower/estimation/algorithm/matrix_base.py
+        -> gridstate/algebra/base.py              (class BaseAlgebra)
+    pandapower/estimation/algorithm/estimator.py
+        -> gridstate/algebra/estimators.py        (cost functions)
+    pandapower/estimation/state_estimation.py
+        -> gridstate/validation/chi2_test.py      (perform_chi2_test)
+        -> gridstate/validation/bad_data.py       (perform_rn_max_test)
+    pandapower/pypower/makeYbus.py
+        -> gridstate/ybus.py                      (Ybus / Yf / Yt assembly)
+
+Adaptation summary: the PYPOWER layer (ppc_conversion, idx_bus, idx_brch) was
+removed; the code operates on this project's own internal per-unit
+representation (gridstate/units.py) instead of the PYPOWER case format.
+
+BSD 3-Clause License
+....................
+
+Copyright (c) 2016-2025 by University of Kassel and Fraunhofer Institute for
+Energy Economics and Energy System Technology (IEE), Kassel. All rights
+reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from this
+   software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.

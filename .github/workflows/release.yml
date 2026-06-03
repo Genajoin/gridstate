@@ -1,0 +1,49 @@
+name: Release
+
+# Publish to PyPI when a version tag is pushed.
+#
+# Versioning is handled by setuptools_scm (the tag IS the version) and tags are
+# created from Conventional Commits with `cz bump` (run locally, then
+# `git push --follow-tags`). This workflow only builds and publishes.
+#
+# Publishing uses PyPI Trusted Publishing (OIDC) — no API token in secrets.
+# One-time setup on PyPI: add this repository as a trusted publisher for the
+# `gridstate` project, workflow `release.yml`, environment `pypi`.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install build
+      - run: python -m build
+      - run: pipx run twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
