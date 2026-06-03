@@ -20,15 +20,15 @@
 (V_wye=V_HV через power flow) и без (V_wye плавал свободно, теперь —
 к real V).
 
-**Ф4.1 (слайс 3, CLASS-1 pseudo-слой):** функция расщеплена на
+**(CLASS-1 pseudo-слой):** функция расщеплена на
 ``_mirror_voltage_on_arrays``-**ядро над контрактными numpy-массивами**
-(PSC-free, читает ТОЛЬКО контрактные колонки nodes/branches/measurements,
+(vendor-free, читает ТОЛЬКО контрактные колонки nodes/branches/measurements,
 XML не трогает) + тонкий адаптер. В отличие от уже-мигрированных
 каскадных функций (мутируют существующую колонку → ``update_from_array``),
 здесь паттерн **append**: ядро не мутирует существующие строки, а
 ВОЗВРАЩАЕТ список новых measurement-строк (``list[dict]``), а адаптер
 добавляет их через ``model.measurements.add()`` построчно (батч-append из
-массива в ``MeasurementCollection`` отсутствует). Логика дословно прежняя
+массива в ``_ArrayCollection`` отсутствует). Логика дословно прежняя
 (тот же последовательный порядок обхода ветвей, тот же within-pass
 ``any_v_by_node`` dedup, та же раздача id) → **строгий бит-в-бит 1e-9**:
 ``(value, variance)`` КОПИРУЮТСЯ без арифметики, единственная float-операция
@@ -47,7 +47,7 @@ from gridstate.z_vector import KIND_VOLTAGE, OBJ_NODE
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel  # type: ignore[import-not-found]
+    from gridstate.working import Working
 
 
 logger = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ def _mirror_voltage_on_arrays(
 
 
 def mirror_voltage_through_unit_tap_links(
-    model: PowerSystemModel,
+    model: Working,
     *,
     tap_tolerance: float = 1e-3,
     mid_start: int = 200_000_000,

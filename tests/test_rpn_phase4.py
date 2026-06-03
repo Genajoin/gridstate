@@ -1,10 +1,10 @@
-"""Ф4.1 (слайс 4, CLASS-2): float-ядро apply_rpn над контрактными массивами.
+"""float-ядро apply_rpn над контрактными массивами.
 
-``apply_rpn_from_xml`` расщеплена на двухслойный шов: АДАПТЕР (Блокатор 4) резолвит
+``apply_rpn_from_xml`` расщеплена на двухслойный шов: АДАПТЕР резолвит
 № отпаек через ``_eval_rpn_arg`` (FormulaEvaluator над snapshot) → ``resolved_taps``;
 ЯДРО ``_apply_rpn_on_arrays(branches_arr, shema_ktr_arr, resolved_taps)`` делает всю
 контрактную float-математику (ktr-lookup, main-vs-vc выбор, hypot/atan2 tap+phase,
-shunt-rescale, diff-stats) над ``SE_INPUT``-массивами, БЕЗ XML/PSC. Здесь проверяем
+shunt-rescale, diff-stats) над ``SE_INPUT``-массивами, БЕЗ XML и внешних зависимостей. Здесь проверяем
 корректность ядра на голых массивах; бит-в-бит публичного API — canon transitively +
 end-to-end дифф OLD-vs-NEW.
 """

@@ -1,4 +1,4 @@
-"""Тесты контракта данных SE (``gridstate.contract``) — Фаза 0 target-architecture.
+"""Тесты контракта данных SE (``gridstate.contract``).
 
 Контракт — только ОБЪЯВЛЕНИЕ схемы; поведение пайплайна не меняется. Тесты
 проверяют:
@@ -151,7 +151,7 @@ def _make_min_model():
     return m
 
 
-def test_validate_input_accepts_full_psc_model():
+def test_validate_input_accepts_full_model():
     model = _make_min_model()
     report = validate_input(model)
     assert report.ok, [str(i) for i in report.issues]

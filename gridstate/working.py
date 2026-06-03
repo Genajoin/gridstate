@@ -1,44 +1,35 @@
-"""gridstate-native ``Working``-контейнер рабочего слоя SE (Фаза 4, шаг 1).
+"""gridstate-native ``Working``-контейнер рабочего слоя SE.
 
 Назначение
 ==========
 
-Мигрируем «рабочую модель» пайплайна с full-clone ``PowerSystemModel`` (см.
-``gridstate.pipeline._clone_model``) на **самостоятельный numpy-backed контейнер**
-поверх контрактных структурированных массивов. ``Working`` воспроизводит ровно
-ту поверхность model-API, которую читает/пишет препроцессинг + солвер + сборка
-``SEResult`` — и НИЧЕГО сверх неё. PSC в рантайм-путях контейнера НЕ
-импортируется (только опционально под ``TYPE_CHECKING`` для аннотаций).
+``Working`` — **самостоятельный numpy-backed контейнер** рабочей модели сети
+поверх контрактных структурированных массивов. Он воспроизводит ровно ту
+поверхность model-API, которую читает/пишет препроцессинг + солвер + сборка
+``SEResult`` — и НИЧЕГО сверх неё. Рантайм-пути контейнера зависят только от
+numpy: никаких внешних vendor-библиотек.
 
 Поверхность (по аудиту working-слоя ``pipeline.run``)
 -----------------------------------------------------
 
 Контейнер держит ровно 4 коллекции (``nodes`` / ``branches`` / ``measurements`` /
 ``generators``) и ``raw_tables``. Никаких иных model-level атрибутов working-слой
-не читает: ``model.areas`` живёт только в reader эталонной SE (построение модели, не
-прогон), ``model.xml`` / ``model.copy`` / ``model.update`` — лишь в
-docstring/комментариях. Поэтому пробрасывать в ``Working`` больше нечего.
+не читает.
 
 Каждая коллекция (:class:`_ArrayCollection`) — тонкая обёртка над одним numpy
 structured-массивом (его dtype фиксируется при инициализации — он же контрактный
-PSC-DTYPE соответствующей таблицы) плюс индекс ``id → row``. Объектная итерация и
+dtype соответствующей таблицы) плюс индекс ``id → row``. Объектная итерация и
 ``get_by_id`` отдают :class:`_RowProxy` — лёгкий вид на ОДНУ строку backing-
 массива, который читает/пишет колонки напрямую (атрибут == имя колонки).
 
-Бит-в-бит эквивалентность с PSC
--------------------------------
+Семантика ``weight``
+--------------------
 
-``Working.from_model(psc_model)`` сидирует каждую коллекцию из
-``psc_model.X.to_numpy().copy()``. Поскольку контрактные dtype-поля совпадают с
-PSC-DTYPE 1:1 (страж ``tests/test_contract.py``), ``to_numpy()`` контейнера
-поле-в-поле равен ``to_numpy()`` PSC. Единственная PSC-«производная» колонка —
-``Measurement.weight`` (property ``1/variance``): PSC материализует её в массив
-при ``to_numpy()``, поэтому на момент сидирования ``proxy.weight == psc.weight``.
-ВНИМАНИЕ (риск шага-2): если препроцессинг позже меняет ``variance`` через
-``update``, PSC-property ``weight`` пересчитывается «на лету», а колонка
-``weight`` контейнера остаётся прежней. Солвер читает ``variance`` (не
-``weight``) — см. контракт ``MEASUREMENTS.weight`` doc, — но эту семантику нужно
-перепроверить при вшивании.
+Единственная «производная» колонка — ``weight`` measurements (``1/variance``):
+при ``add`` она материализуется из ``variance`` (см. ``weight_from_variance``).
+ВНИМАНИЕ: если препроцессинг позже меняет ``variance`` через ``update``, колонка
+``weight`` НЕ пересчитывается автоматически — солвер читает ``variance`` (не
+``weight``), см. контракт ``MEASUREMENTS.weight``.
 """
 
 from __future__ import annotations
@@ -68,7 +59,7 @@ class _RowProxy:
 
     Прокси НЕ копирует строку: он указывает на ``(arr, idx)``, поэтому записи
     видны в ``to_numpy()`` и переживают потерю ссылки на сам прокси — ровно как
-    мутация живого PSC-объекта, полученного через ``get_by_id``/итерацию.
+    мутация живого объекта, полученного через ``get_by_id``/итерацию.
     """
 
     __slots__ = ("_arr", "_idx")
@@ -111,7 +102,7 @@ class _RowProxy:
 def _scalar_to_python(value: Any) -> Any:
     """numpy-скаляр одной ячейки → нативный python-тип.
 
-    Цель — чтобы ``proxy.attr`` имел тот же python-тип, что атрибут PSC-объекта
+    Цель — чтобы ``proxy.attr`` имел нативный python-тип
     (``int``/``float``/``bool``/``str``), а не оставался ``np.int32`` и т.п. Это
     делает сравнения и ``int(...)``/``float(...)`` в потребителях идентичными.
     """
@@ -131,11 +122,10 @@ def _scalar_to_python(value: Any) -> Any:
 
 
 # Дефолты конструктора measurement, отличные от нуля dtype (zero-fill даёт 0 /
-# False / "" — этого достаточно для всех ОСТАЛЬНЫХ полей). Реплицируют
-# ``power_system.models.measurements.Measurement.__init__`` (контракт владеет
-# дефолтами): variance=0.01, границы достоверности ∓9999, status=True по
-# умолчанию, branch_side=-1 (N/A). ``weight`` считается отдельно как 1/variance
-# (PSC-property), если не задан явно — см. ``weight_from_variance`` ниже.
+# False / "" — этого достаточно для всех ОСТАЛЬНЫХ полей). Контракт владеет
+# дефолтами: variance=0.01, границы достоверности ∓9999, status=True по
+# умолчанию, branch_side=-1 (N/A). ``weight`` считается отдельно как 1/variance,
+# если не задан явно — см. ``weight_from_variance`` ниже.
 _MEASUREMENT_ADD_DEFAULTS: dict[str, Any] = {
     "variance": 0.01,
     "min_value": -9999.0,
@@ -153,10 +143,9 @@ _MEASUREMENT_ADD_DEFAULTS: dict[str, Any] = {
 class _ArrayCollection:
     """numpy-backed коллекция объектов одной таблицы контракта.
 
-    Воспроизводит подмножество API ``power-system-core``-коллекций, которое
-    реально использует working-слой SE: ``to_numpy`` / ``update_from_array`` /
-    ``update`` / ``get_by_id`` / ``add`` / ``__iter__`` / ``__len__`` / ``ids`` /
-    ``get_ids``.
+    Предоставляет компактное объектное API, которое использует working-слой SE:
+    ``to_numpy`` / ``update_from_array`` / ``update`` / ``get_by_id`` / ``add`` /
+    ``__iter__`` / ``__len__`` / ``ids`` / ``get_ids``.
 
     Backing — единственный structured-массив ``self._arr``; его dtype фиксируется
     при инициализации (из переданного массива) и проверяется при
@@ -173,7 +162,7 @@ class _ArrayCollection:
         self._dtype: np.dtype = array.dtype
         self._arr: np.ndarray = array.copy()
         # Дефолты для неуказанных колонок в ``add`` (см. _MEASUREMENT_ADD_DEFAULTS)
-        # + computed-default ``weight=1/variance`` (PSC-property) для measurements.
+        # + computed-default ``weight=1/variance`` для measurements.
         self._add_defaults: dict[str, Any] = dict(add_defaults) if add_defaults else {}
         self._weight_from_variance: bool = weight_from_variance
         self._rebuild_index()
@@ -186,18 +175,18 @@ class _ArrayCollection:
     # --- чтение ---
 
     def to_numpy(self) -> np.ndarray:
-        """Свежая копия backing-массива (PSC отдаёт новый массив на каждый вызов)."""
+        """Свежая копия backing-массива (каждый вызов отдаёт новый массив)."""
         return self._arr.copy()
 
     def get_by_id(self, object_id: int) -> _RowProxy | None:
-        """Прокси на строку по ``id`` (или ``None``, как PSC)."""
+        """Прокси на строку по ``id`` (или ``None``, если нет такого id)."""
         idx = self._id_index.get(int(object_id))
         if idx is None:
             return None
         return _RowProxy(self._arr, idx)
 
     def get_ids(self) -> list[int]:
-        """Список ``id`` в порядке строк (совместимость с PSC ``get_ids``)."""
+        """Список ``id`` в порядке строк."""
         return [int(self._arr[i]["id"]) for i in range(len(self._arr))]
 
     @property
@@ -215,8 +204,7 @@ class _ArrayCollection:
         """Полный rebuild коллекции из массива (dtype-strict, порядок сохранён).
 
         Массив И ЕСТЬ данные коллекции — копируем его и пересобираем индекс.
-        Совпадает с PSC-семантикой ``update_from_array`` (там dtype-проверка тоже
-        строгая).
+        ``update_from_array`` использует строгую dtype-проверку.
         """
         if array.dtype != self._dtype:
             raise ValueError("Array dtype must match collection dtype")
@@ -228,11 +216,10 @@ class _ArrayCollection:
 
         Совместимо с обоими вызовами в коде:
 
-        * PSC-стиль ``coll.update(id, {"status": False})`` (позиционный dict);
+        * dict-стиль ``coll.update(id, {"status": False})`` (позиционный dict);
         * kwargs-стиль ``coll.update(id, status=False)``.
 
-        Неизвестные ключи (нет такой колонки) тихо игнорируются — как PSC
-        ``setattr(node, key, ...)`` под ``if hasattr(...)``.
+        Неизвестные ключи (нет такой колонки) тихо игнорируются.
         """
         oid = int(object_id)
         if oid not in self._id_index:
@@ -249,11 +236,11 @@ class _ArrayCollection:
     def add(self, row_data: dict) -> int:
         """Добавить строку в КОНЕЦ; вернуть её ``id`` (порядок добавления сохранён).
 
-        ``id`` обязателен и уникален (``ValueError`` при дубле — как PSC).
-        Неуказанные колонки заполняются дефолтами конструктора PSC-объекта:
+        ``id`` обязателен и уникален (``ValueError`` при дубле).
+        Неуказанные колонки заполняются дефолтами конструктора объекта:
         ненулевые — из ``self._add_defaults`` (см. ``_MEASUREMENT_ADD_DEFAULTS``),
         остальные — нулём dtype (ноль/False/""). ``weight``, если не задан явно
-        и ``weight_from_variance=True``, считается как 1/variance (PSC-property).
+        и ``weight_from_variance=True``, считается как 1/variance.
         ``row_data`` может содержать ключи вне dtype — они игнорируются.
         """
         if "id" not in row_data:
@@ -271,7 +258,7 @@ class _ArrayCollection:
         for key, value in row_data.items():
             if key in names:
                 new_row[0][key] = value
-        # weight — PSC-property = 1/variance, если вес не задан явно.
+        # weight = 1/variance, если вес не задан явно.
         if self._weight_from_variance and "weight" in names and "weight" not in row_data:
             var = float(new_row[0]["variance"])
             new_row[0]["weight"] = (1.0 / var) if var > 0 else 1.0
@@ -291,7 +278,7 @@ class _ArrayCollection:
         return len(self._arr)
 
     def __getitem__(self, index: int) -> _RowProxy:
-        # Поддержка позиционного доступа (PSC-коллекции его дают).
+        # Поддержка позиционного доступа по индексу.
         if index < 0:
             index += len(self._arr)
         if not 0 <= index < len(self._arr):
@@ -308,7 +295,7 @@ class _ArrayCollection:
 
 
 class Working:
-    """numpy-backed рабочий слой SE — замена full-clone ``PowerSystemModel``.
+    """numpy-backed рабочий слой SE — замена full-clone ``Working``.
 
     Держит 4 коллекции (:class:`_ArrayCollection`) и ``raw_tables`` (dict
     ``str → np.ndarray``). Поверхность 1:1 с тем, что читает/пишет
@@ -332,14 +319,13 @@ class Working:
 
     @classmethod
     def from_model(cls, model: Any) -> Working:
-        """Построить ``Working`` из ``PowerSystemModel`` (рабочий слой ``run()``).
+        """Построить ``Working`` из любого объекта-модели с коллекциями (рабочий слой ``run()``).
 
-        Заменил прежний full-clone (``model.copy()`` + ``deepcopy``). Каждая
-        коллекция сидируется из ``model.X.to_numpy().copy()`` (PSC отдаёт свежий
-        массив, ``_ArrayCollection`` копирует его ещё раз — независимость от Input
-        гарантирована). ``raw_tables`` — ``deepcopy``. Никакие иные model-level
-        атрибуты не пробрасываются:
-        working-слой их не читает.
+        Каждая коллекция сидируется из ``model.X.to_numpy().copy()`` (исходник
+        отдаёт свежий массив, ``_ArrayCollection`` копирует его ещё раз —
+        независимость от Input гарантирована). ``raw_tables`` — ``deepcopy``.
+        Никакие иные model-level атрибуты не пробрасываются: working-слой их не
+        читает.
         """
         raw = getattr(model, "raw_tables", None) or {}
         return cls(
@@ -364,13 +350,12 @@ class Working:
         generators: np.ndarray,
         raw_tables: dict[str, np.ndarray] | None = None,
     ) -> Working:
-        """Построить ``Working`` напрямую из контрактных numpy-массивов — БЕЗ PSC.
+        """Построить ``Working`` напрямую из контрактных numpy-массивов.
 
-        PSC-free вход (Фаза 5): внешний загрузчик/тест собирает структурированные
-        массивы схемы ``SE_INPUT`` (nodes/branches/measurements/generators +
-        сырые таблицы) и передаёт их сюда, минуя ``PowerSystemModel``. Массивы
-        копируются (вход read-only). ``measurements`` получает те же
-        PSC-совместимые add-дефолты, что и :meth:`from_model`.
+        Основной вход: внешний загрузчик/тест собирает структурированные массивы
+        схемы ``SE_INPUT`` (nodes/branches/measurements/generators + сырые
+        таблицы) и передаёт их сюда. Массивы копируются (вход read-only).
+        ``measurements`` получает те же add-дефолты, что и :meth:`from_model`.
         """
         return cls(
             nodes=_ArrayCollection(np.asarray(nodes).copy()),
@@ -386,14 +371,13 @@ class Working:
 
     @classmethod
     def empty(cls) -> Working:
-        """Пустой ``Working`` с контрактными dtype — PSC-free замена ``PowerSystemModel()``.
+        """Пустой ``Working`` с контрактными dtype.
 
         Сидирует 4 коллекции нулевой длины с dtype = INPUT/WORKING ⊕ OUTPUT-роли
         контракта (``gridstate.contract``) — полный набор колонок, который пайплайн
         читает И пишет (``estimated_*`` / ``p_inj_calc`` / перетоки). Поддерживает
         инкрементальное построение через ``.nodes.add({...})`` / ``.get_by_id`` /
-        ``.update`` — drop-in для ``PowerSystemModel()`` в тестах и синтетике, без
-        зависимости от PSC.
+        ``.update`` — удобно для тестов и синтетики.
         """
         from gridstate.contract import SE_INPUT, SE_OUTPUT
 

@@ -109,9 +109,8 @@ class SEOutput:
         success/iterations/objective_value/algorithm: метаданные сходимости.
         v_pu/delta_rad: V в p.u. / углы (рад) — дубль для отладки/тестов.
         contract_version: версия контракта результата.
-        result: исходный ``SEResult`` — back-compat escape hatch (Фаза 1; Фаза 2+
-            может убрать). Несёт ``model`` (рабочая копия), ``chi2``,
-            ``worst_residuals`` и т.п.
+        result: исходный ``SEResult`` — back-compat escape hatch. Несёт ``model``
+            (рабочая копия), ``chi2``, ``worst_residuals`` и т.п.
     """
 
     nodes: np.ndarray = field(default_factory=lambda: _empty_output("nodes"))
@@ -181,9 +180,9 @@ def run(
 ) -> SEOutput:
     """Публичный контрактный вход SE: ``SEInput → SEOutput``.
 
-    **Фаза 1:** делегирует :func:`gridstate.pipeline.run` на обёрнутой PSC-модели и
-    оборачивает ``SEResult`` в :class:`SEOutput`. Результат бит-в-бит совпадает с
-    прямым вызовом пайплайна — граница зафиксирована, внутренности не изменены.
+    Делегирует :func:`gridstate.pipeline.run` на рабочей модели и оборачивает
+    ``SEResult`` в :class:`SEOutput`. Результат бит-в-бит совпадает с прямым
+    вызовом пайплайна — граница входа/выхода зафиксирована контрактом.
 
     Args:
         se_input: входной контракт (:class:`SEInput`).
@@ -192,10 +191,10 @@ def run(
         init_state: прошлый :class:`SEOutput` (или ``SEResult``) для тёплого старта.
         validate: валидировать вход против контракта и **бросать**
             :class:`gridstate.contract.ContractValidationError` при недостающих
-            обязательных колонках или несовместимой версии контракта (граница
-            «падать рано и явно», план §4 — это единственные проверяемые сейчас
-            условия). ``False`` — пропустить проверку. Реальные модели несут полный
-            DTYPE → проверка проходит; падение значит реальный дефект входа.
+            обязательных колонках или несовместимой версии контракта (принцип
+            «падать рано и явно»). ``False`` — пропустить проверку. Полноценные
+            модели несут полный DTYPE → проверка проходит; падение значит реальный
+            дефект входа.
 
     Returns:
         :class:`SEOutput`.

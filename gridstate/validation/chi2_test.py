@@ -29,7 +29,7 @@ from gridstate.validation._diagnostics import compute_diagnostics
 
 
 if TYPE_CHECKING:
-    from power_system import MeasurementCollection, PowerSystemModel
+    from gridstate.working import Working, _ArrayCollection
 
 
 logger = logging.getLogger(__name__)
@@ -59,8 +59,8 @@ class Chi2Result:
 
 
 def chi2_analysis(
-    model: PowerSystemModel,
-    measurements: MeasurementCollection | None = None,
+    model: Working,
+    measurements: _ArrayCollection | None = None,
     chi2_prob_false: float = 0.05,
 ) -> Chi2Result:
     """Запустить χ²-тест на текущем состоянии ``model``.

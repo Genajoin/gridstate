@@ -34,13 +34,13 @@ from gridstate.validation._diagnostics import compute_diagnostics
 
 
 if TYPE_CHECKING:
-    from power_system import MeasurementCollection, PowerSystemModel
+    from gridstate.working import Working, _ArrayCollection
 
 
 logger = logging.getLogger(__name__)
 
 
-# MeasurementQuality.BAD = 2 в power-system-core (см. constants.py).
+# Код качества измерения «BAD» в контракте (значение колонки ``quality``).
 QUALITY_BAD = 2
 
 
@@ -74,8 +74,8 @@ class NormalizedResidualReport:
 
 
 def compute_normalized_residuals_report(
-    model: PowerSystemModel,
-    measurements: MeasurementCollection | None = None,
+    model: Working,
+    measurements: _ArrayCollection | None = None,
     *,
     top_n: int = 5,
     rn_threshold: float = 3.0,
@@ -88,8 +88,8 @@ def compute_normalized_residuals_report(
     модифицирует measurements — audit-only.
 
     Args:
-        model: ``PowerSystemModel`` с выполненной оценкой.
-        measurements: ``MeasurementCollection`` — ``None`` → ``model.measurements``.
+        model: ``Working`` с выполненной оценкой.
+        measurements: ``_ArrayCollection`` — ``None`` → ``model.measurements``.
         top_n: сколько топ-записей вернуть (по убыванию ``|rn|``).
         rn_threshold: порог для подсчёта подозрительных (классически 3.0).
 
@@ -199,8 +199,8 @@ def _normalized_residuals(diag) -> np.ndarray:
 
 
 def remove_bad_data(
-    model: PowerSystemModel,
-    measurements: MeasurementCollection | None = None,
+    model: Working,
+    measurements: _ArrayCollection | None = None,
     rn_max_threshold: float = 3.0,
     max_iterations: int = 10,
     tolerance: float = 1e-6,
@@ -215,7 +215,7 @@ def remove_bad_data(
            ``status=False, quality=BAD`` и цикл повторяется.
 
     Args:
-        model: ``PowerSystemModel`` — обновляется in-place.
+        model: ``Working`` — обновляется in-place.
         measurements: коллекция — если ``None``, ``model.measurements``.
         rn_max_threshold: порог для нормированного остатка (классически 3.0).
         max_iterations: максимальное число итераций отбраковки (защита от

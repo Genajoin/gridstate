@@ -1,9 +1,8 @@
-"""Рантайм контракта (Фаза 1 target-architecture): SEInput/SEOutput + фасад run.
+"""Рантайм контракта: SEInput/SEOutput + фасад run.
 
 Ключевой тест — **бит-в-бит эквивалентность** фасада ``gridstate.contract.run`` и
-прямого ``gridstate.pipeline.run`` на малой модели: дёшево подтверждает, что Фаза 1
-не сместила числа (замена тяжёлого canon-гейта на per-phase проверку, см.
-feedback-defer-heavy-gate-migration).
+прямого ``gridstate.pipeline.run`` на малой модели: дёшево подтверждает, что
+контрактный фасад не смещает числа относительно прямого вызова пайплайна.
 """
 
 from __future__ import annotations

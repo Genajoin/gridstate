@@ -27,7 +27,7 @@ def _toy_two_bus(
     shift: float = 0.0,
     bus_b_shunt: tuple[float, float] = (0.0, 0.0),
 ):
-    """Сборка ``NetworkPU`` напрямую (без PowerSystemModel) — нужно для
+    """Сборка ``NetworkPU`` напрямую (без полноценной модели) — нужно для
     точечных проверок Y-bus формул в p.u.
     """
     from gridstate.units import BASE_MVA, NetworkPU

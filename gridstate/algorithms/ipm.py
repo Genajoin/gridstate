@@ -5,7 +5,7 @@
 узле, оцениваемые WLS из TI с **box-constraints** через log-barrier.
 
 Этот модуль реализует **generic** IPM-solver: он работает с произвольным
-набором переменных и box-bounds, не зная про power-system. Связку с
+набором переменных и box-bounds, не зная про доменную модель сети. Связку с
 ``BaseAlgebra`` / ``z_vector`` / ``StateLayout`` обеспечивает отдельный
 слой (см. ``gridstate.preprocessing.ipm_setup``).
 

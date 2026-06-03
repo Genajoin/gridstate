@@ -34,14 +34,14 @@ def apply_topology_resolved(model, resolved) -> dict[str, int]:
 
 
 def _apply_topology_on_arrays(arr_nodes, arr_branches, arr_gens, arr_reactors, resolved):
-    """Ф4.1-ЯДРО (слайс 7a): применение ON_LINE-статусов над контрактными массивами.
+    """ЯДРО: применение ON_LINE-статусов над контрактными массивами.
 
-    Чистый статус-каскад: получает готовый план ``resolved`` (Блокатор-4 — eval
+    Чистый статус-каскад: получает готовый план ``resolved`` (eval
     ON_LINE-формул по snapshot + чтение ``spec.args`` — выполнен в адаптере; элемент
     ``(tag, parent_id, status|None, eval_skip|None)`` в порядке ``specs.items()``),
     матчит ``parent_tag`` → целевой массив (nodes/branches/generators/reactors),
     пишет ``status``-колонку. ``reactors`` — raw-таблица (мутируемая status). Мутирует
-    массивы in place. Без PSC/XML/snapshot, без float → строгий бит-в-бит 1e-9.
+    массивы in place. Без внешних зависимостей, XML и snapshot, без float → строгий бит-в-бит 1e-9.
     """
     by_id_nodes: dict[int, int] = {int(arr_nodes[i]["id"]): i for i in range(len(arr_nodes))}
     by_id_branches: dict[int, int] = {

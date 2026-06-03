@@ -21,7 +21,7 @@ from gridstate.z_vector import build_z_and_r
 
 
 if TYPE_CHECKING:
-    from power_system import MeasurementCollection, PowerSystemModel
+    from gridstate.working import Working, _ArrayCollection
 
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ ZeroInjectionMode = Literal["aux_bus", "no_inj_bus", "zero_pwr_bus"]
 
 
 def estimate(
-    model: PowerSystemModel,
-    measurements: MeasurementCollection | None = None,
+    model: Working,
+    measurements: _ArrayCollection | None = None,
     algorithm: Algorithm = "wls",
     init: InitMode = "flat",
     tolerance: float = 1e-6,
@@ -216,8 +216,8 @@ def estimate(
 def _populate_quality_summary(
     result: SEResult,
     *,
-    model: PowerSystemModel,
-    measurements: MeasurementCollection,
+    model: Working,
+    measurements: _ArrayCollection,
     network_pu,
     ybus,
     yf,
@@ -272,7 +272,7 @@ def _populate_quality_summary(
 
 
 def _build_initial_state(
-    model: PowerSystemModel,
+    model: Working,
     network_pu,
     layout: StateLayout,
     init: InitMode,
@@ -315,7 +315,7 @@ def _build_initial_state(
 
 
 def _run_ipm(
-    model: PowerSystemModel,
+    model: Working,
     network_pu,
     ybus,
     yf,

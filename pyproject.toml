@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gridstate"
 dynamic = ["version"]
-description = "Power-system State Estimation: pure-Python WLS/IPM on numpy/scipy, input via a versioned file contract (npz)."
+description = "Power system State Estimation: pure-Python WLS/IPM on numpy/scipy, input via a versioned file contract (npz)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -32,7 +32,7 @@ classifiers = [
 ]
 
 # No vendor dependencies: both runtime and tests are self-contained. The runtime
-# core works at the npz contract boundary (proven by tests/test_no_psc_runtime);
+# core works at the npz contract boundary (proven by tests/test_numpy_only_runtime);
 # test fixtures are built via gridstate.working.Working.empty() from the contract.
 # Dependencies are numpy/scipy only.
 dependencies = [
@@ -142,10 +142,10 @@ ignore = [
     "RUF001",  # ambiguous Cyrillic/Latin characters in strings
     "RUF002",  # same, in docstrings
     "RUF003",  # same, in comments
-    "N802",    # power-system math functions: _dSbus_dV, _dSbr_dV (pandapower convention)
+    "N802",    # power system math functions: _dSbus_dV, _dSbr_dV (pandapower convention)
     "N803",    # uppercase math arguments (V, G, dVm, dVa)
     "N806",    # matrices conventionally uppercase (H, G, R, Y)
-    "N815",    # power-system-style attributes (rank_H in IRMatrix)
+    "N815",    # power system-style attributes (rank_H in IRMatrix)
 ]
 
 [tool.ruff.lint.isort]

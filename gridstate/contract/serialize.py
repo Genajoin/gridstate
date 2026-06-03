@@ -1,9 +1,8 @@
 """Сериализация ``SEInput`` (контракт + ``DerivedInputs``) в ``.npz`` — граница входа.
 
-**Цель (pet-project, разворот 2026-06-02).** Проект gridstate отвязывается от
-проприетарного XML-загрузчика работодателя: единственная граница входа становится
-**файл данных** (``.npz``), который готовит внешний инструмент (будущий переписанный
-PSC) и который gridstate читает **без PSC и без XML**.
+**Цель.** Единственная граница входа gridstate — **файл данных** (``.npz``),
+который готовит внешний инструмент-источник и который gridstate читает **без
+внешних зависимостей и без XML**.
 
 Сериализуется ровно то, что нужно ядру для прогона ``run(SEInput)``:
 
@@ -15,7 +14,7 @@ PSC) и который gridstate читает **без PSC и без XML**.
   НЕ сохраняется: ядро его не читает (только косметический счётчик ``unique_guids``).
 
 Загрузчик восстанавливает рабочий слой через :meth:`gridstate.working.Working.from_arrays`
-(PSC-free конструктор, Фаза 5) → ``run()`` исполняется без ``power-system-core``.
+(vendor-free конструктор) → ``run()`` исполняется без внешних зависимостей.
 
 **Формат планов (v0, провизорный).** ``DerivedInputs`` несёт dict с tuple-ключами
 (``telemetry_resolved``), поэтому планы кодируются ``pickle`` в object-массиве внутри
@@ -104,7 +103,7 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
 
     Args:
         se_input: вход SE. ``se_input.model`` — носитель контрактных таблиц
-            (``PowerSystemModel``, ``Working`` или любой объект с коллекциями
+            (``Working``, ``Working`` или любой объект с коллекциями
             ``.nodes/.branches/.measurements/.generators``, отдающими ``to_numpy()``,
             + опц. ``raw_tables``). ``se_input.derived`` — числовые планы (или ``None``).
         path: путь к выходному ``.npz`` (расширение добавит numpy при отсутствии).
@@ -139,10 +138,10 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
 
 
 def load_se_input_npz(path: str | Path) -> SEInput:
-    """Прочитать ``.npz`` (см. :func:`save_se_input`) в ``SEInput`` — БЕЗ PSC и XML.
+    """Прочитать ``.npz`` (см. :func:`save_se_input`) в ``SEInput`` — БЕЗ внешних зависимостей и XML.
 
     Рабочий слой собирается через :meth:`gridstate.working.Working.from_arrays`
-    (PSC-free). Возвращаемый ``SEInput`` готов к ``run(se_input)``: ``derived`` —
+    (vendor-free). Возвращаемый ``SEInput`` готов к ``run(se_input)``: ``derived`` —
     восстановленные числовые планы → формат-слоя источника прогон не касается.
     """
     from gridstate.contract.runtime import SEInput

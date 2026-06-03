@@ -1,6 +1,6 @@
-"""Ф4.1 (слайс 7a): float-free ядро ON_LINE-топологии над контрактными массивами.
+"""float-free ядро ON_LINE-топологии над контрактными массивами.
 
-``apply_topology_from_xml`` расщеплена на двухслойный шов: АДАПТЕР (Блокатор 4)
+``apply_topology_from_xml`` расщеплена на двухслойный шов: АДАПТЕР
 резолвит ON_LINE-формулы по snapshot через ``_eval_status_formula`` + читает
 ``spec.args`` (GENERATOR-guard) → план ``resolved: list[(tag, parent_id, status|None,
 eval_skip|None)]`` в порядке ``specs.items()``; ЯДРО ``_apply_topology_on_arrays``

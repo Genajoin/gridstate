@@ -34,8 +34,7 @@ from gridstate.units import BASE_MVA, NetworkPU
 
 
 if TYPE_CHECKING:
-    from power_system import MeasurementCollection, PowerSystemModel
-
+    from gridstate.working import Working, _ArrayCollection
     from gridstate.z_vector import MeasurementIndex
 
 
@@ -92,8 +91,8 @@ def _pu_to_si(
 
 def write_measurement_estimates(
     *,
-    model: PowerSystemModel,
-    measurements: MeasurementCollection,
+    model: Working,
+    measurements: _ArrayCollection,
     v_pu: np.ndarray,
     delta_rad: np.ndarray,
     network_pu: NetworkPU,
@@ -106,7 +105,7 @@ def write_measurement_estimates(
     """Заполнить ``estimated_si``/``estimated_value``/``residual`` в measurements.
 
     Args:
-        model: ``PowerSystemModel``, обновляется in-place.
+        model: ``Working``, обновляется in-place.
         measurements: коллекция, использованная в SE (та же ссылка из ``model``).
         v_pu: модули напряжений из решения SE, p.u.
         delta_rad: фазовые углы, рад.
@@ -159,7 +158,7 @@ def write_measurement_estimates(
 
 
 def write_node_estimates(
-    model: PowerSystemModel,
+    model: Working,
     *,
     node_ids: np.ndarray,
     load_p: np.ndarray | None = None,
@@ -181,7 +180,7 @@ def write_node_estimates(
     были (по умолчанию 0.0).
 
     Args:
-        model: ``PowerSystemModel``, обновляется in-place.
+        model: ``Working``, обновляется in-place.
         node_ids: (N,) — ID узлов, для которых пишутся оценки.
         load_p: (N,) МВт или ``None``.
         load_q: (N,) МВАр или ``None``.
@@ -235,7 +234,7 @@ def _clip(value: float, lo: float, hi: float) -> float:
     return value
 
 
-def write_node_estimates_from_inj(model: PowerSystemModel) -> dict[str, int]:
+def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
     """Разнести ``p_inj_calc``/``q_inj_calc`` по
     ``load_*_estimated`` / ``generation_*_estimated`` для WLS-режима.
 
@@ -414,7 +413,7 @@ def write_node_estimates_from_inj(model: PowerSystemModel) -> dict[str, int]:
     }
 
 
-def apply_load_characteristic(model: PowerSystemModel) -> dict[str, int]:
+def apply_load_characteristic(model: Working) -> dict[str, int]:
     """Пересчитать ``load_*_estimated`` через статические характеристики
     нагрузки (СХН) P(V) / Q(V) после H29-split.
 
@@ -442,7 +441,7 @@ def apply_load_characteristic(model: PowerSystemModel) -> dict[str, int]:
     V на конечном состоянии — повторный пересчёт не нужен.
 
     Args:
-        model: ``PowerSystemModel``, обновляется in-place.
+        model: ``Working``, обновляется in-place.
 
     Returns:
         Счётчики:
@@ -531,7 +530,7 @@ def apply_load_characteristic(model: PowerSystemModel) -> dict[str, int]:
     return out
 
 
-def _max_voltage_ratio(model: PowerSystemModel) -> float:
+def _max_voltage_ratio(model: Working) -> float:
     """max(voltage_magnitude / voltage_nominal) по активным узлам (vn>0)."""
     nd = model.nodes.to_numpy()
     mask = nd["status"] & (nd["voltage_nominal"] > 0)
@@ -541,7 +540,7 @@ def _max_voltage_ratio(model: PowerSystemModel) -> float:
 
 
 def refine_anti_overshoot(
-    model: PowerSystemModel,
+    model: Working,
     result,
     resolve,
     *,

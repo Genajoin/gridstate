@@ -1,8 +1,8 @@
 """NODE-properties для pseudo-measurements: чтение из ``model.nodes``.
 
-`exist_load`, `exist_gen`, `vzd`, `pn_min/max` и т.п. — поля
-:data:`power_system.utils.dtypes.NODE_DTYPE` (XML-атрибуты
-``EXIST_PN/QN/PG/QG``, ``U_ZAD``, ``PN_MIN/MAX`` и т.д.).
+`exist_load`, `exist_gen`, `vzd`, `pn_min/max` и т.п. — контрактные поля
+``NODE_DTYPE`` (входные атрибуты ``EXIST_PN/QN/PG/QG``, ``U_ZAD``,
+``PN_MIN/MAX`` и т.д.).
 
 Используется ``add_pseudo_measurements`` для:
 
@@ -18,7 +18,7 @@ import numpy as np
 
 
 if TYPE_CHECKING:
-    from power_system.models.network import PowerSystemModel
+    from gridstate.working import Working
 
 
 __all__ = [
@@ -27,7 +27,7 @@ __all__ = [
 ]
 
 
-def extract_node_load_props_from_model(model: PowerSystemModel) -> dict[int, dict]:
+def extract_node_load_props_from_model(model: Working) -> dict[int, dict]:
     """``id → {exist_load, exist_gen, vzd, pn_min/max, qn_min/max,
     pg_min/max, umin, umax, na, tip}`` из ``model.nodes``.
 
@@ -60,7 +60,7 @@ def extract_node_load_props_from_model(model: PowerSystemModel) -> dict[int, dic
 
 
 def extract_boundary_node_ids_from_model(
-    model: PowerSystemModel,
+    model: Working,
     *,
     boundary_area_ids: set[int] | None = None,
     pn_range_threshold_mw: float | None = None,

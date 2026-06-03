@@ -37,9 +37,8 @@ from gridstate.z_vector import (
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel
-
     from gridstate.units import NetworkPU
+    from gridstate.working import Working
 
 
 __all__ = [
@@ -69,7 +68,7 @@ class IPMSetup:
 
 
 def build_ipm_setup(
-    model: PowerSystemModel,
+    model: Working,
     network_pu: NetworkPU,
     z: np.ndarray,
     r_matrix: csr_matrix,
@@ -88,7 +87,7 @@ def build_ipm_setup(
     """Собрать IPM-инфраструктуру поверх готовых WLS-данных.
 
     Args:
-        model: ``PowerSystemModel`` (для чтения NODE_DTYPE).
+        model: ``Working`` (для чтения NODE_DTYPE).
         network_pu: внутреннее p.u.-представление.
         z, r_matrix, meas_index: WLS-данные (из ``build_z_and_r``).
         layout_base: WLS-layout (без box-vars). Возвращаемый ``layout``
@@ -107,7 +106,7 @@ def build_ipm_setup(
         bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
             (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
         sentinel_abs: |значение| ≥ этого считается «не задано» в
-            NODE_DTYPE (sentinel ±9999 — стандарт power-system-core).
+            NODE_DTYPE (sentinel ±9999 — контрактная конвенция).
         prior_sigma2_normal_pu: σ² (p.u.²) prior-меры для box-var
             узла с обычной коробкой (ширина ≤ ``bus_equiv_width_threshold_pu``).
             Default ``0`` — prior не создаётся, data-меры через TI на

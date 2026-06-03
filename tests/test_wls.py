@@ -9,7 +9,7 @@
     3. Запускаем ``solve_wls`` из flat-старта.
     4. Проверяем ``E_se ≈ E_true``.
 
-Критерий ТЗ §11 (≤5 итераций, ``max|ΔE|<1e-6``) проверяется на 3-узловой
+Критерий сходимости (≤5 итераций, ``max|ΔE|<1e-6``) проверяется на 3-узловой
 сети с переопределённой системой измерений.
 """
 
@@ -127,7 +127,7 @@ def _three_bus_for_se():
 
 
 def _generate_ideal_measurements(model, e_true: np.ndarray, layout: StateLayout):
-    """Сгенерировать ``MeasurementCollection`` из ``z = h(E_true)``.
+    """Сгенерировать коллекцию измерений из ``z = h(E_true)``.
 
     Покрытие: V на всех узлах, P/Q инъекции на всех узлах, P/Q на «from» каждой
     ветви. Измерения — переопределённая система (m > 2n−1).
@@ -275,7 +275,7 @@ def test_solve_wls_recovers_true_state_no_noise() -> None:
 
 
 def test_solve_wls_meets_iteration_budget() -> None:
-    """Критерий ТЗ §11: WLS сходится за ≤5 итераций при σ=0.01 p.u."""
+    """Критерий сходимости: WLS сходится за ≤5 итераций при σ=0.01 p.u."""
     m = _three_bus_for_se()
     pu = model_to_pu(m)
     layout = StateLayout.from_slack(pu.n_bus, pu.slack_idx)

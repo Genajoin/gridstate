@@ -33,9 +33,8 @@ from gridstate.result import (
 
 
 if TYPE_CHECKING:
-    from power_system import PowerSystemModel
-
     from gridstate.units import NetworkPU
+    from gridstate.working import Working
     from gridstate.z_vector import MeasurementIndex
 
 
@@ -138,7 +137,7 @@ def top_worst_residuals(
     return rows
 
 
-def top_worst_imbalance(model: PowerSystemModel, n: int = 10) -> list[ImbalanceRow]:
+def top_worst_imbalance(model: Working, n: int = 10) -> list[ImbalanceRow]:
     """Топ-``n`` узлов по ``|imbalance_p|`` после ``write_results_to_model``.
 
     ``imbalance_p/q`` уже посчитаны в МВт/МВАр (см. ``gridstate/units.py::

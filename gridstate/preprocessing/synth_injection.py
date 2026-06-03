@@ -46,7 +46,7 @@ def _synthesize_node_injection_on_arrays(
 ) -> tuple[list[dict], dict[str, int]]:
     """Построить pseudo P_inj/Q_inj-строки из branch-flow на контрактных массивах.
 
-    PSC-free ядро Ф4.1 (CLASS-1, append-паттерн): читает ТОЛЬКО контрактные колонки
+    vendor-free ядро (CLASS-1, append-паттерн): читает ТОЛЬКО контрактные колонки
     ``node.{id,status}``, ``branch.{status,from_node,to_node,ti_p_from,ti_q_from,
     ti_p_to,ti_q_to}``, ``measurement.{id,status,object_type,measurement_type,value,
     is_pseudo,object_id}``; НЕ мутирует входы, ВОЗВРАЩАЕТ ``(new_rows, stats)``.
@@ -209,7 +209,7 @@ def synthesize_node_injection_from_branch_flows(
        sigma_min_mw)``.
 
     Args:
-        model: ``PowerSystemModel`` (in-place).
+        model: ``Working`` (in-place).
         sigma_frac: фракция от |S| для σ pseudo-замера (default 5 %).
         sigma_min_mw: минимальный σ в МВт (для узлов с малой
             инжекцией, чтобы не получить σ→0).
@@ -271,7 +271,7 @@ def synthesize_block_bus_injection_from_branch_xml(
     σ доминирует ``sigma_min_mw`` — loose, не давит pseudo V=Vnom.
 
     Args:
-        model: ``PowerSystemModel`` (in-place).
+        model: ``Working`` (in-place).
         vn_threshold_kv: верхний предел Vnom для отнесения к блочной шине
             (default 25 кВ — покрывает 6/10/14/16/18/24/25 кВ блоки
             ТЭЦ/АЭС/ГЭС/ГРЭС).

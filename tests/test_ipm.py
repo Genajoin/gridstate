@@ -1,6 +1,6 @@
 """Тесты IPM-solver'а на синтетических задачах.
 
-Не зависят от power-system: проверяют чистую механику log-barrier WLS.
+Не зависят от модели сети: проверяют чистую механику log-barrier WLS.
 """
 
 from __future__ import annotations

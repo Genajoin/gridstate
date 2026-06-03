@@ -28,7 +28,7 @@ from gridstate.z_vector import build_z_and_r
 
 
 if TYPE_CHECKING:
-    from power_system import MeasurementCollection, PowerSystemModel
+    from gridstate.working import Working, _ArrayCollection
 
 
 @dataclass
@@ -58,13 +58,13 @@ class ObservabilityReport:
 
 
 def analyze_observability(
-    model: PowerSystemModel,
-    measurements: MeasurementCollection | None = None,
+    model: Working,
+    measurements: _ArrayCollection | None = None,
 ) -> ObservabilityReport:
     """Проверить наблюдаемость и вернуть отчёт.
 
     Args:
-        model: ``PowerSystemModel``.
+        model: ``Working``.
         measurements: коллекция измерений. ``None`` → ``model.measurements``.
 
     Returns:

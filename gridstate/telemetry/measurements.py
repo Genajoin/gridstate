@@ -1,6 +1,6 @@
 """Слияние/деактивация дубль-измерений z-вектора (F-step эталонной OC).
 
-Выделено из telemetry/topology.py (Ф4 раскол по концернам).
+Выделено из telemetry/topology.py (раскол по концернам).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def resolve_merged_measurement_conflicts(model) -> dict[str, int]:
     Не трогает branch-level измерения (mt=0/1, side=0/1).
 
     Args:
-        model: ``PowerSystemModel``.
+        model: ``Working``.
 
     Returns:
         ``{"resolved_v": N, "resolved_p_inj": N, "resolved_q_inj": N,
@@ -41,14 +41,14 @@ def resolve_merged_measurement_conflicts(model) -> dict[str, int]:
 
 
 def _resolve_merged_on_arrays(meas_arr) -> dict[str, int]:
-    """Ф4.1-ЯДРО (слайс 6): слияние дубль-measurements над контрактным массивом.
+    """ЯДРО: слияние дубль-measurements над контрактным массивом.
 
     Группирует active NODE-меры (``object_type==0``, ``measurement_type∈{2,4,5}``)
     по ключу ``(ot, object_id, mt, branch_side)``; для групп >1: V (mt=2) —
     weighted-average по ``1/variance`` (var clamp ``1e-12``), P/Q_inj (mt=4/5) —
     сумма value и variance. Оставляет первую строку (по порядку массива), остальные
     ``status=False``. ``weight`` первой строки = ``1/var`` (бывш. приватный
-    ``me._weight``). Мутирует ``meas_arr`` in place. БЕЗ PSC/XML. Порядок строк =
+    ``me._weight``). Мутирует ``meas_arr`` in place. БЕЗ внешних зависимостей и XML. Порядок строк =
     порядок объектов → бит-в-бит.
     """
     from collections import defaultdict
@@ -125,7 +125,7 @@ def deactivate_orphan_measurements(model) -> dict[str, int]:
     проверяет, что её object активен, иначе ставит ``status=False``.
 
     Args:
-        model: ``PowerSystemModel`` после всех topology-операций.
+        model: ``Working`` после всех topology-операций.
 
     Returns:
         ``{"branch_meas": N, "node_meas": N, "gen_meas": N,
@@ -143,11 +143,11 @@ def deactivate_orphan_measurements(model) -> dict[str, int]:
 
 
 def _deactivate_orphan_on_arrays(meas_arr, nodes_arr, branches_arr, gens_arr) -> dict[str, int]:
-    """Ф4.1-ЯДРО (слайс 6): деактивация measurements осиротевших объектов над контрактом.
+    """ЯДРО: деактивация measurements осиротевших объектов над контрактом.
 
     Строит множества active-id из ``branches_arr``/``nodes_arr``/``gens_arr``, для
     каждой active-меры с неактивным/отсутствующим объектом ставит ``status=False``.
-    Мутирует ``meas_arr`` in place. БЕЗ PSC/XML.
+    Мутирует ``meas_arr`` in place. БЕЗ внешних зависимостей и XML.
     """
     active_branches = {int(b["id"]) for b in branches_arr if b["status"]}
     active_nodes = {int(n["id"]) for n in nodes_arr if n["status"]}

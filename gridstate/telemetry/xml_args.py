@@ -111,11 +111,11 @@ def _apply_telemetry_on_arrays(
     q_loss_filter_action: str = "downweight",
     q_loss_filter_downweight_factor: float = 100.0,
 ) -> tuple[dict[str, int], list[dict]]:
-    """Ф7b-ЯДРО: применение телеметрии над контрактными numpy-массивами.
+    """ЯДРО: применение телеметрии над контрактными numpy-массивами.
 
     Чистая работа над ``SE_INPUT.measurements`` (``meas_arr``, мутируется
     in-place) / ``SE_INPUT.nodes`` (``nodes_arr``) / ``SE_INPUT.branches``
-    (``branches_arr``). БЕЗ PSC, БЕЗ snapshot, БЕЗ FORMULE: все XML/snapshot
+    (``branches_arr``). БЕЗ внешних зависимостей, БЕЗ snapshot, БЕЗ FORMULE: все XML/snapshot
     значения уже посчитаны адаптером и переданы в ``resolved`` —
     ``{(obj_id, kind): (value|None, n_resolved, guid_first, quality)}``.
     Порядок итерации задаётся ``arg_keys`` (= ``list(args.keys())``).

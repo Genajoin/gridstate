@@ -1,16 +1,13 @@
-"""Фаза 2 target-architecture: конвертеры на контракт (``gridstate.units``).
+"""Конвертеры на контракт (``gridstate.units``).
 
 Проверяет, что расщепление конвертеров на **массивные ядра** + тонкие
 модель-адаптеры — бит-в-бит (поведение не сместилось):
 
 * read-ядро ``network_pu_from_tables`` ≡ ``model_to_pu`` (поле в поле);
-* read-ядро работает на голых контрактных таблицах (БЕЗ ``PowerSystemModel``) —
-  демонстрация развязки, на которую опирается Фаза 5;
+* read-ядро работает на голых контрактных таблицах (без полноценной модели) —
+  демонстрация развязки конвертеров от объекта-модели;
 * write-ядра ``compute_node_results_pu`` / ``compute_branch_results_pu`` дают
   ровно те же величины, что эталонные формулы pu→именованные единицы.
-
-Замена тяжёлому canon-гейту на per-phase проверку (см.
-feedback-defer-heavy-gate-migration).
 """
 
 from __future__ import annotations
@@ -77,7 +74,7 @@ def test_network_pu_from_tables_bit_identical_to_model_to_pu():
 
 
 def test_read_core_runs_on_bare_contract_tables_without_model():
-    """read-ядро потребляет таблицы входного слоя контракта без PowerSystemModel."""
+    """read-ядро потребляет таблицы входного слоя контракта без полноценной модели."""
     nodes = np.zeros(2, dtype=SE_INPUT.nodes.input_dtype())
     nodes["id"] = [1, 2]
     nodes["voltage_nominal"] = [110.0, 110.0]

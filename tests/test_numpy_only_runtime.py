@@ -1,21 +1,23 @@
-"""ГЛАВНЫЙ ГЕЙТ Фазы 5: ``gridstate.pipeline.run`` исполняется БЕЗ ``power-system-core``.
+"""ГЛАВНЫЙ ГЕЙТ: ``gridstate.pipeline.run`` исполняется только на numpy/scipy.
 
-Фаза 5 миграции снимает рантайм-зависимость ядра gridstate от PSC. Доказательство —
-прогон полного пайплайна на ГОТОВОМ контрактном входе (``Working.from_arrays`` из
-numpy-массивов схемы :data:`gridstate.contract.SE_INPUT`), при котором PSC физически
-недоступен.
+Ядро gridstate не должно тянуть в рантайме никаких внешних vendor-библиотек —
+кроме numpy и scipy. Доказательство — прогон полного пайплайна на ГОТОВОМ
+контрактном входе (``Working.from_arrays`` из numpy-массивов схемы
+:data:`gridstate.contract.SE_INPUT`) при заблокированных «тяжёлых» сторонних
+зависимостях (``pandas`` / ``pandapower`` и т.п.).
 
 Два уровня:
 
 * :func:`test_run_passthrough_in_process` — быстрый in-process: ``from_arrays`` →
-  ``run(working)`` возвращает ``SEResult`` (проверка pass-through
-  ветки ``_build_working``: на вход ``Working`` → вернуть как есть, не строить
-  из PSC-модели). PSC в окружении ЕСТЬ, но путь его не трогает.
-* :func:`test_run_without_psc_subprocess` — главный гейт: дочерний процесс ставит
-  ``sys.meta_path``-блокатор (любой ``import power_system[...]`` → ``ImportError``)
-  и чистит уже загруженный PSC из ``sys.modules``, ЗАТЕМ ``import gridstate.pipeline``
-  + строит контрактный ``Working`` + зовёт ``run(...)``. Печатает маркер; тест
-  ассертит маркер в stdout и отсутствие ImportError-трейса.
+  ``run(working)`` возвращает ``SEResult`` (проверка pass-through ветки
+  ``_build_working``: на вход ``Working`` → вернуть как есть, не строить из
+  модели-источника).
+* :func:`test_run_without_vendor_deps_subprocess` — главный гейт: дочерний
+  процесс ставит ``sys.meta_path``-блокатор (любой import запрещённой vendor-
+  библиотеки → ``ImportError``) и чистит её из ``sys.modules``, ЗАТЕМ
+  ``import gridstate.pipeline`` + строит контрактный ``Working`` + зовёт
+  ``run(...)``. Печатает маркер; тест ассертит маркер в stdout и отсутствие
+  ImportError-трейса.
 
 Контрактная модель (общая для обоих уровней) — маленькая наблюдаемая сеть:
 slack (110 кВ) + 1 PQ-узел c нагрузкой, 1 ВЛ, V-меры на обоих узлах + P/Q-перетоки
@@ -26,9 +28,7 @@ slack (110 кВ) + 1 PQ-узел c нагрузкой, 1 ВЛ, V-меры на �
 OUTPUT-колонки (``estimated_si`` на мерах, ``p_inj_calc`` на узлах, перетоки на
 ветвях) через ``write_*_estimates``. Поэтому массивы строятся по dtype =
 ``input_dtype()`` ⊕ ``output_dtype()`` (объединение INPUT/WORKING и OUTPUT-ролей
-контракта) — ровно тот набор колонок, который материализует PSC ``to_numpy()`` и
-которым пользуется ``Working.from_model``. Хелпер :func:`_io_dtype` собирает его из
-контракта (никаких PSC-DTYPE).
+контракта). Хелпер :func:`_io_dtype` собирает его из контракта.
 """
 
 from __future__ import annotations
@@ -40,7 +40,13 @@ import textwrap
 import numpy as np
 
 
-# Скрипт дочернего процесса: блокирует PSC, затем гоняет run() PSC-free.
+# Внешние vendor-библиотеки, которые ядро gridstate НЕ должно импортировать в
+# рантайме. ``pandas``/``pandapower`` присутствуют в окружении (test/adapter-
+# зависимости), но прогон ``run()`` обязан обходиться без них — только numpy/scipy.
+_FORBIDDEN_VENDOR_MODULES = ("pandas", "pandapower")
+
+
+# Скрипт дочернего процесса: блокирует vendor-deps, затем гоняет run() на numpy/scipy.
 # Хелпер построения контрактной модели вынесен в общий блок, чтобы его исполнял и
 # in-process тест, и subprocess (через exec одного и того же текста — единый
 # источник правды по полям модели).
@@ -51,11 +57,11 @@ _BUILD_MODEL_SRC = textwrap.dedent(
 
 
     def _io_dtype(in_schema, out_schema):
-        """dtype = INPUT/WORKING-колонки ⊕ OUTPUT-колонки контракта (без PSC).
+        """dtype = INPUT/WORKING-колонки ⊕ OUTPUT-колонки контракта.
 
         Пайплайн пишет OUTPUT-колонки (estimated_*/p_inj_calc/перетоки) в backing-
         массив рабочего слоя — их обязан нести dtype коллекции, иначе _RowProxy
-        отклонит запись. Объединяем роли так же, как материализует PSC to_numpy().
+        отклонит запись. Объединяем роли так же, как материализует to_numpy().
         """
         in_dt = in_schema.input_dtype()
         fields = list(in_dt.descr)
@@ -154,40 +160,56 @@ _RUN_SRC = textwrap.dedent(
 )
 
 
-_SUBPROCESS_SCRIPT = (
-    textwrap.dedent(
-        '''
+# Текст блокатора vendor-deps. Параметризован кортежем имён через repr, чтобы
+# использоваться и в главном гейте, и в негативном контроле.
+def _blocker_src(forbidden: tuple[str, ...]) -> str:
+    return textwrap.dedent(
+        f"""
         import sys
         import importlib.abc
 
+        _FORBIDDEN = {forbidden!r}
 
-        class _PSCBlocker(importlib.abc.MetaPathFinder):
-            """Любой import power_system[...] → ImportError (PSC недоступен)."""
+
+        def _is_forbidden(fullname):
+            top = fullname.split(".", 1)[0]
+            return top in _FORBIDDEN
+
+
+        class _VendorBlocker(importlib.abc.MetaPathFinder):
+            \"\"\"Любой import запрещённой vendor-библиотеки → ImportError.\"\"\"
 
             def find_spec(self, fullname, path, target=None):
-                if fullname == "power_system" or fullname.startswith("power_system."):
-                    raise ImportError("BLOCKED PSC import: " + fullname)
+                if _is_forbidden(fullname):
+                    raise ImportError("BLOCKED vendor import: " + fullname)
                 return None
 
 
-        # Выкидываем уже загруженный PSC из кэша + ставим блокатор ПЕРВЫМ.
+        # Выкидываем уже загруженные запрещённые модули из кэша + ставим блокатор ПЕРВЫМ.
         for _name in list(sys.modules):
-            if _name == "power_system" or _name.startswith("power_system."):
+            if _is_forbidden(_name):
                 del sys.modules[_name]
-        sys.meta_path.insert(0, _PSCBlocker())
+        sys.meta_path.insert(0, _VendorBlocker())
+        """
+    )
 
-        # Самопроверка: PSC действительно недоступен.
+
+_SUBPROCESS_SCRIPT = (
+    _blocker_src(_FORBIDDEN_VENDOR_MODULES)
+    + textwrap.dedent(
+        """
+        # Самопроверка: запрещённая библиотека действительно недоступна.
         try:
-            import power_system  # noqa: F401
+            import pandas  # noqa: F401
 
-            print("PSC_NOT_BLOCKED")
+            print("VENDOR_NOT_BLOCKED")
             sys.exit(2)
         except ImportError:
             pass
 
-        # Ядро импортируется PSC-free.
+        # Ядро импортируется без vendor-deps.
         import gridstate.pipeline  # noqa: F401
-        '''
+        """
     )
     + _BUILD_MODEL_SRC
     + _RUN_SRC
@@ -198,8 +220,7 @@ def test_run_passthrough_in_process():
     """In-process: ``from_arrays`` → ``run(working)`` → ``SEResult``.
 
     Проверяет pass-through ветку ``_build_working`` (на вход ``Working`` —
-    возвращается как есть, PSC-модель не строится). PSC в окружении есть, но путь
-    его не использует.
+    возвращается как есть, модель-источник не строится).
     """
     ns: dict = {}
     exec(_BUILD_MODEL_SRC, ns)
@@ -221,10 +242,11 @@ def test_run_passthrough_in_process():
     assert 0.9 < float(np.max(res.v_pu)) <= 1.05
 
 
-def test_run_without_psc_subprocess():
-    """Главный гейт: ``run`` исполняется в subprocess с ЗАБЛОКИРОВАННЫМ PSC.
+def test_run_without_vendor_deps_subprocess():
+    """Главный гейт: ``run`` исполняется в subprocess с ЗАБЛОКИРОВАННЫМИ vendor-deps.
 
-    (a) процесс завершился успешно (rc=0) без ImportError на ``power_system``;
+    (a) процесс завершился успешно (rc=0) без ImportError на запрещённую vendor-
+        библиотеку;
     (b) напечатан маркер ``RUN_OK success=... iters=... vmax=...`` с success=True.
     """
     proc = subprocess.run(
@@ -235,24 +257,24 @@ def test_run_without_psc_subprocess():
     )
     stdout, stderr = proc.stdout, proc.stderr
 
-    # (a) PSC-free исполнение — без падения и без утечки PSC-импорта.
-    assert "PSC_NOT_BLOCKED" not in stdout, (
-        f"PSC оказался доступен в дочернем процессе (блокатор не сработал).\n"
+    # (a) Прогон без vendor-deps — без падения и без утечки запрещённого импорта.
+    assert "VENDOR_NOT_BLOCKED" not in stdout, (
+        f"запрещённая vendor-библиотека оказалась доступна (блокатор не сработал).\n"
         f"stdout:\n{stdout}\nstderr:\n{stderr}"
     )
     assert proc.returncode == 0, (
         f"дочерний процесс упал (rc={proc.returncode}).\nstdout:\n{stdout}\nstderr:\n{stderr}"
     )
-    # Ни одного ImportError на power_system в трейсе (косвенный рантайм-импорт PSC).
-    assert "power_system" not in stderr or "BLOCKED PSC import" not in stderr, (
-        f"в трейсе всплыл PSC-импорт (рантайм-зависимость не снята):\nstderr:\n{stderr}"
+    # Ни одного ImportError на запрещённую библиотеку в трейсе (косвенный рантайм-импорт).
+    assert "BLOCKED vendor import" not in stderr, (
+        f"в трейсе всплыл запрещённый vendor-импорт (рантайм-зависимость не снята):\nstderr:\n{stderr}"
     )
     assert stderr.strip() == "", f"неожиданный stderr дочернего процесса:\n{stderr}"
 
     # (b) маркер успеха.
     marker = next((ln for ln in stdout.splitlines() if ln.startswith("RUN_OK")), None)
     assert marker is not None, f"нет маркера RUN_OK в stdout:\n{stdout}"
-    assert "success=True" in marker, f"run не сошёлся PSC-free: {marker}"
+    assert "success=True" in marker, f"run не сошёлся без vendor-deps: {marker}"
     # iters/vmax распарсиваются (run вернул валидный SEResult).
     fields = dict(tok.split("=", 1) for tok in marker.split()[1:])
     assert int(fields["iters"]) >= 1, marker
@@ -261,33 +283,18 @@ def test_run_without_psc_subprocess():
 
 
 def test_subprocess_blocker_actually_blocks():
-    """Контроль негатива: блокатор реально валит ``import power_system`` (rc=2).
+    """Контроль негатива: блокатор реально валит ``import pandas`` (rc=2).
 
-    Без этого теста зелёный subprocess мог бы означать «блокатор no-op, PSC просто
-    был доступен». Прогоняем урезанный скрипт, который пытается импортнуть PSC
-    ПОСЛЕ установки блокатора и должен выйти с кодом 2 (PSC_NOT_BLOCKED не печатается).
+    Без этого теста зелёный subprocess мог бы означать «блокатор no-op, vendor-
+    библиотека просто была доступна». Прогоняем урезанный скрипт, который пытается
+    импортнуть запрещённую библиотеку ПОСЛЕ установки блокатора и должен выйти с
+    кодом 2 (``VENDOR_NOT_BLOCKED`` не печатается).
     """
-    script = textwrap.dedent(
+    script = _blocker_src(_FORBIDDEN_VENDOR_MODULES) + textwrap.dedent(
         """
-        import sys
-        import importlib.abc
-
-
-        class _PSCBlocker(importlib.abc.MetaPathFinder):
-            def find_spec(self, fullname, path, target=None):
-                if fullname == "power_system" or fullname.startswith("power_system."):
-                    raise ImportError("BLOCKED PSC import: " + fullname)
-                return None
-
-
-        for _name in list(sys.modules):
-            if _name == "power_system" or _name.startswith("power_system."):
-                del sys.modules[_name]
-        sys.meta_path.insert(0, _PSCBlocker())
-
         try:
-            import power_system  # noqa: F401
-            print("PSC_NOT_BLOCKED")
+            import pandas  # noqa: F401
+            print("VENDOR_NOT_BLOCKED")
             sys.exit(0)
         except ImportError:
             print("BLOCK_CONFIRMED")
@@ -299,4 +306,4 @@ def test_subprocess_blocker_actually_blocks():
     )
     assert proc.returncode == 2, f"блокатор не сработал: rc={proc.returncode}\n{proc.stdout}"
     assert "BLOCK_CONFIRMED" in proc.stdout
-    assert "PSC_NOT_BLOCKED" not in proc.stdout
+    assert "VENDOR_NOT_BLOCKED" not in proc.stdout

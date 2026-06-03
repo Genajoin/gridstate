@@ -1,13 +1,13 @@
-"""Ф4.1 (слайс 3, CLASS-1 pseudo-слой): ядро mirror_voltage на контрактных массивах.
+"""Ядро mirror_voltage на контрактных массивах.
 
 В отличие от каскадных функций (мутируют существующую колонку →
 ``update_from_array``), pseudo-слой ДОБАВЛЯЕТ measurement-строки. Шов иной:
-``_mirror_voltage_on_arrays`` — PSC-free ядро, читающее ТОЛЬКО контрактные
+``_mirror_voltage_on_arrays`` — vendor-free ядро, читающее ТОЛЬКО контрактные
 колонки nodes/branches/measurements и ВОЗВРАЩАЮЩЕЕ ``new_rows: list[dict]``;
 тонкий адаптер делает ``model.measurements.add()`` построчно. Здесь проверяем
-(a) корректность ядра на «голых» ``SE_INPUT``-массивах (без ``PowerSystemModel``),
+(a) корректность ядра на «голых» ``SE_INPUT``-массивах (без полноценной модели),
 (b) дословную collision-skip-семантику раздачи id, (c) совпадение плана ядра с
-фактическим эффектом адаптера на PSC-модели. Бит-в-бит модели стережёт canon
+фактическим эффектом адаптера на модели. Бит-в-бит модели стережёт canon
 (transitively), здесь — контрактная чистота и append-семантика.
 """
 
@@ -276,11 +276,11 @@ def test_mirror_core_free_id_collision_skip():
 
 
 # ---------------------------------------------------------------------------
-# План ядра == эффект адаптера на PSC-модели
+# План ядра == эффект адаптера на модели
 # ---------------------------------------------------------------------------
 
 
-def _build_psc_model():
+def _build_model():
     from gridstate.constants import BranchType
     from gridstate.working import Working
 
@@ -349,7 +349,7 @@ def _build_psc_model():
 
 def test_adapter_effect_matches_core_plan():
     """Адаптер добавляет ровно те строки (id, object_id, value, variance), что вернуло ядро."""
-    m = _build_psc_model()
+    m = _build_model()
 
     plan = _mirror_voltage_on_arrays(
         m.nodes.to_numpy(), m.branches.to_numpy(), m.measurements.to_numpy(), mid_start=_MID

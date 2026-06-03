@@ -56,7 +56,7 @@ def _add_pseudo_measurements_on_arrays(
 ) -> tuple[list[dict], dict]:
     """Построить pseudo V/P_inj/Q_inj-строки на контрактных массивах (НЕ мутирует входы).
 
-    PSC-free ядро Ф4.1 (CLASS-1, append-паттерн): читает ТОЛЬКО контрактные колонки
+    vendor-free ядро (CLASS-1, append-паттерн): читает ТОЛЬКО контрактные колонки
     nodes/branches/measurements + готовый ``node_load_props`` (резолвит адаптер);
     ВОЗВРАЩАЕТ ``(new_rows, stats)``. Семантика kwargs — см. адаптер
     ``add_pseudo_measurements``.
@@ -411,7 +411,7 @@ def add_pseudo_measurements(
          ``10·zero_inj_variance``.
 
     Args:
-        model: PowerSystemModel для модификации (in-place).
+        model: Working для модификации (in-place).
         add_voltage_priors: добавлять ли V-прайоры.
         add_zero_injections: добавлять ли P/Q-инжекции.
         voltage_prior_variance: явное σ²; ``None`` — авто.
