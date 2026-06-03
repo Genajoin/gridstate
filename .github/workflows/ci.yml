@@ -85,11 +85,12 @@ jobs:
           cp tests/test_data/ieee/case14.npz /tmp/case14.npz
           cd /tmp
           /tmp/smoke-env/bin/python - <<'PY'
-          import gridstate
+          from importlib.metadata import version
+
           from gridstate import load_se_input_npz, run_se
           from gridstate.pipeline import PipelineConfig
 
-          print("gridstate version:", gridstate.__version__)
+          print("gridstate version:", version("gridstate"))
           se_in = load_se_input_npz("/tmp/case14.npz")
           out = run_se(se_in, config=PipelineConfig(algorithm="wls"), validate=False)
           assert out.success, "WLS failed to converge on IEEE case14 from the built wheel"
