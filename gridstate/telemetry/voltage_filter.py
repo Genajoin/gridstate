@@ -17,14 +17,22 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import numpy as np
+
 from gridstate.constants import (
     MeasurementObjectType,
     MeasurementType,
 )
 
 
+if TYPE_CHECKING:
+    from gridstate.working import Working
+
+
 def apply_voltage_range_filter(
-    model,
+    model: Working,
     *,
     upper_margin_pct: float = 10.0,
     min_voltage_nominal_kv: float = 110.0,
@@ -110,8 +118,8 @@ def apply_voltage_range_filter(
 
 
 def _voltage_range_filter_on_arrays(
-    meas_arr,
-    nodes_arr,
+    meas_arr: np.ndarray,
+    nodes_arr: np.ndarray,
     *,
     ot_node: int,
     mt_v: int,
@@ -132,12 +140,12 @@ def _voltage_range_filter_on_arrays(
     """
     node_by_id: dict[int, int] = {int(r["id"]): i for i, r in enumerate(nodes_arr)}
 
-    stats = {
+    counters: dict[str, int] = {
         "checked": 0,
         "out_of_range": 0,
         "downweighted_nominal_substitution": 0,
-        "by_vnom": {},
     }
+    by_vnom: dict[int, int] = {}
 
     for i, m in enumerate(meas_arr):
         if not bool(m["status"]):
@@ -157,9 +165,9 @@ def _voltage_range_filter_on_arrays(
             # apply_telemetry уже фильтрует V<50%Vn для TM-формул, но
             # measurement мог попасть из внешнего источника (manual seed,
             # SQL-импорт, повторное apply); этот guard закрывает дыру.
-            stats["out_of_range"] += 1
+            counters["out_of_range"] += 1
             v_nom_int = round(v_nom)
-            stats["by_vnom"][v_nom_int] = stats["by_vnom"].get(v_nom_int, 0) + 1
+            by_vnom[v_nom_int] = by_vnom.get(v_nom_int, 0) + 1
             if action == "deactivate":
                 meas_arr[i]["status"] = False
             else:
@@ -176,7 +184,9 @@ def _voltage_range_filter_on_arrays(
         half_nom = v_nom * 0.5
         v_crit = float(nodes_arr[ni]["voltage_critical"])
         v_min = (
-            float(nodes_arr[ni]["voltage_min"]) if "voltage_min" in nodes_arr.dtype.names else 0.0
+            float(nodes_arr[ni]["voltage_min"])
+            if "voltage_min" in (nodes_arr.dtype.names or ())
+            else 0.0
         )
         if v_crit >= half_nom:
             lo = v_crit
@@ -193,12 +203,12 @@ def _voltage_range_filter_on_arrays(
             v_max * (1.0 + upper_margin_pct / 100.0) if v_max > 0 else v_nom * upper_fallback_factor
         )
 
-        stats["checked"] += 1
+        counters["checked"] += 1
         v_nom_int = round(v_nom)
-        stats["by_vnom"][v_nom_int] = stats["by_vnom"].get(v_nom_int, 0) + 1
+        by_vnom[v_nom_int] = by_vnom.get(v_nom_int, 0) + 1
 
         if v_meas < lo or v_meas > hi:
-            stats["out_of_range"] += 1
+            counters["out_of_range"] += 1
             if action == "deactivate":
                 meas_arr[i]["status"] = False
             else:  # downweight
@@ -213,13 +223,18 @@ def _voltage_range_filter_on_arrays(
             meas_arr[i]["variance"] = new_var
             meas_arr[i]["weight"] = 1.0 / new_var if new_var > 0 else 0.0
             meas_arr[i]["quality"] = 1  # QUESTIONABLE
-            stats["downweighted_nominal_substitution"] += 1
+            counters["downweighted_nominal_substitution"] += 1
 
-    return stats
+    return {
+        "checked": counters["checked"],
+        "out_of_range": counters["out_of_range"],
+        "downweighted_nominal_substitution": counters["downweighted_nominal_substitution"],
+        "by_vnom": by_vnom,
+    }
 
 
 def apply_voltage_meas_calibration_for_gen_nodes(
-    model,
+    model: Working,
     *,
     sigma2: float = 0.1,
 ) -> dict:
@@ -275,8 +290,8 @@ def apply_voltage_meas_calibration_for_gen_nodes(
 
 
 def _voltage_meas_calibration_on_arrays(
-    meas_arr,
-    nodes_arr,
+    meas_arr: np.ndarray,
+    nodes_arr: np.ndarray,
     *,
     slack_type: int,
     ot_node: int,
@@ -294,7 +309,8 @@ def _voltage_meas_calibration_on_arrays(
         if not bool(n["status"]):
             continue
         if int(n["node_type"]) == slack_type or (
-            "generation_p_max" in nodes_arr.dtype.names and float(n["generation_p_max"]) != 0.0
+            "generation_p_max" in (nodes_arr.dtype.names or ())
+            and float(n["generation_p_max"]) != 0.0
         ):
             target_ids.add(int(n["id"]))
 

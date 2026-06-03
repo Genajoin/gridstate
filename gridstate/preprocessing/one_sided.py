@@ -39,7 +39,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 
 if TYPE_CHECKING:
@@ -180,12 +180,12 @@ def fold_one_sided_branches(
             is_line = int(b["branch_type"]) == _LINE
             tap_unity = abs(float(b["tap_ratio"]) - 1.0) <= 1e-6
             if not (is_line and tap_unity):
-                stats["skipped_transformer"] = int(stats["skipped_transformer"]) + 1  # type: ignore[arg-type]
+                stats["skipped_transformer"] = cast(int, stats["skipped_transformer"]) + 1
                 continue
 
         r, x = float(b["resistance"]), float(b["reactance"])
         if r == 0.0 and x == 0.0:
-            stats["skipped_breaker"] = int(stats["skipped_breaker"]) + 1  # type: ignore[arg-type]
+            stats["skipped_breaker"] = cast(int, stats["skipped_breaker"]) + 1
             continue
 
         g, bb = float(b["conductance"]), float(b["susceptance"])
@@ -199,7 +199,7 @@ def fold_one_sided_branches(
 
         shunt_mag = abs(bb) + abs(bf) + abs(bt) + abs(g) + abs(gf) + abs(gt)
         if require_charging and shunt_mag <= eps_shunt_s:
-            stats["skipped_zero_shunt"] = int(stats["skipped_zero_shunt"]) + 1  # type: ignore[arg-type]
+            stats["skipped_zero_shunt"] = cast(int, stats["skipped_zero_shunt"]) + 1
             continue
 
         y_seen = _driving_point_shunt(r, x, g, bb, g_live, b_live, g_dead, b_dead)
@@ -214,8 +214,8 @@ def fold_one_sided_branches(
         vn = vnom.get(live, 0.0)
         # Q[МВАр] = b[См]·(vn[кВ])²:  b·(vn·1e3 В)² = b·vn²·1e6 ВАр = b·vn² МВАр.
         q_mvar = y_seen.imag * vn * vn  # ёмкостная Q при V=Vnom
-        stats["folded"] = int(stats["folded"]) + 1  # type: ignore[arg-type]
-        stats["q_folded_mvar_at_vnom"] = float(stats["q_folded_mvar_at_vnom"]) + q_mvar  # type: ignore[arg-type]
+        stats["folded"] = cast(int, stats["folded"]) + 1
+        stats["q_folded_mvar_at_vnom"] = cast(float, stats["q_folded_mvar_at_vnom"]) + q_mvar
         if len(samples) < 30:
             samples.append(
                 {

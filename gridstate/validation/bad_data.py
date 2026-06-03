@@ -34,6 +34,7 @@ from gridstate.validation._diagnostics import compute_diagnostics
 
 
 if TYPE_CHECKING:
+    from gridstate.validation._diagnostics import Diagnostics
     from gridstate.working import Working, _ArrayCollection
 
 
@@ -167,7 +168,7 @@ class BadDataResult:
     converged: bool = False
 
 
-def _normalized_residuals(diag) -> np.ndarray:
+def _normalized_residuals(diag: Diagnostics) -> np.ndarray:
     """``r^N = |r| / √(diag(Ω))``, где ``Ω = R − H G⁻¹ Hᵀ``.
 
     Если ``Ω_ii`` численно равно нулю или отрицательно (плохая обусловленность

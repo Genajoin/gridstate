@@ -132,7 +132,9 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
     arrays[_SKIPPED_KEY] = np.asarray(skipped, dtype="<U64")
 
     out = Path(path)
-    np.savez(out, **arrays)
+    # mypy: **arrays статически коллидирует с keyword-only allow_pickle: bool в
+    # savez; ключи arrays — только имена data-массивов, allow_pickle среди них нет.
+    np.savez(out, **arrays)  # type: ignore[arg-type]
     # numpy дописывает .npz, если расширения нет — вернём фактическое имя.
     return out if out.suffix == ".npz" else out.with_suffix(".npz")
 

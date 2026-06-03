@@ -74,11 +74,11 @@ build = [
     "wheel",
 ]
 
-# [project.urls] — fill in once the GitHub repository exists:
-# [project.urls]
-# Homepage = "https://github.com/<user>/gridstate"
-# Repository = "https://github.com/<user>/gridstate.git"
-# Issues = "https://github.com/<user>/gridstate/issues"
+[project.urls]
+Homepage = "https://github.com/Genajoin/gridstate"
+Repository = "https://github.com/Genajoin/gridstate.git"
+Issues = "https://github.com/Genajoin/gridstate/issues"
+Changelog = "https://github.com/Genajoin/gridstate/blob/main/CHANGELOG.md"
 
 # PyInstaller hook: when shipped as compiled extensions the package has no .py
 # for static analysis to discover, so the hook is registered explicitly.
@@ -114,8 +114,11 @@ warn_unused_ignores = true
 warn_unreachable = true
 strict_equality = true
 
+# Third-party libraries without bundled type stubs / py.typed marker. scipy ships
+# no stubs; pandapower (fixture generation only) and PyInstaller (build hook) are
+# likewise untyped. Suppress import-untyped for these — our own code stays typed.
 [[tool.mypy.overrides]]
-module = "numba.*"
+module = ["numba.*", "scipy.*", "pandapower.*", "PyInstaller.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

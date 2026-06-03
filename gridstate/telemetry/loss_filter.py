@@ -54,11 +54,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from gridstate.constants import (
     MeasurementObjectType,
     MeasurementType,
 )
+
+
+if TYPE_CHECKING:
+    from gridstate.working import Working
 
 
 # Соответствие пары (i, j) → виновное ТИ. Ключи (i<j).
@@ -249,7 +254,7 @@ def _identify_outlier_pair(
 
 
 def analyze_branch_loss_consistency(
-    model,
+    model: Working,
     *,
     sens_err_mw: float = 25.0,
     sens_err_pct: float = 150.0,
@@ -421,8 +426,11 @@ def analyze_branch_loss_consistency(
 
         if action == "deactivate":
             arr[ki]["status"] = False
+            field_names = arr.dtype.names
             arr[ki]["filter_flag"] = (
-                3 if "filter_flag" in arr.dtype.names else arr[ki]["filter_flag"]
+                3
+                if field_names is not None and "filter_flag" in field_names
+                else arr[ki]["filter_flag"]
             )
         else:
             new_var = float(arr[ki]["variance"]) * downweight_factor

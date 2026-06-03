@@ -46,6 +46,7 @@ from gridstate.preprocessing import (
     mirror_voltage_through_unit_tap_links,
     synthesize_node_injection_from_branch_flows,
 )
+from gridstate.result import SEResult
 from gridstate.telemetry import (
     aggregate_generators_to_node,
     apply_generator_status_from_node,
@@ -386,7 +387,7 @@ class _Ctx:
     model: Any
     cfg: PipelineConfig
     derived: DerivedInputs | None = None
-    result: Any = None
+    result: SEResult | None = None
 
 
 @dataclass(frozen=True)
@@ -468,6 +469,7 @@ def _s_telemetry(ctx: _Ctx) -> dict:
     # (на входе measurements приходят со status=True) выполняет само ядро
     # _apply_telemetry_on_arrays (arr["status"]=False перед активацией).
     assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
+    assert ctx.derived.telemetry_arg_keys is not None
     return dict(
         apply_telemetry_resolved(
             ctx.model,
@@ -590,10 +592,11 @@ def _s_estimate(ctx: _Ctx) -> dict:
 
 
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
+    assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
     cfg = ctx.cfg
     huber_c = _effective_huber_c(cfg)
 
-    def _resolve():
+    def _resolve() -> SEResult:
         # warm re-solve: init="results" + запас итераций (на 80 обрывается → мнимая
         # несходимость). WLS tol=1e-4, IPM tol=1e-3 — как в stage_c_after_oc.
         kw: dict[str, Any] = {
@@ -905,7 +908,7 @@ def run(
     derived: DerivedInputs | None = None,
     on_event: Callable[[dict], None] | None = None,
     init_state: Any = None,
-):
+) -> SEResult:
     """Прогнать полный SE-пайплайн и вернуть ``SEResult``. **Input read-only.**
 
     ``run`` — чистая функция ``(Input, config) → Output``: входная ``model`` НЕ
@@ -1016,6 +1019,7 @@ def run(
             "iterations": int(getattr(ctx.result, "iterations", 0)),
         },
     )
+    assert ctx.result is not None  # _s_estimate (без toggle) всегда заполняет result
     return ctx.result
 
 

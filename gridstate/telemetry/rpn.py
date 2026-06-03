@@ -7,11 +7,18 @@ float-ядро ``_apply_rpn_on_arrays`` + адаптер ``apply_rpn_resolved`` 
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+
+if TYPE_CHECKING:
+    from gridstate.working import Working
 
 
 def _apply_rpn_on_arrays(
-    branches_arr,
-    shema_ktr_arr,
+    branches_arr: np.ndarray,
+    shema_ktr_arr: np.ndarray | None,
     resolved_taps: list[tuple[int, int, int, int]],
     *,
     skipped_no_branch: int = 0,
@@ -174,7 +181,7 @@ def _apply_rpn_on_arrays(
 
 
 def apply_rpn_resolved(
-    model,
+    model: Working,
     resolved_taps: list[tuple[int, int, int, int]],
     *,
     skipped_no_branch: int = 0,

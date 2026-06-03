@@ -47,3 +47,30 @@ jobs:
           name: dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: GitHub Release
+    # Independent of PyPI publish: depends only on a good build, so a GitHub
+    # Release (with attached artifacts) is created even if the PyPI step is
+    # not yet wired (e.g. before the trusted publisher is configured). Re-run
+    # the publish job separately once PyPI is set up.
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the release + upload assets
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so --generate-notes can diff against the previous tag
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Create GitHub Release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*

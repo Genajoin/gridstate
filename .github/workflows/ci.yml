@@ -26,8 +26,7 @@ jobs:
   typecheck:
     name: Type check (mypy)
     runs-on: ubuntu-latest
-    # mypy is advisory for now (matches the previous allow_failure setup).
-    continue-on-error: true
+    # Required gate: mypy must be clean before merge (see branch protection).
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,7 +62,7 @@ jobs:
   build:
     name: Build (sdist + wheel)
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, typecheck, test]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,6 +73,28 @@ jobs:
       - run: pip install build
       - run: python -m build
       - run: pipx run twine check dist/*
+      # Release readiness: the distributable wheel must install into a clean
+      # environment and actually solve a real case — not merely pass metadata
+      # checks. Run from /tmp so `import gridstate` resolves to the INSTALLED
+      # wheel, not the source tree in the workspace.
+      - name: Smoke-test built wheel in a clean environment
+        run: |
+          python -m venv /tmp/smoke-env
+          /tmp/smoke-env/bin/pip install --upgrade pip
+          /tmp/smoke-env/bin/pip install "$(ls dist/*.whl)"
+          cp tests/test_data/ieee/case14.npz /tmp/case14.npz
+          cd /tmp
+          /tmp/smoke-env/bin/python - <<'PY'
+          import gridstate
+          from gridstate import load_se_input_npz, run_se
+          from gridstate.pipeline import PipelineConfig
+
+          print("gridstate version:", gridstate.__version__)
+          se_in = load_se_input_npz("/tmp/case14.npz")
+          out = run_se(se_in, config=PipelineConfig(algorithm="wls"), validate=False)
+          assert out.success, "WLS failed to converge on IEEE case14 from the built wheel"
+          print(f"wheel smoke OK - success={out.success} iters={out.iterations}")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: dist

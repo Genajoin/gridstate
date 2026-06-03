@@ -14,7 +14,7 @@ branch-flow'ами, но без P_inj/Q_inj-замера, попадают в
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -26,6 +26,10 @@ from gridstate.z_vector import (
     OBJ_BRANCH,
     OBJ_NODE,
 )
+
+
+if TYPE_CHECKING:
+    from gridstate.working import Working
 
 
 __all__ = [
@@ -183,7 +187,7 @@ def _synthesize_node_injection_on_arrays(
 
 
 def synthesize_node_injection_from_branch_flows(
-    model,
+    model: Working,
     *,
     sigma_frac: float = 0.05,
     sigma_min_mw: float = 5.0,
@@ -240,7 +244,7 @@ def synthesize_node_injection_from_branch_flows(
 
 
 def synthesize_block_bus_injection_from_branch_xml(
-    model,
+    model: Working,
     *,
     vn_threshold_kv: float = 25.0,
     sigma_frac: float = 0.05,
@@ -295,7 +299,8 @@ def synthesize_block_bus_injection_from_branch_xml(
     for r in meas_arr:
         if not bool(r["status"]):
             continue
-        if bool(r["is_pseudo"]) if "is_pseudo" in meas_arr.dtype.names else False:
+        names = meas_arr.dtype.names
+        if bool(r["is_pseudo"]) if names is not None and "is_pseudo" in names else False:
             continue
         if int(r["object_type"]) != OBJ_NODE:
             continue

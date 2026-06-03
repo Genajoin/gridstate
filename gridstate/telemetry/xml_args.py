@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from statistics import median
+from typing import TYPE_CHECKING
+
+import numpy as np
 
 from gridstate.telemetry._specs import (
     _INJ_MT,
@@ -23,8 +26,12 @@ from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_QUESTIONABLE, aggre
 from gridstate.telemetry.units import variance_branch_q, variance_power, variance_voltage
 
 
+if TYPE_CHECKING:
+    from gridstate.working import Working
+
+
 def apply_telemetry_resolved(
-    model,
+    model: Working,
     resolved: dict[tuple[int, str], tuple[float | None, int, str, int]],
     arg_keys: list[tuple[int, str]],
     *,
@@ -88,9 +95,9 @@ def apply_telemetry_resolved(
 
 
 def _apply_telemetry_on_arrays(
-    meas_arr,
-    nodes_arr,
-    branches_arr,
+    meas_arr: np.ndarray,
+    nodes_arr: np.ndarray,
+    branches_arr: np.ndarray,
     arg_keys: list[tuple[int, str]],
     resolved: dict[tuple[int, str], tuple[float | None, int, str, int]],
     *,
@@ -460,7 +467,7 @@ def _val_twin(a: float, b: float, rtol: float, atol: float) -> bool:
 
 
 def assign_cod_from_xml(
-    model,
+    model: Working,
     args: dict[tuple[int, str], FormulaSpec],
     *,
     dup_val_rtol: float = 0.01,
@@ -508,10 +515,11 @@ def assign_cod_from_xml(
 
     # активные меры с известным NUMER → группировка
     groups: dict[str, list[int]] = defaultdict(list)  # numer → row idx
+    field_names = arr.dtype.names or ()
     for i in range(len(arr)):
         if not bool(arr[i]["status"]):
             continue
-        if "is_pseudo" in arr.dtype.names and bool(arr[i]["is_pseudo"]):
+        if "is_pseudo" in field_names and bool(arr[i]["is_pseudo"]):
             continue
         key = (
             int(arr[i]["object_type"]),
@@ -519,9 +527,9 @@ def assign_cod_from_xml(
             int(arr[i]["branch_side"]),
             int(arr[i]["object_id"]),
         )
-        nmr = numer_by_key.get(key)
-        if nmr:
-            groups[nmr].append(i)
+        nmr_lookup = numer_by_key.get(key)
+        if nmr_lookup:
+            groups[nmr_lookup].append(i)
 
     stats = {"clusters": 0, "marked_cod7": 0, "dropped": 0, "groups_numer": len(groups)}
     for _nmr, idxs in groups.items():
@@ -560,7 +568,7 @@ def assign_cod_from_xml(
 
 
 def _materialize_area_on_arrays(
-    nodes_arr,
+    nodes_arr: np.ndarray,
     obs: dict[int, float],
     *,
     max_col: str,
@@ -650,7 +658,7 @@ def _materialize_area_on_arrays(
 
 
 def apply_materialize_resolved(
-    model,
+    model: Working,
     obs: dict[str, dict[int, float]],
     *,
     fill_q: bool = True,

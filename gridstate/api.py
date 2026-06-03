@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -21,7 +21,11 @@ from gridstate.z_vector import build_z_and_r
 
 
 if TYPE_CHECKING:
+    from scipy.sparse import csr_matrix
+
+    from gridstate.units import NetworkPU
     from gridstate.working import Working, _ArrayCollection
+    from gridstate.z_vector import MeasurementIndex
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +46,7 @@ def estimate(
     zero_injection: ZeroInjectionMode | None = None,
     huber_c: float = 1.5,
     huber_use_mad: bool = False,
-    **ipm_kwargs,
+    **ipm_kwargs: Any,
 ) -> SEResult:
     """Выполнить оценку состояния по модели и телеметрии.
 
@@ -218,13 +222,13 @@ def _populate_quality_summary(
     *,
     model: Working,
     measurements: _ArrayCollection,
-    network_pu,
-    ybus,
-    yf,
-    yt,
+    network_pu: NetworkPU,
+    ybus: csr_matrix,
+    yf: csr_matrix,
+    yt: csr_matrix,
     z: np.ndarray,
-    r_matrix,
-    meas_index,
+    r_matrix: csr_matrix,
+    meas_index: MeasurementIndex,
     layout: StateLayout,
     v_pu: np.ndarray,
     delta_rad: np.ndarray,
@@ -273,7 +277,7 @@ def _populate_quality_summary(
 
 def _build_initial_state(
     model: Working,
-    network_pu,
+    network_pu: NetworkPU,
     layout: StateLayout,
     init: InitMode,
 ) -> np.ndarray:
@@ -316,13 +320,13 @@ def _build_initial_state(
 
 def _run_ipm(
     model: Working,
-    network_pu,
-    ybus,
-    yf,
-    yt,
+    network_pu: NetworkPU,
+    ybus: csr_matrix,
+    yf: csr_matrix,
+    yt: csr_matrix,
     z: np.ndarray,
-    r_matrix,
-    meas_index,
+    r_matrix: csr_matrix,
+    meas_index: MeasurementIndex,
     layout_base: StateLayout,
     e_init_base: np.ndarray,
     *,
@@ -333,7 +337,7 @@ def _run_ipm(
     huber_skip_transformers: bool = True,
     huber_leverage_b_threshold_pu: float = 2.0,
     huber_w_floor: float = 0.05,
-    **ipm_kwargs,
+    **ipm_kwargs: Any,
 ) -> tuple[np.ndarray, bool, int, float]:
     """IPM-режим: расширяет state-vector box-vars и решает primal log-barrier WLS.
 
@@ -426,9 +430,10 @@ def _run_ipm(
             pnag_estimated=pnag,
             qnag_estimated=qnag,
         )
-        return setup.z - h
+        residual: np.ndarray = setup.z - h
+        return residual
 
-    def jacobian_fn(x: np.ndarray):
+    def jacobian_fn(x: np.ndarray) -> csr_matrix:
         delta, v, _pg, _qg, _pn, _qn = unpack_full(x, layout_ipm)
         return algebra.evaluate_jacobian(v, delta)
 

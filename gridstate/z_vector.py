@@ -34,7 +34,7 @@ from scipy.sparse import csr_matrix, diags
 
 if TYPE_CHECKING:
     from gridstate.units import NetworkPU
-    from gridstate.working import Working, _ArrayCollection
+    from gridstate.working import Working, _ArrayCollection, _RowProxy
 
 
 logger = logging.getLogger(__name__)
@@ -257,7 +257,9 @@ def build_z_and_r(
 # ---------------------------------------------------------------------------
 
 
-def _convert_node_meas(meas, network_pu: NetworkPU, pos: int, kind: int) -> tuple[float, float]:
+def _convert_node_meas(
+    meas: _RowProxy, network_pu: NetworkPU, pos: int, kind: int
+) -> tuple[float, float]:
     """Узловое измерение: МВт/МВАр/кВ → p.u. и σ² → p.u.²."""
     v = float(meas.value)
     var = float(meas.variance)
@@ -274,7 +276,7 @@ def _convert_node_meas(meas, network_pu: NetworkPU, pos: int, kind: int) -> tupl
 
 
 def _convert_branch_meas(
-    meas, kind: int, *, v_base_kv: float, base_mva: float
+    meas: _RowProxy, kind: int, *, v_base_kv: float, base_mva: float
 ) -> tuple[float, float]:
     """Ветвевое измерение."""
     v = float(meas.value)
@@ -289,7 +291,7 @@ def _convert_branch_meas(
     raise ValueError(f"Тип измерения {kind} не поддерживается на ветви")
 
 
-def _detect_branch_side(meas, branch_row, kind: int) -> int:
+def _detect_branch_side(meas: _RowProxy, branch_row: np.void, kind: int) -> int:
     """Определить сторону ветви для измерения.
 
     Сначала ищется поле ``branch_side`` в ``MEASUREMENT_DTYPE`` (если оно

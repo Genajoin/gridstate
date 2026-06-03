@@ -200,7 +200,8 @@ class OutputTables:
         if hits.size == 0:
             return None
         row = arr[int(hits[0])]
-        return {name: row[name].item() for name in arr.dtype.names}
+        names = arr.dtype.names or ()
+        return {name: row[name].item() for name in names}
 
 
 def extract_output_tables(model: Working) -> OutputTables:

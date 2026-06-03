@@ -41,7 +41,7 @@ def _apply_generator_status_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str
     return stats
 
 
-def apply_generator_status_from_node(model) -> dict[str, int]:
+def apply_generator_status_from_node(model: Any) -> dict[str, int]:
     """Каскадное отключение: если узел off → все генераторы на нём off.
 
     Это **только cascade-off**: при ``node.status=False`` все генераторы
@@ -129,7 +129,7 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
     return stats
 
 
-def aggregate_generators_to_node(model) -> dict[str, int]:
+def aggregate_generators_to_node(model: Any) -> dict[str, int]:
     """Сумма параметров активных генераторов узла → ``model.nodes``.
 
     Для каждого узла суммирует по **активным** (``status=True``) генераторам

@@ -6,8 +6,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
 
-def apply_topology_resolved(model, resolved) -> dict[str, int]:
+import numpy as np
+
+
+# Элемент плана статусов ON_LINE: ``(tag, parent_id, status|None, eval_skip|None)``.
+ResolvedItem = tuple[str, int, bool | None, str | None]
+
+
+def apply_topology_resolved(model: Any, resolved: Sequence[ResolvedItem]) -> dict[str, int]:
     """Применить готовый ``resolved``-план ON_LINE к ``status`` модели.
 
     Чистое применение (без snapshot/формул): снимок контрактных массивов → ядро
@@ -33,7 +42,13 @@ def apply_topology_resolved(model, resolved) -> dict[str, int]:
     return stats
 
 
-def _apply_topology_on_arrays(arr_nodes, arr_branches, arr_gens, arr_reactors, resolved):
+def _apply_topology_on_arrays(
+    arr_nodes: np.ndarray,
+    arr_branches: np.ndarray,
+    arr_gens: np.ndarray,
+    arr_reactors: np.ndarray | None,
+    resolved: Sequence[ResolvedItem],
+) -> dict[str, int]:
     """ЯДРО: применение ON_LINE-статусов над контрактными массивами.
 
     Чистый статус-каскад: получает готовый план ``resolved`` (eval
@@ -49,7 +64,7 @@ def _apply_topology_on_arrays(arr_nodes, arr_branches, arr_gens, arr_reactors, r
     }
     by_id_gens: dict[int, int] = {int(arr_gens[i]["id"]): i for i in range(len(arr_gens))}
     by_id_reacs: dict[int, int] = {}
-    if arr_reactors is not None and "id" in arr_reactors.dtype.names:
+    if arr_reactors is not None and "id" in (arr_reactors.dtype.names or ()):
         by_id_reacs = {int(arr_reactors[i]["id"]): i for i in range(len(arr_reactors))}
 
     stats = {
@@ -86,6 +101,8 @@ def _apply_topology_on_arrays(arr_nodes, arr_branches, arr_gens, arr_reactors, r
             stats["skipped_no_object"] += 1
             continue
         if status is None:
+            # Контракт: при ``status is None`` producer всегда задаёт ключ eval_skip.
+            assert eval_skip is not None
             stats[eval_skip] += 1
             continue
 
