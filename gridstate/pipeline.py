@@ -850,12 +850,16 @@ def _build_working(model: Any) -> Any:
 
     Принимает либо объект-модель с коллекциями (строит ``Working`` из его
     ``nodes``/``branches``/``measurements``/``generators``), либо уже готовый
-    :class:`~gridstate.working.Working` (pass-through). Последнее — vendor-free
-    вход: вызывающий собирает ``Working.from_arrays(...)`` из numpy-массивов и
-    передаёт прямо в ``run``.
+    :class:`~gridstate.working.Working` (тогда возвращает его ``copy()``).
+    Последнее — vendor-free вход: вызывающий собирает ``Working.from_arrays(...)``
+    из numpy-массивов и передаёт прямо в ``run``. В обоих случаях результат —
+    независимая копия: переданный Input остаётся read-only.
     """
     if isinstance(model, Working):
-        return model
+        # Клон, а НЕ pass-through: иначе run() мутировал бы переданный Working
+        # (псевдо-измерения, V/δ) — Input должен оставаться read-only и на
+        # vendor-free / npz-входе (повторный run_se на том же объекте падал).
+        return model.copy()
     return Working.from_model(model)
 
 

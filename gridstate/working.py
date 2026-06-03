@@ -313,6 +313,17 @@ class _ArrayCollection:
             self._id_index[new_id] = base + offset
         return new_ids
 
+    def copy(self) -> _ArrayCollection:
+        """Независимая копия коллекции: массив копируется (в конструкторе),
+        конфиг (``add_defaults`` / ``weight_from_variance``) сохраняется.
+        Мутации копии (``add`` / ``update_from_array``) не доходят до исходной.
+        """
+        return _ArrayCollection(
+            self._arr,
+            add_defaults=self._add_defaults,
+            weight_from_variance=self._weight_from_variance,
+        )
+
     # --- протокол коллекции ---
 
     def __iter__(self) -> Iterator[_RowProxy]:
@@ -361,6 +372,24 @@ class Working:
         self.measurements = measurements
         self.generators = generators
         self.raw_tables = raw_tables
+
+    def copy(self) -> Working:
+        """Глубокая независимая копия рабочего слоя.
+
+        Каждая из 4 коллекций копируется (массивы независимы, конфиг сохранён),
+        ``raw_tables`` — ``deepcopy``. Гарантирует Input read-only: когда в
+        ``run()`` подан уже готовый ``Working`` (vendor-free / npz-вход), пайплайн
+        работает на копии — добавленные псевдо-измерения и правки V/δ НЕ доходят
+        до переданного объекта (иначе повторный ``run_se`` на том же входе падал
+        с дублем id).
+        """
+        return Working(
+            nodes=self.nodes.copy(),
+            branches=self.branches.copy(),
+            measurements=self.measurements.copy(),
+            generators=self.generators.copy(),
+            raw_tables=copy.deepcopy(self.raw_tables),
+        )
 
     @classmethod
     def from_model(cls, model: Any) -> Working:

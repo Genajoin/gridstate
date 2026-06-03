@@ -23,6 +23,7 @@ import pytest
 
 from gridstate.pipeline import PipelineConfig, _build_working, run
 from gridstate.telemetry import apply_reactors_to_node_shunt
+from gridstate.working import Working
 from gridstate.z_vector import (
     KIND_POWER_INJECTION_P,
     KIND_POWER_INJECTION_Q,
@@ -45,11 +46,11 @@ from gridstate.z_vector import (
 class _Model:
     """vendor-free носитель контрактных таблиц (заменяет полноценную модель).
 
-    ``run``/``_build_working`` копируют Input через ``Working.from_model`` ровно
-    для НЕ-``Working`` носителей (``Working`` пробрасывается as-is). Этот тонкий
+    ``run``/``_build_working`` копируют Input: НЕ-``Working`` носители — через
+    ``Working.from_model``, готовый ``Working`` — через ``.copy()``. Этот тонкий
     duck-typed контейнер (коллекции — ``Working.empty()``, raw_tables — dict)
-    сохраняет прежний clone-контракт: ``_build_working(m)`` делает независимую
-    рабочую копию, а Input остаётся read-only.
+    идёт по ветке ``from_model``; независимость Input проверяется и для сырого
+    ``Working`` (см. ``test_run_does_not_mutate_raw_working_input``).
     """
 
     def __init__(self, src):
@@ -250,6 +251,39 @@ def test_run_twice_bit_identical(algorithm):
     for nid in vd1:
         assert vd2[nid][0] == pytest.approx(vd1[nid][0], abs=1e-9)
         assert vd2[nid][1] == pytest.approx(vd1[nid][1], abs=1e-9)
+
+
+@pytest.mark.parametrize("algorithm", ["wls", "ipm"])
+def test_run_does_not_mutate_raw_working_input(algorithm):
+    """Сырой ``Working``-вход (vendor-free / npz-путь) — тоже read-only.
+
+    Регрессия: раньше ``_build_working`` пробрасывал ``Working`` as-is, и ``run``
+    мутировал его (pseudo-меры росли, shunt реакторов удваивался) → повторный
+    прогон на том же объекте падал ``ValueError: object with id=… already
+    exists``. Теперь ``_build_working`` клонирует и ``Working``-вход.
+    """
+    wrapped = _make_model_with_reactor()
+    w = Working.from_arrays(
+        nodes=wrapped.nodes.to_numpy(),
+        branches=wrapped.branches.to_numpy(),
+        measurements=wrapped.measurements.to_numpy(),
+        generators=wrapped.generators.to_numpy(),
+        raw_tables=wrapped.raw_tables,
+    )
+    n_meas = len(w.measurements.to_numpy())
+    cfg = PipelineConfig(algorithm=algorithm)
+
+    r1 = run(w, config=cfg)
+    # Вход не вырос и не накопил shunt; результат — в отдельной рабочей копии.
+    assert len(w.measurements.to_numpy()) == n_meas
+    assert w.nodes.get_by_id(1).shunt_b == pytest.approx(0.0)
+    assert r1.model is not w
+
+    # Повтор на том же объекте раньше падал ValueError — теперь бит-в-бит.
+    r2 = run(w, config=cfg)
+    assert len(w.measurements.to_numpy()) == n_meas
+    assert r2.iterations == r1.iterations
+    assert np.array_equal(np.asarray(r2.v_pu), np.asarray(r1.v_pu))
 
 
 def test_run_thrice_stable():
