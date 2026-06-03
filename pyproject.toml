@@ -43,6 +43,11 @@ dependencies = [
 [project.optional-dependencies]
 numba = ["numba>=0.57"]
 
+# Генерация тестовых фикстур на стандартных IEEE-моделях (tools/gen_ieee_fixtures.py).
+# pandapower нужен ТОЛЬКО для генерации фикстур; рантайм и сами тесты остаются
+# numpy/scipy-only (tests/test_ieee_cases.py читает готовые .npz, pandapower не тянет).
+test-models = ["pandapower>=3.0"]
+
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
