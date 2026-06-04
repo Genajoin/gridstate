@@ -137,9 +137,7 @@ def load_se_input_npz(path: str | Path) -> SEInput:
 
     with np.load(path, allow_pickle=False) as npz:
         files = set(npz.files)
-        domain = {
-            name: np.asarray(npz[name]) for name in _DOMAIN_TABLES if name in files
-        }
+        domain = {name: np.asarray(npz[name]) for name in _DOMAIN_TABLES if name in files}
         working = Working.from_arrays(
             nodes=np.asarray(npz["nodes"]),
             branches=np.asarray(npz["branches"]),

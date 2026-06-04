@@ -362,9 +362,7 @@ def test_add_many_matches_per_row_add(small_model):
     returned = w_bulk.measurements.add_many([dict(r) for r in rows])
 
     assert returned == [3000 + i for i in range(5)]
-    assert np.array_equal(
-        w_bulk.measurements.to_numpy(), w_seq.measurements.to_numpy()
-    )
+    assert np.array_equal(w_bulk.measurements.to_numpy(), w_seq.measurements.to_numpy())
     # weight посчитан из variance так же, как в add()
     assert float(w_bulk.measurements.to_numpy()[-1]["weight"]) == 0.5
     # id-индекс согласован: get_by_id находит все вставленные

@@ -57,9 +57,7 @@ def test_topo_core_node_status_write():
 
 def test_topo_core_line_status_write():
     branches = _branches([7])
-    stats = _apply_topology_on_arrays(
-        _nodes([]), branches, _gens([]), [("LINE", 7, False, None)]
-    )
+    stats = _apply_topology_on_arrays(_nodes([]), branches, _gens([]), [("LINE", 7, False, None)])
     assert bool(branches[0]["status"]) is False
     assert stats["applied_off"] == 1
 
@@ -84,9 +82,7 @@ def test_topo_core_reactor_tag_skipped_no_object():
 
 def test_topo_core_skipped_no_object_unknown_id():
     nodes = _nodes([1])
-    stats = _apply_topology_on_arrays(
-        nodes, _branches([]), _gens([]), [("NODE", 999, True, None)]
-    )
+    stats = _apply_topology_on_arrays(nodes, _branches([]), _gens([]), [("NODE", 999, True, None)])
     assert stats["skipped_no_object"] == 1
     assert bool(nodes[0]["status"]) is True  # не тронут
 
@@ -129,9 +125,7 @@ def test_topo_core_total_specs_equals_resolved_len():
         ("LINE", 7, None, "skipped_formula_error"),
         ("GENERATOR", 3, True, None),
     ]
-    stats = _apply_topology_on_arrays(
-        _nodes([1]), _branches([7]), _gens([3]), resolved
-    )
+    stats = _apply_topology_on_arrays(_nodes([1]), _branches([7]), _gens([3]), resolved)
     assert stats["total_specs"] == 3
     assert stats["applied_on"] == 2  # NODE 1 + GENERATOR 3
     assert stats["skipped_formula_error"] == 1
