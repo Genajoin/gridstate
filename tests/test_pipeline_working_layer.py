@@ -9,9 +9,7 @@ INPUT держать shared/read-only): если хоть один production-ш
 
 Метод: прогнать полный ``run`` (Input read-only → working-копия в ``result.model``),
 сверить по ключу ``id`` все INPUT+KEY-колонки 4 коллекций между Input и working-
-финалом. Пробел контракта по RAW_TABLES (``reactors.status`` мутирует шаг
-ON_LINE-топологии) сюда НЕ попадает: это raw-таблица, не одна из 4 основных
-коллекций, и она всё ещё deepcopy-ится.
+финалом.
 """
 
 from __future__ import annotations

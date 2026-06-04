@@ -75,16 +75,6 @@ def _available_columns(source: Any, table_name: str) -> set[str] | None:
     return set(names or ())
 
 
-def _raw_table(source: Any, name: str) -> Any | None:
-    """Сырая таблица по имени из ``model.raw_tables`` или из mapping."""
-    if isinstance(source, Mapping):
-        return source.get(name)
-    raw = getattr(source, "raw_tables", None)
-    if isinstance(raw, Mapping):
-        return raw.get(name)
-    return None
-
-
 def _data_version(source: Any, explicit: str | None) -> str | None:
     """Версия контракта данных: явная > ``metadata[contract_version]`` > None."""
     if explicit is not None:
@@ -154,29 +144,6 @@ def validate_input(
                         "missing_column",
                         "обязательная входная колонка отсутствует",
                         col,
-                    )
-                )
-
-    # --- сырые таблицы: проверяем только присутствующие (+ обязательные) ---
-    for rt in schema.raw:
-        arr = _raw_table(source, rt.name)
-        if arr is None:
-            if rt.required:
-                report.add(
-                    ValidationIssue(
-                        rt.name, "missing_table", "обязательная сырая таблица отсутствует"
-                    )
-                )
-            continue
-        names = set(getattr(getattr(arr, "dtype", None), "names", None) or ())
-        for key_col in rt.key:
-            if names and key_col not in names:
-                report.add(
-                    ValidationIssue(
-                        rt.name,
-                        "missing_column",
-                        "ключевая колонка сырой таблицы отсутствует",
-                        key_col,
                     )
                 )
 

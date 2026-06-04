@@ -136,7 +136,7 @@ def _voltage_range_filter_on_arrays(
     Мутирует ``meas_arr`` in place (``status``/``variance``/``weight``/``quality``),
     читает ``nodes_arr`` (``voltage_nominal``/``voltage_critical``/``voltage_min``/
     ``voltage_max``). Енумы object/measurement-type приходят готовыми int из
-    адаптера. БЕЗ внешних зависимостей и XML. Последовательный цикл в исходном порядке → бит-в-бит.
+    адаптера. БЕЗ внешних зависимостей и XML. Последовательный цикл в исходном порядке.
     """
     node_by_id: dict[int, int] = {int(r["id"]): i for i, r in enumerate(nodes_arr)}
 

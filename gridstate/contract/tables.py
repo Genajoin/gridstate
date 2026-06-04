@@ -182,7 +182,17 @@ NODES = TableSchema(
             "i4",
             Role.INPUT,
             required=False,
-            doc="Ссылка на load_models — характеристика P(V)/Q(V).",
+            doc="Ссылка на load_models — характеристика P(V)/Q(V) (raw-путь).",
+        ),
+        ColumnSpec(
+            "load_model_id",
+            "i4",
+            Role.INPUT,
+            required=False,
+            doc=(
+                "Ссылка на load_characteristics.id (0-based, -1=нет). Формат-агностичная "
+                "замена sxn_id; читает apply_load_characteristic."
+            ),
         ),
         ColumnSpec(
             "load_p_min", "f8", Role.INPUT, required=False, doc="Нижняя P-нагрузка — IPM box."
@@ -200,7 +210,7 @@ NODES = TableSchema(
         ColumnSpec(
             "load_q_max", "f8", Role.INPUT, required=False, doc="Верхняя Q-нагрузка — IPM box."
         ),
-        # --- вход, мутируемый препроцессингом (рабочий слой Фазы 4) ---
+        # --- вход, мутируемый препроцессингом ---
         ColumnSpec(
             "status",
             "bool",
@@ -357,6 +367,37 @@ BRANCHES = TableSchema(
         ColumnSpec("susceptance_to", "f8", Role.WORKING, doc="B шунта в конце, См."),
         ColumnSpec("tap_ratio", "f8", Role.WORKING, doc="Коэф. трансформации. Мутирует apply_rpn."),
         ColumnSpec("phase_shift", "f8", Role.WORKING, doc="Сдвиг фаз, рад. Мутирует apply_rpn."),
+        ColumnSpec(
+            "tap_step_id",
+            "i4",
+            Role.INPUT,
+            required=False,
+            doc=(
+                "Ссылка на tap_steps.id (0-based, -1=нет РПН). Выбор отпайки делается "
+                "вне ядра, ядро применяет готовую строку (apply_rpn)."
+            ),
+        ),
+        ColumnSpec(
+            "tap_side",
+            "i1",
+            Role.INPUT,
+            required=False,
+            doc="Сторона регулирования: 0=from(ВН)/1=to(НН). Резерв (дефолт 0).",
+        ),
+        ColumnSpec(
+            "tap_min",
+            "f8",
+            Role.INPUT,
+            required=False,
+            doc="Нижняя граница коэф. трансформации. Резерв под будущую оптимизацию.",
+        ),
+        ColumnSpec(
+            "tap_max",
+            "f8",
+            Role.INPUT,
+            required=False,
+            doc="Верхняя граница коэф. трансформации. Резерв.",
+        ),
     ),
 )
 
@@ -499,91 +540,77 @@ GENERATORS = TableSchema(
 
 
 # ===========================================================================
-# Сырые таблицы (SEInput.raw) — то, что читает core-пайплайн
+# Доменные числовые таблицы SE-входа (формат-агностичная замена raw
+# reactors/shema_ktr/load_models). Формат-резолв (выбор отпайки РПН, конверсия
+# единиц, агрегация) делается во внешнем источнике данных; сюда приходят уже
+# числовые, формат-агностичные данные. Все колонки KEY/INPUT (ядро их читает,
+# не мутирует).
 # ===========================================================================
-#
-# ПРИМЕЧАНИЕ: FORMULE/ON_LINE/ARG (топология, телеметрия, РПН-спеки,
-# материализация) исторически разбирались напрямую внешним адаптером загрузки, а
-# их типизированная проекция в raw_tables (``nested_formulas``/``formula_args``)
-# lossy (теряется GENERATOR.gen_num, схлопываются NP/PARALLEL у LINE). Поэтому
-# полноценный FORMULE-вход в контракт оставлен на будущее обогащение адаптера.
 
-
-@dataclass(frozen=True)
-class RawTableSpec:
-    """Сырая таблица входа — подмножество колонок, которое читает core-SE."""
-
-    name: str
-    key: tuple[str, ...]
-    columns: tuple[ColumnSpec, ...]
-    required: bool = False
-    doc: str = ""
-
-    def column_names(self) -> tuple[str, ...]:
-        return tuple(c.name for c in self.columns)
-
-    def numpy_dtype(self) -> np.dtype:
-        return np.dtype([(c.name, c.dtype) for c in self.columns])
-
-
-def _raw_cols(*specs: tuple[str, str, str]) -> tuple[ColumnSpec, ...]:
-    """Хелпер: список ``(name, dtype, doc)`` → колонки роли INPUT (сырые read-only)."""
-    return tuple(ColumnSpec(n, d, Role.INPUT, required=False, doc=doc) for n, d, doc in specs)
-
-
-RAW_TABLES: tuple[RawTableSpec, ...] = (
-    RawTableSpec(
-        "reactors",
-        key=("node_id",),
-        required=False,
-        doc="ШР → node.shunt_b (apply_reactors_to_node_shunt).",
-        columns=_raw_cols(
-            ("node_id", "i4", "Узел подключения реактора."),
-            ("status", "bool", "Вкл/выкл реактора."),
-            ("conductance", "f8", "G, мкСм."),
-            ("susceptance", "f8", "B, мкСм (ШР индуктивный)."),
+# Ступени РПН/ПБВ: строка выбирается вне ядра (main-vs-vc по xml_tap), ядро
+# применяет к branches (tap_ratio/phase_shift) + H30-факторинг шунта (shunt_factor).
+# Физика трансформатора остаётся в формат-агностичном ядре.
+TAP_STEPS = TableSchema(
+    name="tap_steps",
+    key=("id", "branch_id"),
+    doc="Выбранная ступень РПН на ветвь (безразмерная, формат-агностичная).",
+    columns=(
+        ColumnSpec("id", "i4", Role.KEY, doc="Идентификатор ступени (0-based)."),
+        ColumnSpec("branch_id", "i4", Role.KEY, doc="Ветвь-трансформатор (FK на branches.id)."),
+        ColumnSpec("ktr_re", "f8", Role.INPUT, doc="Re выбранного коэф. (1/tap-конвенция)."),
+        ColumnSpec("ktr_im", "f8", Role.INPUT, doc="Im выбранного коэф. (фазосдвиг)."),
+        ColumnSpec("tap_ratio", "f8", Role.INPUT, doc="hypot(re,im) — целевой модуль КТ."),
+        ColumnSpec("phase_shift", "f8", Role.INPUT, doc="atan2(im,re) — целевой угол, рад."),
+        ColumnSpec(
+            "shunt_factor",
+            "f8",
+            Role.INPUT,
+            doc="(tap_new/tap_old)² для H30-пересчёта шунта; 1.0 — без пересчёта.",
         ),
     ),
-    RawTableSpec(
-        "tm_values",
-        key=("ckguid",),
-        required=False,
-        doc="Снимок реальной телеметрии (guid→значение).",
-        columns=_raw_cols(
-            ("ckguid", "U64", "GUID источника СКАДА."),
-            ("value", "f8", "Текущее значение замера."),
-            ("quality_code", "u4", "Код качества."),
-            ("utc_dt_of_value", "U32", "Временная метка значения."),
+)
+
+# Статические характеристики нагрузки P(V)/Q(V) (СХН). Читает apply_load_characteristic
+# (post_processing) по node.load_model_id. immutable INPUT.
+LOAD_CHARACTERISTICS = TableSchema(
+    name="load_characteristics",
+    key=("id",),
+    doc="Полиномиальные СХН P(V)/Q(V); node.load_model_id ссылается сюда (0-based).",
+    columns=(
+        ColumnSpec("id", "i4", Role.KEY, doc="Идентификатор характеристики (0-based)."),
+        ColumnSpec("coeff_p_a0", "f8", Role.INPUT, doc="P: постоянная составляющая."),
+        ColumnSpec("coeff_p_a1", "f8", Role.INPUT, doc="P: линейная по V."),
+        ColumnSpec("coeff_p_a2", "f8", Role.INPUT, doc="P: квадратичная по V."),
+        ColumnSpec("coeff_q_b0", "f8", Role.INPUT, doc="Q: постоянная составляющая."),
+        ColumnSpec("coeff_q_b1", "f8", Role.INPUT, doc="Q: линейная по V."),
+        ColumnSpec("coeff_q_b2", "f8", Role.INPUT, doc="Q: квадратичная по V."),
+        ColumnSpec(
+            "coeff_p_f", "f8", Role.INPUT, required=False, doc="P: частотная зависимость. Резерв."
+        ),
+        ColumnSpec(
+            "coeff_q_f", "f8", Role.INPUT, required=False, doc="Q: частотная зависимость. Резерв."
         ),
     ),
-    RawTableSpec(
-        "shema_ktr",
-        key=("type_rpn", "num_a", "num_r"),
-        required=False,
-        doc="Таблица отводов РПН/ПБВ → tap_ratio.",
-        columns=_raw_cols(
-            ("type_rpn", "i4", "Тип РПН."),
-            ("num_a", "i4", "Номер отвода (анцапфа)."),
-            ("num_r", "i4", "Номер регулировочной ступени."),
-            ("ktr_a", "f8", "Коэф. трансформации по анцапфе."),
-            ("ktr_r", "f8", "Коэф. по регулировочной ступени."),
-            ("ktr_a_vc", "f8", "Коэф. по анцапфе (вольтодобавка)."),
-            ("ktr_r_vc", "f8", "Коэф. по ступени (вольтодобавка)."),
+)
+
+# Шунтирующие устройства (реакторы/БСК), per-устройство. Ядро агрегирует активные
+# в node.shunt_g/b для Y-bus (числовой шаг, замена apply_reactors_to_node_shunt) и
+# в будущем коммутирует ступени (group_id/step — резерв).
+SHUNTS = TableSchema(
+    name="shunts",
+    key=("id",),
+    doc="Шунт-устройства per-объект; ядро агрегирует активные в node.shunt_g/b.",
+    columns=(
+        ColumnSpec("id", "i4", Role.KEY, doc="Идентификатор шунта (0-based)."),
+        ColumnSpec("node_id", "i4", Role.INPUT, doc="Узел подключения (FK на nodes.id)."),
+        ColumnSpec("conductance", "f8", Role.INPUT, doc="G устройства, См (адаптер: мкСм→См)."),
+        ColumnSpec("susceptance", "f8", Role.INPUT, doc="B устройства, См (ШР индуктивный <0)."),
+        ColumnSpec("status", "bool", Role.INPUT, doc="Вкл/выкл (адаптер: ON_LINE-резолв)."),
+        ColumnSpec(
+            "group_id", "i4", Role.INPUT, required=False, doc="Группа БСК (коммутация). Резерв."
         ),
-    ),
-    RawTableSpec(
-        "load_models",
-        key=("id",),
-        required=False,
-        doc="Статические характеристики P(V)/Q(V) (apply_load_characteristic).",
-        columns=_raw_cols(
-            ("id", "i4", "ID модели (узел.sxn_id, 1-based)."),
-            ("coeff_p_a0", "f8", "P0·a0 — постоянная составляющая."),
-            ("coeff_p_a1", "f8", "Линейная по U."),
-            ("coeff_p_a2", "f8", "Квадратичная по U."),
-            ("coeff_q_b0", "f8", "Q0·b0 — постоянная."),
-            ("coeff_q_b1", "f8", "Линейная по U."),
-            ("coeff_q_b2", "f8", "Квадратичная по U."),
+        ColumnSpec(
+            "step", "i4", Role.INPUT, required=False, doc="Текущая ступень в группе. Резерв."
         ),
     ),
 )
@@ -596,22 +623,32 @@ RAW_TABLES: tuple[RawTableSpec, ...] = (
 
 @dataclass(frozen=True)
 class SEInputSchema:
-    """Схема входного контракта: набор таблиц (роли KEY/INPUT/WORKING) + сырые."""
+    """Схема входного контракта: набор таблиц (роли KEY/INPUT/WORKING).
+
+    Доменные таблицы ``tap_steps``/``load_characteristics``/``shunts`` —
+    формат-агностичные числовые входы (выбор отпайки РПН, конверсия единиц,
+    агрегация шунтов выполняются во внешнем источнике данных). Input-only
+    (роли KEY/INPUT).
+    """
 
     nodes: TableSchema
     branches: TableSchema
     measurements: TableSchema
     generators: TableSchema
-    raw: tuple[RawTableSpec, ...]
+    tap_steps: TableSchema
+    load_characteristics: TableSchema
+    shunts: TableSchema
 
     def tables(self) -> tuple[TableSchema, ...]:
-        return (self.nodes, self.branches, self.measurements, self.generators)
-
-    def raw_table(self, name: str) -> RawTableSpec | None:
-        for rt in self.raw:
-            if rt.name == name:
-                return rt
-        return None
+        return (
+            self.nodes,
+            self.branches,
+            self.measurements,
+            self.generators,
+            self.tap_steps,
+            self.load_characteristics,
+            self.shunts,
+        )
 
 
 @dataclass(frozen=True)
@@ -631,7 +668,9 @@ SE_INPUT = SEInputSchema(
     branches=BRANCHES,
     measurements=MEASUREMENTS,
     generators=GENERATORS,
-    raw=RAW_TABLES,
+    tap_steps=TAP_STEPS,
+    load_characteristics=LOAD_CHARACTERISTICS,
+    shunts=SHUNTS,
 )
 
 SE_OUTPUT = SEOutputSchema(

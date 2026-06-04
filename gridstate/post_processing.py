@@ -175,7 +175,7 @@ def write_node_estimates(
     ``node_ids``. Семантика — фактические значения при текущем V
     (аналог ``pnr/qnr/pgr/qgr`` в эталонном отчёте); преобразование к
     номинальным (если PF потребует) выполняется отдельно через
-    ``sxn_id`` + ``raw_tables['load_models']``.
+    ``load_model_id`` + ``load_characteristics``.
 
     ``None`` для любого из массивов значений → соответствующее поле не
     обновляется. Для узлов, не входящих в ``node_ids``, поля остаются как
@@ -422,7 +422,7 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
     После WLS-pass ``write_node_estimates_from_inj`` записал
     ``load_p_estimated`` / ``load_q_estimated`` как «фактические» значения
     при текущем V. Для узлов с привязкой к модели СХН
-    (``node.sxn_id > 0``) более физичная оценка — масштабировать
+    (``node.load_model_id >= 0``) более физичная оценка — масштабировать
     **номинальную** нагрузку (``node.load_p`` / ``node.load_q``, та что
     в исходной модели/XML — при ``V_pu = 1.0``) полиномом по V:
 
@@ -432,11 +432,10 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         load_q_estimated = load_q_nominal × (b0 + b1·V_pu + b2·V_pu²)
 
     где ``V_pu = voltage_magnitude / voltage_nominal`` (после SE).
-    Коэффициенты — из ``model.raw_tables['load_models']``; привязка узла
-    к строке таблицы — через **1-based порядковый индекс** ``sxn_id``
-    (``sxn_id == 1`` → первая строка ``Standart1``). Для PQ-const-моделей
-    (a0=1, a1=a2=0, b0=1, b1=b2=0) пересчёт тождественно даёт
-    ``load_*_nominal``.
+    Коэффициенты берутся из типизированной таблицы ``load_characteristics``
+    (узел ссылается на строку через 0-based индекс ``load_model_id``, ``-1`` =
+    нет привязки). Для PQ-const-моделей (a0=1, a1=a2=0, b0=1, b1=b2=0) пересчёт
+    тождественно даёт ``load_*_nominal``.
 
     Применяется **только в WLS-режиме** (см. ``gridstate/api.py::estimate``)
     после ``write_node_estimates_from_inj``. У IPM box-vars уже учитывают
@@ -450,13 +449,13 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
             * ``updated`` — число узлов, у которых пересчитан
               ``load_p_estimated`` (и/или ``load_q_estimated``).
             * ``skipped_no_sxn`` — активные узлы с ``exist_load=True`` но
-              ``sxn_id <= 0`` (нет привязки к СХН).
-            * ``skipped_no_load`` — активные узлы с ``sxn_id > 0`` но
+              ``load_model_id < 0`` (нет привязки к СХН).
+            * ``skipped_no_load`` — активные узлы с ``load_model_id >= 0`` но
               ``exist_load=False`` (нет нагрузки — нечего пересчитывать).
-            * ``skipped_bad_sxn`` — ``sxn_id`` указывает за пределы
-              таблицы ``load_models`` (битая ссылка).
+            * ``skipped_bad_sxn`` — ``load_model_id`` указывает за пределы
+              таблицы ``load_characteristics`` (битая ссылка).
             * ``no_load_models`` — 1 если в модели нет таблицы
-              ``raw_tables['load_models']`` (тогда возвращаем нули).
+              ``load_characteristics`` (тогда возвращаем нули).
     """
     out = {
         "updated": 0,
@@ -466,36 +465,40 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         "no_load_models": 0,
     }
 
-    lm = model.raw_tables.get("load_models") if hasattr(model, "raw_tables") else None
-    if lm is None or len(lm) == 0:
+    # Источник коэффициентов СХН — таблица ``load_characteristics``; узлы несут
+    # 0-based ссылку ``load_model_id`` (``-1`` = нет).
+    nodes_arr = model.nodes.to_numpy()
+    lc_coll = getattr(model, "load_characteristics", None)
+    coeff = lc_coll.to_numpy() if lc_coll is not None else None
+    if coeff is None or len(coeff) == 0:
         out["no_load_models"] = 1
         return out
 
-    n_lm = len(lm)
-    # 1-based индекс → строка. sxn_id == 1 ⇒ lm[0].
-    a0 = np.asarray(lm["coeff_p_a0"], dtype=np.float64)
-    a1 = np.asarray(lm["coeff_p_a1"], dtype=np.float64)
-    a2 = np.asarray(lm["coeff_p_a2"], dtype=np.float64)
-    b0 = np.asarray(lm["coeff_q_b0"], dtype=np.float64)
-    b1 = np.asarray(lm["coeff_q_b1"], dtype=np.float64)
-    b2 = np.asarray(lm["coeff_q_b2"], dtype=np.float64)
+    n_lm = len(coeff)
+    a0 = np.asarray(coeff["coeff_p_a0"], dtype=np.float64)
+    a1 = np.asarray(coeff["coeff_p_a1"], dtype=np.float64)
+    a2 = np.asarray(coeff["coeff_p_a2"], dtype=np.float64)
+    b0 = np.asarray(coeff["coeff_q_b0"], dtype=np.float64)
+    b1 = np.asarray(coeff["coeff_q_b1"], dtype=np.float64)
+    b2 = np.asarray(coeff["coeff_q_b2"], dtype=np.float64)
 
-    nodes_arr = model.nodes.to_numpy()
     for row in nodes_arr:
         if not bool(row["status"]):
             continue
-        sxn = int(row["sxn_id"])
         exist_load = bool(row["exist_load"])
 
-        if sxn <= 0:
+        # idx — 0-based строка коэффициентов из load_model_id (-1=нет). Порядок
+        # skip-проверок не влияет на пересчёт (во всех skip-ветвях recompute
+        # отсутствует) — только на stat-счётчики.
+        idx = int(row["load_model_id"])
+        if idx < 0:
             if exist_load:
                 out["skipped_no_sxn"] += 1
             continue
+
         if not exist_load:
             out["skipped_no_load"] += 1
             continue
-
-        idx = sxn - 1  # 1-based → 0-based
         if idx < 0 or idx >= n_lm:
             out["skipped_bad_sxn"] += 1
             continue

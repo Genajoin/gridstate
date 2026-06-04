@@ -7,14 +7,15 @@
 поверх контрактных структурированных массивов. Он воспроизводит ровно ту
 поверхность model-API, которую читает/пишет препроцессинг + солвер + сборка
 ``SEResult`` — и НИЧЕГО сверх неё. Рантайм-пути контейнера зависят только от
-numpy: никаких внешних vendor-библиотек.
+numpy: никаких внешних библиотек.
 
-Поверхность (по аудиту working-слоя ``pipeline.run``)
------------------------------------------------------
+Поверхность
+-----------
 
-Контейнер держит ровно 4 коллекции (``nodes`` / ``branches`` / ``measurements`` /
-``generators``) и ``raw_tables``. Никаких иных model-level атрибутов working-слой
-не читает.
+Контейнер держит 4 основные коллекции (``nodes`` / ``branches`` /
+``measurements`` / ``generators``) и 3 доменные input-таблицы (``tap_steps`` /
+``load_characteristics`` / ``shunts``) — ровно то, что читает и пишет
+препроцессинг и солвер.
 
 Каждая коллекция (:class:`_ArrayCollection`) — тонкая обёртка над одним numpy
 structured-массивом (его dtype фиксируется при инициализации — он же контрактный
@@ -34,7 +35,6 @@ dtype соответствующей таблицы) плюс индекс ``id 
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Iterator
 from typing import Any
 
@@ -268,6 +268,62 @@ class _ArrayCollection:
         self._id_index[new_id] = new_idx
         return new_id
 
+    def add_many(self, rows: list[dict]) -> list[int]:
+        """Пакетно добавить строки в КОНЕЦ за ОДНУ конкатенацию массива.
+
+        Семантика каждой строки идентична :meth:`add` (обязательный уникальный
+        ``id``, дефолты конструктора, ``weight`` = 1/variance, лишние ключи
+        игнорируются). Отличие — ``self._arr`` растёт один раз на весь пакет.
+
+        ``add`` делает ``np.append`` (копию всего массива) на КАЖДЫЙ вызов: при
+        вставке ``k`` строк в массив длины ``n`` это O(k·n) — узкое место
+        псевдо-измерений на крупных моделях (десятки секунд → сотни). ``add_many``
+        вставляет за O(n+k).
+        """
+        if not rows:
+            return []
+
+        names = self._arr.dtype.names or ()
+        block = np.zeros(len(rows), dtype=self._dtype)
+        new_ids: list[int] = []
+        seen: set[int] = set()
+        for i, row_data in enumerate(rows):
+            if "id" not in row_data:
+                raise ValueError("id is required")
+            new_id = int(row_data["id"])
+            if new_id in self._id_index or new_id in seen:
+                raise ValueError(f"object with id={new_id} already exists")
+            seen.add(new_id)
+            # 1) ненулевые дефолты конструктора, 2) переданные значения (перекрывают).
+            for key, value in self._add_defaults.items():
+                if key in names:
+                    block[i][key] = value
+            for key, value in row_data.items():
+                if key in names:
+                    block[i][key] = value
+            # weight = 1/variance, если вес не задан явно.
+            if self._weight_from_variance and "weight" in names and "weight" not in row_data:
+                var = float(block[i]["variance"])
+                block[i]["weight"] = (1.0 / var) if var > 0 else 1.0
+            new_ids.append(new_id)
+
+        base = len(self._arr)
+        self._arr = np.concatenate([self._arr, block])
+        for offset, new_id in enumerate(new_ids):
+            self._id_index[new_id] = base + offset
+        return new_ids
+
+    def copy(self) -> _ArrayCollection:
+        """Независимая копия коллекции: массив копируется (в конструкторе),
+        конфиг (``add_defaults`` / ``weight_from_variance``) сохраняется.
+        Мутации копии (``add`` / ``update_from_array``) не доходят до исходной.
+        """
+        return _ArrayCollection(
+            self._arr,
+            add_defaults=self._add_defaults,
+            weight_from_variance=self._weight_from_variance,
+        )
+
     # --- протокол коллекции ---
 
     def __iter__(self) -> Iterator[_RowProxy]:
@@ -290,16 +346,29 @@ class _ArrayCollection:
 
 
 # ---------------------------------------------------------------------------
-# Working: рабочий слой SE = 4 коллекции + raw_tables.
+# Working: рабочий слой SE = 4 основные коллекции + 3 доменные
+# input-таблицы (tap_steps / load_characteristics / shunts).
 # ---------------------------------------------------------------------------
 
 
-class Working:
-    """numpy-backed рабочий слой SE — замена full-clone ``Working``.
+def _empty_domain(name: str) -> _ArrayCollection:
+    """Пустая коллекция доменной input-таблицы с её контрактным dtype.
 
-    Держит 4 коллекции (:class:`_ArrayCollection`) и ``raw_tables`` (dict
-    ``str → np.ndarray``). Поверхность 1:1 с тем, что читает/пишет
-    ``pipeline.run`` working-слоя.
+    ``name`` ∈ {tap_steps, load_characteristics, shunts}. Lazy-импорт контракта
+    (как в :meth:`Working.empty`) — избегаем циклической зависимости при загрузке.
+    """
+    from gridstate.contract import SE_INPUT
+
+    schema = getattr(SE_INPUT, name)
+    return _ArrayCollection(np.zeros(0, dtype=schema.input_dtype()))
+
+
+class Working:
+    """numpy-backed рабочий слой SE.
+
+    Держит 4 основные коллекции (:class:`_ArrayCollection`) и 3 доменные
+    input-таблицы (``tap_steps`` / ``load_characteristics`` / ``shunts``) —
+    поверхность, которую читает и пишет препроцессинг и солвер.
     """
 
     def __init__(
@@ -309,13 +378,43 @@ class Working:
         branches: _ArrayCollection,
         measurements: _ArrayCollection,
         generators: _ArrayCollection,
-        raw_tables: dict[str, np.ndarray],
+        tap_steps: _ArrayCollection | None = None,
+        load_characteristics: _ArrayCollection | None = None,
+        shunts: _ArrayCollection | None = None,
     ) -> None:
         self.nodes = nodes
         self.branches = branches
         self.measurements = measurements
         self.generators = generators
-        self.raw_tables = raw_tables
+        # Доменные input-only таблицы (формат-агностичные числовые входы).
+        # Дефолт — пустая коллекция контрактного dtype.
+        self.tap_steps = tap_steps if tap_steps is not None else _empty_domain("tap_steps")
+        self.load_characteristics = (
+            load_characteristics
+            if load_characteristics is not None
+            else _empty_domain("load_characteristics")
+        )
+        self.shunts = shunts if shunts is not None else _empty_domain("shunts")
+
+    def copy(self) -> Working:
+        """Глубокая независимая копия рабочего слоя.
+
+        Каждая из 4 основных коллекций и 3 доменных таблиц копируется (массивы
+        независимы, конфиг сохранён). Гарантирует Input read-only: когда в
+        ``run()`` подан уже готовый ``Working``
+        (например, npz-вход), пайплайн работает на копии — добавленные
+        псевдо-измерения и правки V/δ НЕ доходят до переданного объекта (иначе
+        повторный ``run_se`` на том же входе падал с дублем id).
+        """
+        return Working(
+            nodes=self.nodes.copy(),
+            branches=self.branches.copy(),
+            measurements=self.measurements.copy(),
+            generators=self.generators.copy(),
+            tap_steps=self.tap_steps.copy(),
+            load_characteristics=self.load_characteristics.copy(),
+            shunts=self.shunts.copy(),
+        )
 
     @classmethod
     def from_model(cls, model: Any) -> Working:
@@ -323,11 +422,19 @@ class Working:
 
         Каждая коллекция сидируется из ``model.X.to_numpy().copy()`` (исходник
         отдаёт свежий массив, ``_ArrayCollection`` копирует его ещё раз —
-        независимость от Input гарантирована). ``raw_tables`` — ``deepcopy``.
-        Никакие иные model-level атрибуты не пробрасываются: working-слой их не
-        читает.
+        независимость от Input гарантирована). Никакие иные model-level атрибуты
+        не пробрасываются: working-слой их не читает.
         """
-        raw = getattr(model, "raw_tables", None) or {}
+
+        def _domain(name: str) -> _ArrayCollection:
+            # Доменные input-таблицы есть не у всякого источника. Отсутствие →
+            # пустая коллекция.
+            coll = getattr(model, name, None)
+            if coll is None or not hasattr(coll, "to_numpy"):
+                return _empty_domain(name)
+            arr = coll.to_numpy()
+            return _ArrayCollection(arr.copy()) if len(arr) > 0 else _empty_domain(name)
+
         return cls(
             nodes=_ArrayCollection(model.nodes.to_numpy().copy()),
             branches=_ArrayCollection(model.branches.to_numpy().copy()),
@@ -337,7 +444,9 @@ class Working:
                 weight_from_variance=True,
             ),
             generators=_ArrayCollection(model.generators.to_numpy().copy()),
-            raw_tables=copy.deepcopy(dict(raw)),
+            tap_steps=_domain("tap_steps"),
+            load_characteristics=_domain("load_characteristics"),
+            shunts=_domain("shunts"),
         )
 
     @classmethod
@@ -348,15 +457,25 @@ class Working:
         branches: np.ndarray,
         measurements: np.ndarray,
         generators: np.ndarray,
-        raw_tables: dict[str, np.ndarray] | None = None,
+        tap_steps: np.ndarray | None = None,
+        load_characteristics: np.ndarray | None = None,
+        shunts: np.ndarray | None = None,
     ) -> Working:
         """Построить ``Working`` напрямую из контрактных numpy-массивов.
 
         Основной вход: внешний загрузчик/тест собирает структурированные массивы
-        схемы ``SE_INPUT`` (nodes/branches/measurements/generators + сырые
-        таблицы) и передаёт их сюда. Массивы копируются (вход read-only).
-        ``measurements`` получает те же add-дефолты, что и :meth:`from_model`.
+        схемы ``SE_INPUT`` (nodes/branches/measurements/generators + доменные
+        tap_steps/load_characteristics/shunts) и передаёт их сюда. Массивы
+        копируются (вход read-only). Доменные таблицы опциональны (None → пустая
+        коллекция). ``measurements`` получает те же add-дефолты, что и
+        :meth:`from_model`.
         """
+
+        def _domain(arr: np.ndarray | None, name: str) -> _ArrayCollection:
+            if arr is None or len(np.asarray(arr)) == 0:
+                return _empty_domain(name)
+            return _ArrayCollection(np.asarray(arr).copy())
+
         return cls(
             nodes=_ArrayCollection(np.asarray(nodes).copy()),
             branches=_ArrayCollection(np.asarray(branches).copy()),
@@ -366,7 +485,9 @@ class Working:
                 weight_from_variance=True,
             ),
             generators=_ArrayCollection(np.asarray(generators).copy()),
-            raw_tables=copy.deepcopy(dict(raw_tables)) if raw_tables else {},
+            tap_steps=_domain(tap_steps, "tap_steps"),
+            load_characteristics=_domain(load_characteristics, "load_characteristics"),
+            shunts=_domain(shunts, "shunts"),
         )
 
     @classmethod
@@ -405,5 +526,7 @@ class Working:
             "Working("
             f"nodes={len(self.nodes)}, branches={len(self.branches)}, "
             f"measurements={len(self.measurements)}, generators={len(self.generators)}, "
-            f"raw_tables={sorted(self.raw_tables)})"
+            f"tap_steps={len(self.tap_steps)}, "
+            f"load_characteristics={len(self.load_characteristics)}, "
+            f"shunts={len(self.shunts)})"
         )

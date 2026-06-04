@@ -52,7 +52,7 @@ def apply_telemetry_resolved(
     q_loss_filter_action: str = "downweight",
     q_loss_filter_downweight_factor: float = 100.0,
 ) -> dict[str, int]:
-    """Фаза-A (релокация): применить готовый ``resolved`` z-вектор к ``measurements``.
+    """Применить готовый ``resolved`` z-вектор к ``measurements``.
 
     Чистое применение (без XML/snapshot/формул): снимок ``measurements``/``nodes``/
     ``branches`` → ядро :func:`_apply_telemetry_on_arrays` → write-back + ``.add()``
@@ -88,8 +88,8 @@ def apply_telemetry_resolved(
     )
 
     model.measurements.update_from_array(meas_arr)
-    for row in new_rows:
-        model.measurements.add(row)
+    # Пакетная вставка за одну конкатенацию (per-row .add() = O(n²)).
+    model.measurements.add_many(new_rows)
 
     return stats
 
@@ -580,7 +580,7 @@ def _materialize_area_on_arrays(
     global_k_fallback: float,
     fill: bool = True,
 ) -> dict[str, float]:
-    """ЯДРО (CLASS-2): материализация одного поля узла над ``SE_INPUT``-массивом.
+    """ЯДРО: материализация одного поля узла над ``SE_INPUT``-массивом.
 
     Контрактная float-математика: читает ``status``/``id``/``area_id``/
     ``<max_col>``/``<min_col>``/``<exist_col>`` из ``nodes_arr`` (структурный

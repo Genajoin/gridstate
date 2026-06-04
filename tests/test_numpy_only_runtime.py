@@ -219,8 +219,8 @@ _SUBPROCESS_SCRIPT = (
 def test_run_passthrough_in_process():
     """In-process: ``from_arrays`` → ``run(working)`` → ``SEResult``.
 
-    Проверяет pass-through ветку ``_build_working`` (на вход ``Working`` —
-    возвращается как есть, модель-источник не строится).
+    Проверяет ``Working``-ветку ``_build_working`` (на вход ``Working`` — он
+    клонируется через ``.copy()``, модель-источник не строится; Input read-only).
     """
     ns: dict = {}
     exec(_BUILD_MODEL_SRC, ns)

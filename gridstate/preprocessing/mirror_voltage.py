@@ -20,22 +20,18 @@
 (V_wye=V_HV через power flow) и без (V_wye плавал свободно, теперь —
 к real V).
 
-**(CLASS-1 pseudo-слой):** функция расщеплена на
+**Декомпозиция:** функция расщеплена на
 ``_mirror_voltage_on_arrays``-**ядро над контрактными numpy-массивами**
-(vendor-free, читает ТОЛЬКО контрактные колонки nodes/branches/measurements,
-XML не трогает) + тонкий адаптер. В отличие от уже-мигрированных
-каскадных функций (мутируют существующую колонку → ``update_from_array``),
-здесь паттерн **append**: ядро не мутирует существующие строки, а
-ВОЗВРАЩАЕТ список новых measurement-строк (``list[dict]``), а адаптер
-добавляет их через ``model.measurements.add()`` построчно (батч-append из
-массива в ``_ArrayCollection`` отсутствует). Логика дословно прежняя
-(тот же последовательный порядок обхода ветвей, тот же within-pass
-``any_v_by_node`` dedup, та же раздача id) → **строгий бит-в-бит 1e-9**:
-``(value, variance)`` КОПИРУЮТСЯ без арифметики, единственная float-операция
-— порог-гейт ``|tap-1|>=tol`` (не округление). Единственное изменение
-механики — поиск свободного id скан-ит ``meas_arr['id']`` вместо итерации
-live-коллекции: множество id идентично (``meas_arr`` снят до любого
-``add``), collision-skip-семантика сохранена дословно.
+(читает ТОЛЬКО контрактные колонки nodes/branches/measurements,
+XML не трогает) + тонкий адаптер. Паттерн **append**: ядро не мутирует
+существующие строки, а ВОЗВРАЩАЕТ список новых measurement-строк
+(``list[dict]``), а адаптер добавляет их через ``model.measurements.add()``
+построчно. Логика последовательная (порядок обхода ветвей, within-pass
+``any_v_by_node`` dedup, монотонная раздача id): ``(value, variance)``
+КОПИРУЮТСЯ без арифметики, единственная float-операция — порог-гейт
+``|tap-1|>=tol`` (не округление). Поиск свободного id скан-ит
+``meas_arr['id']`` (снят до любого ``add``), collision-skip-семантика
+сохранена.
 """
 
 from __future__ import annotations
@@ -74,7 +70,7 @@ def _mirror_voltage_on_arrays(
 
     **Должно оставаться последовательным Python-циклом** по ``branches_arr`` в
     исходном порядке с локальной мутацией ``any_v_by_node``/``new_id`` внутри прохода
-    (within-pass dedup и раздача id — load-bearing; векторизация разрушит бит-в-бит).
+    (within-pass dedup и раздача id — load-bearing; векторизация изменит результат).
     """
     real_v_by_node: dict[int, tuple[float, float]] = {}
     any_v_by_node: set[int] = set()
@@ -179,8 +175,8 @@ def mirror_voltage_through_unit_tap_links(
         tap_tolerance=tap_tolerance,
         mid_start=mid_start,
     )
-    for row in new_rows:
-        model.measurements.add(row)
+    # Пакетная вставка за одну конкатенацию (per-row .add() = O(n²)).
+    model.measurements.add_many(new_rows)
 
     logger.info("mirror_voltage_through_unit_tap_links: добавлено %d pseudo V-meas", len(new_rows))
     return len(new_rows)

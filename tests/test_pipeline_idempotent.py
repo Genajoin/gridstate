@@ -23,6 +23,7 @@ import pytest
 
 from gridstate.pipeline import PipelineConfig, _build_working, run
 from gridstate.telemetry import apply_reactors_to_node_shunt
+from gridstate.working import Working
 from gridstate.z_vector import (
     KIND_POWER_INJECTION_P,
     KIND_POWER_INJECTION_Q,
@@ -45,11 +46,15 @@ from gridstate.z_vector import (
 class _Model:
     """vendor-free носитель контрактных таблиц (заменяет полноценную модель).
 
-    ``run``/``_build_working`` копируют Input через ``Working.from_model`` ровно
-    для НЕ-``Working`` носителей (``Working`` пробрасывается as-is). Этот тонкий
-    duck-typed контейнер (коллекции — ``Working.empty()``, raw_tables — dict)
-    сохраняет прежний clone-контракт: ``_build_working(m)`` делает независимую
-    рабочую копию, а Input остаётся read-only.
+    ``run``/``_build_working`` копируют Input: НЕ-``Working`` носители — через
+    ``Working.from_model``, готовый ``Working`` — через ``.copy()``. Этот тонкий
+    duck-typed контейнер (коллекции — из ``Working``) идёт по ветке
+    ``from_model``; независимость Input проверяется и для сырого ``Working``
+    (см. ``test_run_does_not_mutate_raw_working_input``).
+
+    Носит 4 основные коллекции (nodes/branches/measurements/generators) и
+    3 доменные input-таблицы (tap_steps/load_characteristics/shunts) — ровно то,
+    что читает working-слой; ``from_model`` доменные таблицы подхватывает по имени.
     """
 
     def __init__(self, src):
@@ -57,7 +62,9 @@ class _Model:
         self.branches = src.branches
         self.measurements = src.measurements
         self.generators = src.generators
-        self.raw_tables = src.raw_tables
+        self.tap_steps = src.tap_steps
+        self.load_characteristics = src.load_characteristics
+        self.shunts = src.shunts
 
 
 def _make_model_with_reactor(reactor_node: int = 1, susceptance_uS: float = 50_000.0):
@@ -139,19 +146,19 @@ def _make_model_with_reactor(reactor_node: int = 1, susceptance_uS: float = 50_0
             )
             next_id += 1
 
-    m.raw_tables["reactors"] = [
+    # Канонический шунт (таблица ``shunts``): B/G уже в См, со знаком и
+    # ON_LINE-статусом. Старый сырой реактор хранил B в мкСм и пересчитывался
+    # ×1e-6 при применении; здесь сразу кладём В = susceptance_uS·1e-6 См, чтобы
+    # воспроизвести прежний эффект (50000 мкСм → 0.05 См → shunt_b=0.05).
+    m.shunts.add(
         {
             "id": 1,
-            "name": "R1",
             "node_id": reactor_node,
-            "num": 1,
-            "reac_id_rastr": 0,
             "conductance": 0.0,
-            "susceptance": susceptance_uS,
+            "susceptance": susceptance_uS * 1e-6,
             "status": True,
-            "ems": 0,
         }
-    ]
+    )
     return _Model(m)
 
 
@@ -176,15 +183,16 @@ def _arrays_equal(coll_a, coll_b) -> bool:
 
 
 def test_working_is_bit_identical_and_independent():
-    """``_build_working`` (Working) бит-в-бит копирует коллекции + raw_tables; копия независима."""
+    """``_build_working`` (Working) бит-в-бит копирует коллекции + таблицу ``shunts``; копия независима."""
     m = _make_model_with_reactor()
     w = _build_working(m)
 
     assert _arrays_equal(m.nodes, w.nodes)
     assert _arrays_equal(m.branches, w.branches)
     assert _arrays_equal(m.measurements, w.measurements)
-    assert set(m.raw_tables) == set(w.raw_tables)
-    assert "reactors" in w.raw_tables
+    # Доменная таблица шунтов скопирована (бит-в-бит) и независима от Input.
+    assert _arrays_equal(m.shunts, w.shunts)
+    assert len(w.shunts.to_numpy()) == 1
 
     # Мутация копии НЕ трогает Input.
     apply_reactors_to_node_shunt(w)
@@ -194,7 +202,11 @@ def test_working_is_bit_identical_and_independent():
 
 def test_apply_reactors_doubles_without_clone():
     """Документируем не-идемпотентность leaf-функции: вызов дважды удваивает
-    shunt (за идемпотентность отвечает working-clone в run(), не leaf)."""
+    shunt (за идемпотентность отвечает working-clone в run(), не leaf).
+
+    ``_Model`` — duck-носитель; ``apply_reactors_to_node_shunt`` читает
+    ``model.shunts`` и пишет ``model.nodes``, поэтому работает и на нём напрямую.
+    """
     m = _make_model_with_reactor()
     apply_reactors_to_node_shunt(m)
     apply_reactors_to_node_shunt(m)
@@ -250,6 +262,39 @@ def test_run_twice_bit_identical(algorithm):
     for nid in vd1:
         assert vd2[nid][0] == pytest.approx(vd1[nid][0], abs=1e-9)
         assert vd2[nid][1] == pytest.approx(vd1[nid][1], abs=1e-9)
+
+
+@pytest.mark.parametrize("algorithm", ["wls", "ipm"])
+def test_run_does_not_mutate_raw_working_input(algorithm):
+    """Сырой ``Working``-вход (vendor-free / npz-путь) — тоже read-only.
+
+    Регрессия: раньше ``_build_working`` пробрасывал ``Working`` as-is, и ``run``
+    мутировал его (pseudo-меры росли, shunt реакторов удваивался) → повторный
+    прогон на том же объекте падал ``ValueError: object with id=… already
+    exists``. Теперь ``_build_working`` клонирует и ``Working``-вход.
+    """
+    wrapped = _make_model_with_reactor()
+    w = Working.from_arrays(
+        nodes=wrapped.nodes.to_numpy(),
+        branches=wrapped.branches.to_numpy(),
+        measurements=wrapped.measurements.to_numpy(),
+        generators=wrapped.generators.to_numpy(),
+        shunts=wrapped.shunts.to_numpy(),
+    )
+    n_meas = len(w.measurements.to_numpy())
+    cfg = PipelineConfig(algorithm=algorithm)
+
+    r1 = run(w, config=cfg)
+    # Вход не вырос и не накопил shunt; результат — в отдельной рабочей копии.
+    assert len(w.measurements.to_numpy()) == n_meas
+    assert w.nodes.get_by_id(1).shunt_b == pytest.approx(0.0)
+    assert r1.model is not w
+
+    # Повтор на том же объекте раньше падал ValueError — теперь бит-в-бит.
+    r2 = run(w, config=cfg)
+    assert len(w.measurements.to_numpy()) == n_meas
+    assert r2.iterations == r1.iterations
+    assert np.array_equal(np.asarray(r2.v_pu), np.asarray(r1.v_pu))
 
 
 def test_run_thrice_stable():
