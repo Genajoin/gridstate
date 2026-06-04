@@ -74,6 +74,19 @@ def apply_reactors_to_node_shunt(model: Working, *, sign: int = 1) -> dict[str, 
     Returns:
         ``{"applied": N, "sum_b_added_S": float, "sum_g_added_S": float}``.
     """
+    # Канон-путь (шаг 4b se_canonical_contract_design): типизированная таблица
+    # ``shunts`` (адаптер cspase) уже несёт B/G в См + знак + ON_LINE-статус —
+    # ядру остаётся агрегировать активные в ``node.shunt_g/b`` (без мкСм→См/sign:
+    # это формат-специфика, ушедшая в адаптер). Бит-в-бит с raw-путём при
+    # ``sign=1`` (shadow-доказано на ОДУ). Если ``shunts`` пуст — legacy raw.
+    shunts_coll = getattr(model, "shunts", None)
+    shunts_arr = shunts_coll.to_numpy() if shunts_coll is not None else None
+    if shunts_arr is not None and len(shunts_arr) > 0:
+        nodes = model.nodes.to_numpy().copy()
+        stats = _aggregate_shunts_on_arrays(nodes, shunts_arr)
+        model.nodes.update_from_array(nodes)
+        return stats
+
     reac = model.raw_tables.get("reactors")
     if reac is None or len(reac) == 0:
         return {"applied": 0, "sum_b_added_S": 0.0, "sum_g_added_S": 0.0}
@@ -82,6 +95,45 @@ def apply_reactors_to_node_shunt(model: Working, *, sign: int = 1) -> dict[str, 
     stats = _apply_reactors_on_arrays(nodes, reac, sign=sign)
     model.nodes.update_from_array(nodes)
     return stats
+
+
+def _aggregate_shunts_on_arrays(nodes_arr: Any, shunts_arr: Any) -> dict[str, int | float]:
+    """Сложить B/G активных шунтов (контракт ``shunts``) в ``node.shunt_b/g``.
+
+    Канон-агрегация (шаг 4b): ``shunts`` уже в См с применённым знаком/ON_LINE-
+    статусом (адаптер). Фильтр ``shunts.status`` И активности узла + сумма в порядке
+    строк — дословно как :func:`_apply_reactors_on_arrays` (минус мкСм→См/sign,
+    запечённые в адаптере) → бит-в-бит при ``sign=1``. Мутирует ``nodes_arr``.
+    """
+    if shunts_arr is None or len(shunts_arr) == 0:
+        return {"applied": 0, "sum_b_added_S": 0.0, "sum_g_added_S": 0.0}
+
+    by_id: dict[int, int] = {int(nodes_arr[i]["id"]): i for i in range(len(nodes_arr))}
+    node_status: dict[int, bool] = {
+        int(nodes_arr[i]["id"]): bool(nodes_arr[i]["status"]) for i in range(len(nodes_arr))
+    }
+
+    applied = 0
+    sum_b = 0.0
+    sum_g = 0.0
+    for s in shunts_arr:
+        if not bool(s["status"]):
+            continue
+        nid = int(s["node_id"])
+        if nid == 0 or not node_status.get(nid, False):
+            continue
+        idx = by_id.get(nid)
+        if idx is None:
+            continue
+        b_add = float(s["susceptance"])
+        g_add = float(s["conductance"])
+        nodes_arr[idx]["shunt_b"] = float(nodes_arr[idx]["shunt_b"]) + b_add
+        nodes_arr[idx]["shunt_g"] = float(nodes_arr[idx]["shunt_g"]) + g_add
+        sum_b += b_add
+        sum_g += g_add
+        applied += 1
+
+    return {"applied": applied, "sum_b_added_S": sum_b, "sum_g_added_S": sum_g}
 
 
 def _apply_reactors_on_arrays(
