@@ -466,36 +466,56 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         "no_load_models": 0,
     }
 
-    lm = model.raw_tables.get("load_models") if hasattr(model, "raw_tables") else None
-    if lm is None or len(lm) == 0:
+    # Источник коэффициентов СХН. Канон ``load_characteristics`` (адаптер cspase,
+    # шаг 4a se_canonical_contract_design) — если таблица непуста И узлы несут
+    # 0-based ссылку ``load_model_id``; иначе legacy raw ``load_models`` + 1-based
+    # ``sxn_id`` (до подключения адаптера). Канон-``id`` = позиционный 0-based, т.е.
+    # ``load_model_id == sxn_id-1`` и ``lc[i]`` коэффициенты == ``lm[i]`` → пересчёт
+    # бит-в-бит (shadow-доказано на ОДУ; см. cspase/adapter/resolve.py).
+    nodes_arr = model.nodes.to_numpy()
+    node_names = nodes_arr.dtype.names or ()
+    lc_coll = getattr(model, "load_characteristics", None)
+    lc = lc_coll.to_numpy() if lc_coll is not None else None
+    use_canon = lc is not None and len(lc) > 0 and "load_model_id" in node_names
+
+    coeff = lc if use_canon else (model.raw_tables.get("load_models") if hasattr(model, "raw_tables") else None)
+    if coeff is None or len(coeff) == 0:
         out["no_load_models"] = 1
         return out
 
-    n_lm = len(lm)
-    # 1-based индекс → строка. sxn_id == 1 ⇒ lm[0].
-    a0 = np.asarray(lm["coeff_p_a0"], dtype=np.float64)
-    a1 = np.asarray(lm["coeff_p_a1"], dtype=np.float64)
-    a2 = np.asarray(lm["coeff_p_a2"], dtype=np.float64)
-    b0 = np.asarray(lm["coeff_q_b0"], dtype=np.float64)
-    b1 = np.asarray(lm["coeff_q_b1"], dtype=np.float64)
-    b2 = np.asarray(lm["coeff_q_b2"], dtype=np.float64)
+    n_lm = len(coeff)
+    a0 = np.asarray(coeff["coeff_p_a0"], dtype=np.float64)
+    a1 = np.asarray(coeff["coeff_p_a1"], dtype=np.float64)
+    a2 = np.asarray(coeff["coeff_p_a2"], dtype=np.float64)
+    b0 = np.asarray(coeff["coeff_q_b0"], dtype=np.float64)
+    b1 = np.asarray(coeff["coeff_q_b1"], dtype=np.float64)
+    b2 = np.asarray(coeff["coeff_q_b2"], dtype=np.float64)
 
-    nodes_arr = model.nodes.to_numpy()
     for row in nodes_arr:
         if not bool(row["status"]):
             continue
-        sxn = int(row["sxn_id"])
         exist_load = bool(row["exist_load"])
 
-        if sxn <= 0:
-            if exist_load:
-                out["skipped_no_sxn"] += 1
-            continue
+        # idx — 0-based строка коэффициентов. Канон: прямой load_model_id (-1=нет).
+        # Legacy: sxn_id-1. Порядок skip-проверок не влияет на пересчёт (во всех
+        # skip-ветвях recompute отсутствует) — только на stat-счётчики.
+        if use_canon:
+            idx = int(row["load_model_id"])
+            if idx < 0:
+                if exist_load:
+                    out["skipped_no_sxn"] += 1
+                continue
+        else:
+            sxn = int(row["sxn_id"])
+            if sxn <= 0:
+                if exist_load:
+                    out["skipped_no_sxn"] += 1
+                continue
+            idx = sxn - 1  # 1-based → 0-based
+
         if not exist_load:
             out["skipped_no_load"] += 1
             continue
-
-        idx = sxn - 1  # 1-based → 0-based
         if idx < 0 or idx >= n_lm:
             out["skipped_bad_sxn"] += 1
             continue
