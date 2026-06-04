@@ -33,9 +33,9 @@ def test_roundtrip_contract_tables_bit_identical(tmp_path):
     assert se_out.derived is None  # модель без планов
 
 
-def test_roundtrip_aux_domain_tables(tmp_path):
-    """Доменные input-таблицы tap_steps/load_characteristics/shunts (шаг 2
-    se_canonical_contract_design) переживают save/load бит-в-бит."""
+def test_roundtrip_domain_tables(tmp_path):
+    """Доменные input-таблицы tap_steps/load_characteristics/shunts переживают
+    save/load без потерь."""
     from gridstate.contract import SE_INPUT
     from gridstate.working import Working
 
@@ -74,9 +74,9 @@ def test_roundtrip_aux_domain_tables(tmp_path):
         assert _arrays_bit_identical(got, ref), f"{name}: round-trip не бит-в-бит"
 
 
-def test_aux_domain_tables_absent_loads_empty(tmp_path):
-    """Старый npz без aux-таблиц грузится: коллекции пустые, прогон не падает."""
-    se_in = SEInput.from_model(_make_model())  # модель без aux
+def test_domain_tables_absent_loads_empty(tmp_path):
+    """npz без доменных таблиц грузится: коллекции пустые, прогон не падает."""
+    se_in = SEInput.from_model(_make_model())  # модель без доменных таблиц
     p = save_se_input(se_in, tmp_path / "noaux.npz")
     se_out = load_se_input_npz(p)
     for name in ("tap_steps", "load_characteristics", "shunts"):

@@ -39,14 +39,12 @@ if TYPE_CHECKING:
 _RAW_PREFIX = "raw__"
 _DERIVED_KEY = "__derived_pickle__"
 _META_KEY = "__contract_version__"
-_SKIPPED_KEY = "__skipped_raw__"
 _CONTRACT_TABLES = ("nodes", "branches", "measurements", "generators")
-# Доменные input-only таблицы (формат-агностичная замена raw
-# shema_ktr/load_models/reactors). Опциональны: старые npz без них грузятся
-# (Working.from_arrays даёт пустую коллекцию). Префиксуем, чтобы не путать с
-# основными контрактными и не ломать загрузку старых файлов.
-_AUX_TABLES = ("tap_steps", "load_characteristics", "shunts")
-_AUX_PREFIX = "aux__"
+# Доменные числовые input-таблицы — first-class, наравне с основными
+# контрактными: пишутся/читаются под собственным именем. Опциональны
+# (источник может их не нести): отсутствующая → пустая коллекция в
+# Working.from_arrays.
+_DOMAIN_TABLES = ("tap_steps", "load_characteristics", "shunts")
 
 
 def _is_npz_clean(arr: np.ndarray) -> bool:
@@ -121,27 +119,24 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
         coll = getattr(model, name)
         arrays[name] = np.asarray(coll.to_numpy())
 
-    # Доменные input-only таблицы (опционально — источник может их не нести).
-    for name in _AUX_TABLES:
+    # Доменные числовые таблицы — first-class, под собственным именем
+    # (опционально: источник может их не нести / нести пустыми).
+    for name in _DOMAIN_TABLES:
         coll = getattr(model, name, None)
         if coll is not None and hasattr(coll, "to_numpy"):
             arr = np.asarray(coll.to_numpy())
             if len(arr) > 0:
-                arrays[f"{_AUX_PREFIX}{name}"] = arr
+                arrays[name] = arr
 
     raw = getattr(model, "raw_tables", None) or {}
-    skipped: list[str] = []
     for key, table in raw.items():
         table = np.asarray(table)
         if _is_npz_clean(table):
             arrays[f"{_RAW_PREFIX}{key}"] = table
-        else:
-            skipped.append(key)
 
     blob = _derived_to_blob(se_input.derived)
     arrays[_DERIVED_KEY] = np.frombuffer(pickle.dumps(blob), dtype=np.uint8)
     arrays[_META_KEY] = np.asarray(str(se_input.contract_version))
-    arrays[_SKIPPED_KEY] = np.asarray(skipped, dtype="<U64")
 
     out = Path(path)
     # mypy: **arrays статически коллидирует с keyword-only allow_pickle: bool в
@@ -168,10 +163,8 @@ def load_se_input_npz(path: str | Path) -> SEInput:
             for key in files
             if key.startswith(_RAW_PREFIX)
         }
-        aux = {
-            name: np.asarray(npz[f"{_AUX_PREFIX}{name}"])
-            for name in _AUX_TABLES
-            if f"{_AUX_PREFIX}{name}" in files
+        domain = {
+            name: np.asarray(npz[name]) for name in _DOMAIN_TABLES if name in files
         }
         working = Working.from_arrays(
             nodes=np.asarray(npz["nodes"]),
@@ -179,7 +172,7 @@ def load_se_input_npz(path: str | Path) -> SEInput:
             measurements=np.asarray(npz["measurements"]),
             generators=np.asarray(npz["generators"]),
             raw_tables=raw_tables,
-            **aux,
+            **domain,
         )
         blob = pickle.loads(bytes(npz[_DERIVED_KEY])) if _DERIVED_KEY in files else None
         contract_version = str(npz[_META_KEY]) if _META_KEY in files else None

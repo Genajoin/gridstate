@@ -352,7 +352,7 @@ class _ArrayCollection:
 # ---------------------------------------------------------------------------
 
 
-def _empty_aux(name: str) -> _ArrayCollection:
+def _empty_domain(name: str) -> _ArrayCollection:
     """Пустая коллекция доменной input-таблицы с её контрактным dtype.
 
     ``name`` ∈ {tap_steps, load_characteristics, shunts}. Lazy-импорт контракта
@@ -393,13 +393,13 @@ class Working:
         # Доменные input-only таблицы (формат-агностичная замена raw
         # shema_ktr/load_models/reactors). Дефолт — пустая коллекция контрактного
         # dtype.
-        self.tap_steps = tap_steps if tap_steps is not None else _empty_aux("tap_steps")
+        self.tap_steps = tap_steps if tap_steps is not None else _empty_domain("tap_steps")
         self.load_characteristics = (
             load_characteristics
             if load_characteristics is not None
-            else _empty_aux("load_characteristics")
+            else _empty_domain("load_characteristics")
         )
-        self.shunts = shunts if shunts is not None else _empty_aux("shunts")
+        self.shunts = shunts if shunts is not None else _empty_domain("shunts")
 
     def copy(self) -> Working:
         """Глубокая независимая копия рабочего слоя.
@@ -434,14 +434,14 @@ class Working:
         """
         raw = getattr(model, "raw_tables", None) or {}
 
-        def _aux(name: str) -> _ArrayCollection:
+        def _domain(name: str) -> _ArrayCollection:
             # Доменные input-таблицы есть не у всякого источника. Отсутствие →
             # пустая коллекция.
             coll = getattr(model, name, None)
             if coll is None or not hasattr(coll, "to_numpy"):
-                return _empty_aux(name)
+                return _empty_domain(name)
             arr = coll.to_numpy()
-            return _ArrayCollection(arr.copy()) if len(arr) > 0 else _empty_aux(name)
+            return _ArrayCollection(arr.copy()) if len(arr) > 0 else _empty_domain(name)
 
         return cls(
             nodes=_ArrayCollection(model.nodes.to_numpy().copy()),
@@ -453,9 +453,9 @@ class Working:
             ),
             generators=_ArrayCollection(model.generators.to_numpy().copy()),
             raw_tables=copy.deepcopy(dict(raw)),
-            tap_steps=_aux("tap_steps"),
-            load_characteristics=_aux("load_characteristics"),
-            shunts=_aux("shunts"),
+            tap_steps=_domain("tap_steps"),
+            load_characteristics=_domain("load_characteristics"),
+            shunts=_domain("shunts"),
         )
 
     @classmethod
@@ -481,9 +481,9 @@ class Working:
         :meth:`from_model`.
         """
 
-        def _aux(arr: np.ndarray | None, name: str) -> _ArrayCollection:
+        def _domain(arr: np.ndarray | None, name: str) -> _ArrayCollection:
             if arr is None or len(np.asarray(arr)) == 0:
-                return _empty_aux(name)
+                return _empty_domain(name)
             return _ArrayCollection(np.asarray(arr).copy())
 
         return cls(
@@ -496,9 +496,9 @@ class Working:
             ),
             generators=_ArrayCollection(np.asarray(generators).copy()),
             raw_tables=copy.deepcopy(dict(raw_tables)) if raw_tables else {},
-            tap_steps=_aux(tap_steps, "tap_steps"),
-            load_characteristics=_aux(load_characteristics, "load_characteristics"),
-            shunts=_aux(shunts, "shunts"),
+            tap_steps=_domain(tap_steps, "tap_steps"),
+            load_characteristics=_domain(load_characteristics, "load_characteristics"),
+            shunts=_domain(shunts, "shunts"),
         )
 
     @classmethod
