@@ -112,22 +112,6 @@ def test_roundtrip_derived_plans(tmp_path):
     assert d.snapshot == {}  # по дизайну не переносится
 
 
-def test_object_raw_tables_skipped(tmp_path):
-    """Object-массивы в raw_tables пропускаются (граница остаётся чистым npz)."""
-    model = _make_model()
-    model.raw_tables = {
-        "clean": np.array([(1, 2.0)], dtype=[("a", "<i4"), ("b", "<f8")]),
-        "dirty": np.array([{"x": 1}, None], dtype=object),
-    }
-    se_in = SEInput.from_model(model)
-    p = save_se_input(se_in, tmp_path / "raw.npz")
-    se_out = load_se_input_npz(p)
-
-    assert "clean" in se_out.model.raw_tables
-    assert "dirty" not in se_out.model.raw_tables
-    assert _arrays_bit_identical(se_out.model.raw_tables["clean"], model.raw_tables["clean"])
-
-
 @pytest.mark.parametrize("algorithm", ["wls", "ipm"])
 def test_run_bit_identical_via_npz(tmp_path, algorithm):
     """End-to-end: ``run`` из npz ≡ ``run`` из исходной модели (бит-в-бит)."""

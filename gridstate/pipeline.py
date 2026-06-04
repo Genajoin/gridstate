@@ -446,17 +446,7 @@ def _s_topology(ctx: _Ctx) -> dict:
 
 
 def _s_rpn(ctx: _Ctx) -> dict:
-    assert ctx.derived is not None and ctx.derived.rpn_resolved is not None
-    resolved_taps, skipped_no_branch, skipped_no_tm = ctx.derived.rpn_resolved
-    return dict(
-        apply_rpn_resolved(
-            ctx.model,
-            resolved_taps,
-            skipped_no_branch=skipped_no_branch,
-            skipped_no_tm=skipped_no_tm,
-        )
-        or {}
-    )
+    return dict(apply_rpn_resolved(ctx.model) or {})
 
 
 def _s_reactors(ctx: _Ctx) -> dict:

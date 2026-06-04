@@ -241,46 +241,48 @@ def test_write_node_estimates_from_inj_inactive_skipped():
 def _toy_model_with_sxn():
     """Минимальная модель с СХН для проверки ``apply_load_characteristic``.
 
-    raw_tables['load_models'] — 3 строки:
-        idx 0 (sxn_id=1): a0=0.5, a1=0.5, a2=0, b0=1, b1=0, b2=0
-        idx 1 (sxn_id=2): a0=1.0, a1=0.0, a2=0 (PQ-const)
-        idx 2 (sxn_id=3): a0=0.0, a1=0.0, a2=1.0 (квадратичная)
+    Канон-таблица ``load_characteristics`` — 3 строки (id = 0-based позиция):
+        id 0 (load_model_id=0): a0=0.5, a1=0.5, a2=0, b0=1, b1=0, b2=0
+        id 1 (load_model_id=1): a0=1.0, a1=0.0, a2=0 (PQ-const)
+        id 2 (load_model_id=2): a0=0.0, a1=0.0, a2=1.0 (квадратичная)
 
-    Узлы:
-        10 — exist_load=1, sxn_id=1, V=Vn → факт. множитель P = 0.5+0.5 = 1.0
-        11 — exist_load=1, sxn_id=2, V=0.9·Vn → PQ-const, факт = load_p
-        12 — exist_load=1, sxn_id=3, V=1.1·Vn → квадратичный множитель
-        13 — exist_load=1, sxn_id=0 (нет СХН) → skipped_no_sxn
-        14 — exist_load=0, sxn_id=2 → skipped_no_load
-        15 — exist_load=1, sxn_id=99 (за пределами) → skipped_bad_sxn
+    Узлы (привязка через 0-based ``load_model_id``, -1 = нет СХН):
+        10 — exist_load=1, load_model_id=0, V=Vn → факт. множитель P = 0.5+0.5 = 1.0
+        11 — exist_load=1, load_model_id=1, V=0.9·Vn → PQ-const, факт = load_p
+        12 — exist_load=1, load_model_id=2, V=1.1·Vn → квадратичный множитель
+        13 — exist_load=1, load_model_id=-1 (нет СХН) → skipped_no_sxn
+        14 — exist_load=0, load_model_id=1 → skipped_no_load
+        15 — exist_load=1, load_model_id=98 (за пределами) → skipped_bad_sxn
         16 — status=False, любые поля → пропускается
     """
     from gridstate.constants import NodeType
     from gridstate.contract import SE_INPUT
-    from gridstate.working import Working
+    from gridstate.working import Working, _ArrayCollection
 
     m = Working.empty()
-    lm = np.zeros(3, dtype=SE_INPUT.raw_table("load_models").numpy_dtype())
-    # idx 0 — sxn_id=1: a0=0.5 a1=0.5 a2=0; b: b0=1
-    lm[0]["coeff_p_a0"] = 0.5
-    lm[0]["coeff_p_a1"] = 0.5
-    lm[0]["coeff_p_a2"] = 0.0
-    lm[0]["coeff_q_b0"] = 1.0
-    lm[0]["coeff_q_b1"] = 0.0
-    lm[0]["coeff_q_b2"] = 0.0
-    # idx 1 — sxn_id=2: PQ-const
-    lm[1]["coeff_p_a0"] = 1.0
-    lm[1]["coeff_q_b0"] = 1.0
-    # idx 2 — sxn_id=3: чисто квадратичная
-    lm[2]["coeff_p_a2"] = 1.0
-    lm[2]["coeff_q_b2"] = 1.0
-    m.raw_tables["load_models"] = lm
+    # Канон load_characteristics: id = 0-based позиция строки.
+    lc = np.zeros(3, dtype=SE_INPUT.load_characteristics.input_dtype())
+    lc["id"] = np.arange(3, dtype=lc["id"].dtype)
+    # id 0 — load_model_id=0: a0=0.5 a1=0.5 a2=0; b: b0=1
+    lc[0]["coeff_p_a0"] = 0.5
+    lc[0]["coeff_p_a1"] = 0.5
+    lc[0]["coeff_p_a2"] = 0.0
+    lc[0]["coeff_q_b0"] = 1.0
+    lc[0]["coeff_q_b1"] = 0.0
+    lc[0]["coeff_q_b2"] = 0.0
+    # id 1 — load_model_id=1: PQ-const
+    lc[1]["coeff_p_a0"] = 1.0
+    lc[1]["coeff_q_b0"] = 1.0
+    # id 2 — load_model_id=2: чисто квадратичная
+    lc[2]["coeff_p_a2"] = 1.0
+    lc[2]["coeff_q_b2"] = 1.0
+    m.load_characteristics = _ArrayCollection(lc)
 
     for nid, kwargs in [
         (
             10,
             {
-                "sxn_id": 1,
+                "load_model_id": 0,
                 "voltage_nominal": 110.0,
                 "voltage_magnitude": 110.0,  # V_pu=1.0
                 "load_p": 100.0,
@@ -291,7 +293,7 @@ def _toy_model_with_sxn():
         (
             11,
             {
-                "sxn_id": 2,
+                "load_model_id": 1,
                 "voltage_nominal": 110.0,
                 "voltage_magnitude": 99.0,  # V_pu=0.9
                 "load_p": 80.0,
@@ -302,7 +304,7 @@ def _toy_model_with_sxn():
         (
             12,
             {
-                "sxn_id": 3,
+                "load_model_id": 2,
                 "voltage_nominal": 110.0,
                 "voltage_magnitude": 121.0,  # V_pu=1.1
                 "load_p": 200.0,
@@ -313,7 +315,7 @@ def _toy_model_with_sxn():
         (
             13,
             {
-                "sxn_id": 0,
+                "load_model_id": -1,
                 "voltage_nominal": 110.0,
                 "voltage_magnitude": 110.0,
                 "load_p": 50.0,
@@ -324,7 +326,7 @@ def _toy_model_with_sxn():
         (
             14,
             {
-                "sxn_id": 2,
+                "load_model_id": 1,
                 "voltage_nominal": 110.0,
                 "voltage_magnitude": 110.0,
                 "exist_load": 0,
@@ -333,7 +335,7 @@ def _toy_model_with_sxn():
         (
             15,
             {
-                "sxn_id": 99,
+                "load_model_id": 98,
                 "voltage_nominal": 110.0,
                 "voltage_magnitude": 110.0,
                 "load_p": 10.0,
@@ -344,7 +346,7 @@ def _toy_model_with_sxn():
         (
             16,
             {
-                "sxn_id": 1,
+                "load_model_id": 0,
                 "voltage_nominal": 110.0,
                 "voltage_magnitude": 110.0,
                 "load_p": 999.0,
@@ -429,7 +431,7 @@ def test_apply_load_characteristic_no_load_models():
             "voltage_magnitude": 110.0,
             "load_p": 100.0,
             "exist_load": 1,
-            "sxn_id": 1,
+            "load_model_id": 0,
             "status": True,
             "node_type": int(NodeType.PQ),
         }

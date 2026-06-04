@@ -7,8 +7,8 @@
 Сериализуется ровно то, что нужно ядру для прогона ``run(SEInput)``:
 
 * контрактные таблицы ``SE_INPUT`` — ``nodes`` / ``branches`` / ``measurements`` /
-  ``generators`` (структурированные numpy-массивы) + сырые таблицы ``raw_tables``
-  (``reactors`` / ``tm_values`` / ``shema_ktr`` / ``load_models``);
+  ``generators`` + доменные ``tap_steps`` / ``load_characteristics`` / ``shunts``
+  (структурированные numpy-массивы);
 * :class:`~gridstate.contract.derived.DerivedInputs` — 5 числовых планов (топология / РПН /
   телеметрия / материализация / Vnom), результат обработки источника. ``snapshot``
   НЕ сохраняется: ядро его не читает (только косметический счётчик ``unique_guids``).
@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from gridstate.contract.runtime import SEInput
 
 
-_RAW_PREFIX = "raw__"
 _DERIVED_KEY = "__derived_pickle__"
 _META_KEY = "__contract_version__"
 _CONTRACT_TABLES = ("nodes", "branches", "measurements", "generators")
@@ -45,21 +44,6 @@ _CONTRACT_TABLES = ("nodes", "branches", "measurements", "generators")
 # (источник может их не нести): отсутствующая → пустая коллекция в
 # Working.from_arrays.
 _DOMAIN_TABLES = ("tap_steps", "load_characteristics", "shunts")
-
-
-def _is_npz_clean(arr: np.ndarray) -> bool:
-    """True, если массив сериализуется в ``.npz`` без ``allow_pickle`` (нет object).
-
-    Часть сырых таблиц входного формата (``raw_mete``/``raw_source``/``raw_shema_task_param`` …)
-    приходят пустыми/гетерогенными object-массивами. Они не входят в z-вектор/решение
-    SE; пропускаем их, чтобы граница оставалась чистым npz: солвер эти таблицы не читает.
-    """
-    dt = arr.dtype
-    if dt.kind == "O":
-        return False
-    if dt.names:
-        return all(dt[n].kind != "O" for n in dt.names)
-    return True
 
 
 def _derived_to_blob(derived: Any) -> dict | None:
@@ -105,9 +89,10 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
 
     Args:
         se_input: вход SE. ``se_input.model`` — носитель контрактных таблиц
-            (``Working``, ``Working`` или любой объект с коллекциями
-            ``.nodes/.branches/.measurements/.generators``, отдающими ``to_numpy()``,
-            + опц. ``raw_tables``). ``se_input.derived`` — числовые планы (или ``None``).
+            (``Working`` или любой объект с коллекциями
+            ``.nodes/.branches/.measurements/.generators`` + опц. доменными
+            ``.tap_steps/.load_characteristics/.shunts``, отдающими ``to_numpy()``).
+            ``se_input.derived`` — числовые планы (или ``None``).
         path: путь к выходному ``.npz`` (расширение добавит numpy при отсутствии).
 
     Returns:
@@ -127,12 +112,6 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
             arr = np.asarray(coll.to_numpy())
             if len(arr) > 0:
                 arrays[name] = arr
-
-    raw = getattr(model, "raw_tables", None) or {}
-    for key, table in raw.items():
-        table = np.asarray(table)
-        if _is_npz_clean(table):
-            arrays[f"{_RAW_PREFIX}{key}"] = table
 
     blob = _derived_to_blob(se_input.derived)
     arrays[_DERIVED_KEY] = np.frombuffer(pickle.dumps(blob), dtype=np.uint8)
@@ -158,11 +137,6 @@ def load_se_input_npz(path: str | Path) -> SEInput:
 
     with np.load(path, allow_pickle=False) as npz:
         files = set(npz.files)
-        raw_tables = {
-            key[len(_RAW_PREFIX) :]: np.asarray(npz[key])
-            for key in files
-            if key.startswith(_RAW_PREFIX)
-        }
         domain = {
             name: np.asarray(npz[name]) for name in _DOMAIN_TABLES if name in files
         }
@@ -171,7 +145,6 @@ def load_se_input_npz(path: str | Path) -> SEInput:
             branches=np.asarray(npz["branches"]),
             measurements=np.asarray(npz["measurements"]),
             generators=np.asarray(npz["generators"]),
-            raw_tables=raw_tables,
             **domain,
         )
         blob = pickle.loads(bytes(npz[_DERIVED_KEY])) if _DERIVED_KEY in files else None

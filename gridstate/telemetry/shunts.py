@@ -24,75 +24,36 @@ if TYPE_CHECKING:
 _BREAKER_X_SENTINEL_OHM = 1.0
 
 
-def apply_reactors_to_node_shunt(model: Working, *, sign: int = 1) -> dict[str, int | float]:
-    """Сложить B/G активных реакторов в ``shunt_b/g`` их узлов.
+def apply_reactors_to_node_shunt(model: Working) -> dict[str, int | float]:
+    """Сложить B/G активных шунтов в ``shunt_b/g`` их узлов.
 
-    Входной формат хранит ШР (шунтирующие реакторы) в отдельной таблице
-    ``<REACTORS>`` со ссылкой на узел через атрибут ``NODE``; они попадают в
-    ``model.raw_tables['reactors']`` (с B в См после конверсии из мкСм), но
-    **не суммируются** в ``model.nodes.shunt_b`` при загрузке.
-    Без этого Y-bus игнорирует ШР, и расчётный Q узла не учитывает
-    реактивную компенсацию зарядной мощности линии.
+    Шунтирующие элементы (реакторы/БК) задаются таблицей ``shunts`` (B/G в См,
+    со знаком и ON_LINE-статусом, применёнными во внешнем источнике данных). Без
+    этого Y-bus игнорирует шунтовую компенсацию, и расчётный Q узла её не учитывает.
 
-    Эта функция:
-    1. Перебирает реакторы со ``status=True`` (активные после применения
-       ON_LINE-топологии);
-    2. Если узел тоже активен — суммирует ``sign·B/G`` реактора в
-       ``shunt_b/g`` соответствующего узла.
-
-    Применять **после** применения ON_LINE-топологии (которая
-    активирует реакторы по их ON_LINE-формулам).
-
-    Знак (``sign``): конвенция входного формата ``reactors.susceptance`` обратна
-    EE Y-bus — входной формат ``B>0``=ШР (индуктивный, поглощает Q, понижает V),
-    ``B<0``=БК (ёмкостный), тогда как в EE ``shunt_b>0``=ёмкостный.
-    Поэтому физически корректный по узловому Q-балансу вариант —
-    ``sign=-1`` (``shunt_b -= B``): с ним расчётный ``q_node_shunt``
-    совпадает по знаку и величине с реактивным шунтом эталонного решения.
-    **Однако** ``sign=-1`` как default ухудшает сходимость V/δ — неверный знак
-    исторически компенсировал недостающую реактивную нагрузку во входных данных.
-    Поэтому **default ``sign=1`` сохранён** (= историческое поведение, no-op);
-    ``sign=-1`` оставлен как opt-in рычаг для Q-баланс-экспериментов и
-    будущих combo (когда недостающие данные будут восстановлены легально).
-
-    Args:
-        model: рабочая модель (Working).
-        sign: знак при сложении B/G. ``1`` (default) — историческое
-            поведение; ``-1`` — физически корректный по Q-балансу (но
-            ухудшает V/δ как default, см. выше).
+    Перебирает активные строки ``shunts`` (``status=True``) и для каждой, чей узел
+    тоже активен, суммирует её ``B/G`` в ``shunt_b/g`` узла. Применять **после**
+    применения ON_LINE-топологии.
 
     Returns:
         ``{"applied": N, "sum_b_added_S": float, "sum_g_added_S": float}``.
     """
-    # Если задана типизированная таблица ``shunts`` (B/G в См + знак +
-    # ON_LINE-статус уже применены вне ядра) — ядру остаётся агрегировать активные
-    # в ``node.shunt_g/b`` (без мкСм→См/sign: это формат-специфика). Даёт тот же
-    # результат, что raw-путь при ``sign=1``. Если ``shunts`` пуст — raw-путь.
     shunts_coll = getattr(model, "shunts", None)
     shunts_arr = shunts_coll.to_numpy() if shunts_coll is not None else None
-    if shunts_arr is not None and len(shunts_arr) > 0:
-        nodes = model.nodes.to_numpy().copy()
-        stats = _aggregate_shunts_on_arrays(nodes, shunts_arr)
-        model.nodes.update_from_array(nodes)
-        return stats
-
-    reac = model.raw_tables.get("reactors")
-    if reac is None or len(reac) == 0:
+    if shunts_arr is None or len(shunts_arr) == 0:
         return {"applied": 0, "sum_b_added_S": 0.0, "sum_g_added_S": 0.0}
-
     nodes = model.nodes.to_numpy().copy()
-    stats = _apply_reactors_on_arrays(nodes, reac, sign=sign)
+    stats = _aggregate_shunts_on_arrays(nodes, shunts_arr)
     model.nodes.update_from_array(nodes)
     return stats
 
 
 def _aggregate_shunts_on_arrays(nodes_arr: Any, shunts_arr: Any) -> dict[str, int | float]:
-    """Сложить B/G активных шунтов (контракт ``shunts``) в ``node.shunt_b/g``.
+    """Сложить B/G активных шунтов (таблица ``shunts``) в ``node.shunt_b/g``.
 
-    ``shunts`` уже в См с применённым знаком/ON_LINE-статусом. Фильтр
-    ``shunts.status`` И активности узла + сумма в порядке строк — как в
-    :func:`_apply_reactors_on_arrays` (минус мкСм→См/sign, применённые ранее) →
-    тот же результат при ``sign=1``. Мутирует ``nodes_arr``.
+    ``shunts`` уже в См с применённым знаком и ON_LINE-статусом. Фильтрует по
+    ``shunts.status`` И активности узла, суммирует в порядке строк. Мутирует
+    ``nodes_arr``.
     """
     if shunts_arr is None or len(shunts_arr) == 0:
         return {"applied": 0, "sum_b_added_S": 0.0, "sum_g_added_S": 0.0}
@@ -116,52 +77,6 @@ def _aggregate_shunts_on_arrays(nodes_arr: Any, shunts_arr: Any) -> dict[str, in
             continue
         b_add = float(s["susceptance"])
         g_add = float(s["conductance"])
-        nodes_arr[idx]["shunt_b"] = float(nodes_arr[idx]["shunt_b"]) + b_add
-        nodes_arr[idx]["shunt_g"] = float(nodes_arr[idx]["shunt_g"]) + g_add
-        sum_b += b_add
-        sum_g += g_add
-        applied += 1
-
-    return {"applied": applied, "sum_b_added_S": sum_b, "sum_g_added_S": sum_g}
-
-
-def _apply_reactors_on_arrays(
-    nodes_arr: Any, reactors_arr: Any, *, sign: int = 1
-) -> dict[str, int | float]:
-    """Сложить ``sign·B/G`` active-реакторов в ``shunt_b/g`` их узлов (мутирует ``nodes_arr``).
-
-    Читает ``node.{id,status,shunt_b,shunt_g}`` и raw ``reactors.{node_id,status,
-    susceptance,conductance}`` (B/G в мкСм → ×1e-6 в См). Возвращает
-    ``{"applied":N,"sum_b_added_S":float,"sum_g_added_S":float}``. ``reactors_arr``
-    может быть ``None``/пустым (тогда no-op).
-    """
-    if reactors_arr is None or len(reactors_arr) == 0:
-        return {"applied": 0, "sum_b_added_S": 0.0, "sum_g_added_S": 0.0}
-
-    by_id: dict[int, int] = {int(nodes_arr[i]["id"]): i for i in range(len(nodes_arr))}
-    node_status: dict[int, bool] = {
-        int(nodes_arr[i]["id"]): bool(nodes_arr[i]["status"]) for i in range(len(nodes_arr))
-    }
-
-    applied = 0
-    sum_b = 0.0
-    sum_g = 0.0
-    for r in reactors_arr:
-        if not bool(r["status"]):
-            continue
-        nid = int(r["node_id"])
-        if nid == 0 or not node_status.get(nid, False):
-            continue
-        idx = by_id.get(nid)
-        if idx is None:
-            continue
-        # Реактор B/G в model.raw_tables['reactors'] хранятся в См
-        # (входной формат НЕ конвертирует мкСм→См для них; смотри ниже).
-        # На ряде XML-выгрузок значения типа -272109 — это мкСм
-        # (B_SI ≈ -0.272 См), т.е. конверсию делаем ЗДЕСЬ.
-        # ``sign`` флипает всю конвенцию входной формат→EE (см. docstring).
-        b_add = sign * float(r["susceptance"]) * 1e-6
-        g_add = sign * float(r["conductance"]) * 1e-6
         nodes_arr[idx]["shunt_b"] = float(nodes_arr[idx]["shunt_b"]) + b_add
         nodes_arr[idx]["shunt_g"] = float(nodes_arr[idx]["shunt_g"]) + g_add
         sum_b += b_add

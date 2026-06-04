@@ -178,9 +178,8 @@ def estimate(
         )
 
         write_node_estimates_from_inj(model)
-        # Если модель содержит СХН (``load_characteristics`` либо
-        # ``raw_tables['load_models']``) и узел на неё ссылается, перекрыть
-        # load_*_estimated полиномом P(V)/Q(V).
+        # Если модель содержит СХН (``load_characteristics``) и узел на неё
+        # ссылается, перекрыть load_*_estimated полиномом P(V)/Q(V).
         apply_load_characteristic(model)
 
     result = SEResult(

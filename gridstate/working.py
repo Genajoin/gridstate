@@ -13,9 +13,9 @@ numpy: никаких внешних библиотек.
 -----------
 
 Контейнер держит 4 основные коллекции (``nodes`` / ``branches`` /
-``measurements`` / ``generators``), 3 доменные input-таблицы (``tap_steps`` /
-``load_characteristics`` / ``shunts``) и ``raw_tables`` — ровно то, что читает и
-пишет препроцессинг и солвер.
+``measurements`` / ``generators``) и 3 доменные input-таблицы (``tap_steps`` /
+``load_characteristics`` / ``shunts``) — ровно то, что читает и пишет
+препроцессинг и солвер.
 
 Каждая коллекция (:class:`_ArrayCollection`) — тонкая обёртка над одним numpy
 structured-массивом (его dtype фиксируется при инициализации — он же контрактный
@@ -35,7 +35,6 @@ dtype соответствующей таблицы) плюс индекс ``id 
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Iterator
 from typing import Any
 
@@ -347,7 +346,7 @@ class _ArrayCollection:
 
 
 # ---------------------------------------------------------------------------
-# Working: рабочий слой SE = 4 основные коллекции + raw_tables + 3 доменные
+# Working: рабочий слой SE = 4 основные коллекции + 3 доменные
 # input-таблицы (tap_steps / load_characteristics / shunts).
 # ---------------------------------------------------------------------------
 
@@ -367,10 +366,9 @@ def _empty_domain(name: str) -> _ArrayCollection:
 class Working:
     """numpy-backed рабочий слой SE.
 
-    Держит 4 основные коллекции (:class:`_ArrayCollection`), 3 доменные
-    input-таблицы (``tap_steps`` / ``load_characteristics`` / ``shunts``) и
-    ``raw_tables`` (dict ``str → np.ndarray``) — поверхность, которую читает и
-    пишет препроцессинг и солвер.
+    Держит 4 основные коллекции (:class:`_ArrayCollection`) и 3 доменные
+    input-таблицы (``tap_steps`` / ``load_characteristics`` / ``shunts``) —
+    поверхность, которую читает и пишет препроцессинг и солвер.
     """
 
     def __init__(
@@ -380,7 +378,6 @@ class Working:
         branches: _ArrayCollection,
         measurements: _ArrayCollection,
         generators: _ArrayCollection,
-        raw_tables: dict[str, np.ndarray],
         tap_steps: _ArrayCollection | None = None,
         load_characteristics: _ArrayCollection | None = None,
         shunts: _ArrayCollection | None = None,
@@ -389,10 +386,8 @@ class Working:
         self.branches = branches
         self.measurements = measurements
         self.generators = generators
-        self.raw_tables = raw_tables
-        # Доменные input-only таблицы (формат-агностичная замена raw
-        # shema_ktr/load_models/reactors). Дефолт — пустая коллекция контрактного
-        # dtype.
+        # Доменные input-only таблицы (формат-агностичные числовые входы).
+        # Дефолт — пустая коллекция контрактного dtype.
         self.tap_steps = tap_steps if tap_steps is not None else _empty_domain("tap_steps")
         self.load_characteristics = (
             load_characteristics
@@ -405,8 +400,8 @@ class Working:
         """Глубокая независимая копия рабочего слоя.
 
         Каждая из 4 основных коллекций и 3 доменных таблиц копируется (массивы
-        независимы, конфиг сохранён), ``raw_tables`` — ``deepcopy``. Гарантирует
-        Input read-only: когда в ``run()`` подан уже готовый ``Working``
+        независимы, конфиг сохранён). Гарантирует Input read-only: когда в
+        ``run()`` подан уже готовый ``Working``
         (например, npz-вход), пайплайн работает на копии — добавленные
         псевдо-измерения и правки V/δ НЕ доходят до переданного объекта (иначе
         повторный ``run_se`` на том же входе падал с дублем id).
@@ -416,7 +411,6 @@ class Working:
             branches=self.branches.copy(),
             measurements=self.measurements.copy(),
             generators=self.generators.copy(),
-            raw_tables=copy.deepcopy(self.raw_tables),
             tap_steps=self.tap_steps.copy(),
             load_characteristics=self.load_characteristics.copy(),
             shunts=self.shunts.copy(),
@@ -428,11 +422,9 @@ class Working:
 
         Каждая коллекция сидируется из ``model.X.to_numpy().copy()`` (исходник
         отдаёт свежий массив, ``_ArrayCollection`` копирует его ещё раз —
-        независимость от Input гарантирована). ``raw_tables`` — ``deepcopy``.
-        Никакие иные model-level атрибуты не пробрасываются: working-слой их не
-        читает.
+        независимость от Input гарантирована). Никакие иные model-level атрибуты
+        не пробрасываются: working-слой их не читает.
         """
-        raw = getattr(model, "raw_tables", None) or {}
 
         def _domain(name: str) -> _ArrayCollection:
             # Доменные input-таблицы есть не у всякого источника. Отсутствие →
@@ -452,7 +444,6 @@ class Working:
                 weight_from_variance=True,
             ),
             generators=_ArrayCollection(model.generators.to_numpy().copy()),
-            raw_tables=copy.deepcopy(dict(raw)),
             tap_steps=_domain("tap_steps"),
             load_characteristics=_domain("load_characteristics"),
             shunts=_domain("shunts"),
@@ -466,7 +457,6 @@ class Working:
         branches: np.ndarray,
         measurements: np.ndarray,
         generators: np.ndarray,
-        raw_tables: dict[str, np.ndarray] | None = None,
         tap_steps: np.ndarray | None = None,
         load_characteristics: np.ndarray | None = None,
         shunts: np.ndarray | None = None,
@@ -475,9 +465,9 @@ class Working:
 
         Основной вход: внешний загрузчик/тест собирает структурированные массивы
         схемы ``SE_INPUT`` (nodes/branches/measurements/generators + доменные
-        tap_steps/load_characteristics/shunts + сырые таблицы) и передаёт их сюда.
-        Массивы копируются (вход read-only). Доменные таблицы опциональны (None →
-        пустая коллекция). ``measurements`` получает те же add-дефолты, что и
+        tap_steps/load_characteristics/shunts) и передаёт их сюда. Массивы
+        копируются (вход read-only). Доменные таблицы опциональны (None → пустая
+        коллекция). ``measurements`` получает те же add-дефолты, что и
         :meth:`from_model`.
         """
 
@@ -495,7 +485,6 @@ class Working:
                 weight_from_variance=True,
             ),
             generators=_ArrayCollection(np.asarray(generators).copy()),
-            raw_tables=copy.deepcopy(dict(raw_tables)) if raw_tables else {},
             tap_steps=_domain(tap_steps, "tap_steps"),
             load_characteristics=_domain(load_characteristics, "load_characteristics"),
             shunts=_domain(shunts, "shunts"),
@@ -537,5 +526,7 @@ class Working:
             "Working("
             f"nodes={len(self.nodes)}, branches={len(self.branches)}, "
             f"measurements={len(self.measurements)}, generators={len(self.generators)}, "
-            f"raw_tables={sorted(self.raw_tables)})"
+            f"tap_steps={len(self.tap_steps)}, "
+            f"load_characteristics={len(self.load_characteristics)}, "
+            f"shunts={len(self.shunts)})"
         )

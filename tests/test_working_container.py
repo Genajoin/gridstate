@@ -183,20 +183,6 @@ def small_model():
             "branch_side": 1,
         }
     )
-    # raw_tables: имитируем реакторы + произвольную таблицу.
-    m.raw_tables = {
-        "reactors": np.array(
-            [(2, True, 0.0, 1.5)],
-            dtype=np.dtype(
-                [
-                    ("node_id", "i4"),
-                    ("status", "bool"),
-                    ("conductance", "f8"),
-                    ("susceptance", "f8"),
-                ]
-            ),
-        )
-    }
     return m
 
 
@@ -211,16 +197,6 @@ def test_from_model_to_numpy_field_for_field(small_model):
         w_arr = getattr(w, name).to_numpy()
         assert w_arr.dtype == src_arr.dtype, name
         assert np.array_equal(w_arr, src_arr), f"{name} массивы не идентичны"
-
-
-def test_raw_tables_deepcopied(small_model):
-    """``raw_tables`` — независимая глубокая копия."""
-    w = Working.from_model(small_model)
-    assert set(w.raw_tables) == set(small_model.raw_tables)
-    assert np.array_equal(w.raw_tables["reactors"], small_model.raw_tables["reactors"])
-    # мутация working не задевает Input
-    w.raw_tables["reactors"][0]["susceptance"] = 99.0
-    assert small_model.raw_tables["reactors"][0]["susceptance"] == 1.5
 
 
 def test_measurement_iteration_attrs_match_source(small_model):

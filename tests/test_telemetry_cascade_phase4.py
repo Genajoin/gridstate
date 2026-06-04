@@ -1,8 +1,8 @@
 """Ядра статус-каскада/агрегации/шунтов на контрактных массивах.
 
 Функции ``apply_generator_status_from_node`` / ``aggregate_generators_to_node``
-(telemetry/generators.py) и ``apply_reactors_to_node_shunt`` /
-``normalize_breaker_reactance`` (telemetry/shunts.py) расщеплены на
+(telemetry/generators.py) и ``normalize_breaker_reactance`` (telemetry/shunts.py)
+расщеплены на
 ``_*_on_arrays``-ядро (vendor-free, мутирует контрактные numpy-массивы) + адаптер.
 Эти ядра — новая способность: исполняются на голых ``SE_INPUT``-массивах без
 полноценной модели и читают только контрактные колонки. Бит-в-бит модели для
@@ -20,7 +20,6 @@ from gridstate.telemetry.generators import (
 )
 from gridstate.telemetry.shunts import (
     _BREAKER_X_SENTINEL_OHM,
-    _apply_reactors_on_arrays,
     _normalize_breaker_reactance_on_arrays,
 )
 from gridstate.units import BASE_MVA
@@ -44,14 +43,6 @@ def _gens(rows: list[dict]) -> np.ndarray:
 
 def _branches(rows: list[dict]) -> np.ndarray:
     arr = np.zeros(len(rows), dtype=SE_INPUT.branches.input_dtype())
-    for i, row in enumerate(rows):
-        for k, v in row.items():
-            arr[i][k] = v
-    return arr
-
-
-def _reactors(rows: list[dict]) -> np.ndarray:
-    arr = np.zeros(len(rows), dtype=SE_INPUT.raw_table("reactors").numpy_dtype())
     for i, row in enumerate(rows):
         for k, v in row.items():
             arr[i][k] = v
@@ -130,55 +121,6 @@ def test_aggregate_generators_core_sums_active_only():
     assert float(nodes[0]["generation_p_max"]) == 40.0  # 15+25
     assert float(nodes[0]["generation_q_min"]) == -12.0
     assert float(nodes[1]["generation_p"]) == 0.0  # узел 2 без генов
-
-
-# ---------------------------------------------------------------------------
-# apply_reactors: sign·B/G (мкСм→См) в shunt узла; off-узлы/реакторы пропуск
-# ---------------------------------------------------------------------------
-
-
-def test_reactors_core_adds_to_node_shunt():
-    nodes = _nodes(
-        [
-            {"id": 1, "status": True, "shunt_b": 0.0, "shunt_g": 0.0},
-            {"id": 2, "status": False, "shunt_b": 0.0, "shunt_g": 0.0},  # off-узел
-        ]
-    )
-    reac = _reactors(
-        [
-            {"node_id": 1, "status": True, "susceptance": 272109.0, "conductance": 1000.0},
-            {"node_id": 1, "status": False, "susceptance": 999999.0},  # off-реактор
-            {"node_id": 2, "status": True, "susceptance": 500000.0},  # узел off
-            {"node_id": 0, "status": True, "susceptance": 500000.0},  # nid==0
-        ]
-    )
-    stats = _apply_reactors_on_arrays(nodes, reac, sign=1)
-    assert stats["applied"] == 1
-    assert float(nodes[0]["shunt_b"]) == 272109.0 * 1e-6
-    assert float(nodes[0]["shunt_g"]) == 1000.0 * 1e-6
-    assert float(nodes[1]["shunt_b"]) == 0.0
-
-
-def test_reactors_core_sign_flip():
-    nodes = _nodes([{"id": 1, "status": True, "shunt_b": 0.0, "shunt_g": 0.0}])
-    reac = _reactors([{"node_id": 1, "status": True, "susceptance": 272109.0}])
-    stats = _apply_reactors_on_arrays(nodes, reac, sign=-1)
-    assert stats["applied"] == 1
-    assert float(nodes[0]["shunt_b"]) == -272109.0 * 1e-6
-
-
-def test_reactors_core_empty_noop():
-    nodes = _nodes([{"id": 1, "status": True}])
-    assert _apply_reactors_on_arrays(nodes, None) == {
-        "applied": 0,
-        "sum_b_added_S": 0.0,
-        "sum_g_added_S": 0.0,
-    }
-    assert _apply_reactors_on_arrays(nodes, _reactors([])) == {
-        "applied": 0,
-        "sum_b_added_S": 0.0,
-        "sum_g_added_S": 0.0,
-    }
 
 
 # ---------------------------------------------------------------------------

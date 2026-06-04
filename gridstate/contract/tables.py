@@ -617,108 +617,18 @@ SHUNTS = TableSchema(
 
 
 # ===========================================================================
-# Сырые таблицы (SEInput.raw) — то, что читает core-пайплайн
-# ===========================================================================
-#
-# ПРИМЕЧАНИЕ: FORMULE/ON_LINE/ARG (топология, телеметрия, РПН-спеки,
-# материализация) исторически разбирались напрямую внешним адаптером загрузки, а
-# их типизированная проекция в raw_tables (``nested_formulas``/``formula_args``)
-# lossy (теряется GENERATOR.gen_num, схлопываются NP/PARALLEL у LINE). Поэтому
-# полноценный FORMULE-вход в контракт оставлен на будущее обогащение адаптера.
-
-
-@dataclass(frozen=True)
-class RawTableSpec:
-    """Сырая таблица входа — подмножество колонок, которое читает core-SE."""
-
-    name: str
-    key: tuple[str, ...]
-    columns: tuple[ColumnSpec, ...]
-    required: bool = False
-    doc: str = ""
-
-    def column_names(self) -> tuple[str, ...]:
-        return tuple(c.name for c in self.columns)
-
-    def numpy_dtype(self) -> np.dtype:
-        return np.dtype([(c.name, c.dtype) for c in self.columns])
-
-
-def _raw_cols(*specs: tuple[str, str, str]) -> tuple[ColumnSpec, ...]:
-    """Хелпер: список ``(name, dtype, doc)`` → колонки роли INPUT (сырые read-only)."""
-    return tuple(ColumnSpec(n, d, Role.INPUT, required=False, doc=doc) for n, d, doc in specs)
-
-
-RAW_TABLES: tuple[RawTableSpec, ...] = (
-    RawTableSpec(
-        "reactors",
-        key=("node_id",),
-        required=False,
-        doc="ШР → node.shunt_b (apply_reactors_to_node_shunt).",
-        columns=_raw_cols(
-            ("node_id", "i4", "Узел подключения реактора."),
-            ("status", "bool", "Вкл/выкл реактора."),
-            ("conductance", "f8", "G, мкСм."),
-            ("susceptance", "f8", "B, мкСм (ШР индуктивный)."),
-        ),
-    ),
-    RawTableSpec(
-        "tm_values",
-        key=("ckguid",),
-        required=False,
-        doc="Снимок реальной телеметрии (guid→значение).",
-        columns=_raw_cols(
-            ("ckguid", "U64", "GUID источника СКАДА."),
-            ("value", "f8", "Текущее значение замера."),
-            ("quality_code", "u4", "Код качества."),
-            ("utc_dt_of_value", "U32", "Временная метка значения."),
-        ),
-    ),
-    RawTableSpec(
-        "shema_ktr",
-        key=("type_rpn", "num_a", "num_r"),
-        required=False,
-        doc="Таблица отводов РПН/ПБВ → tap_ratio.",
-        columns=_raw_cols(
-            ("type_rpn", "i4", "Тип РПН."),
-            ("num_a", "i4", "Номер отвода (анцапфа)."),
-            ("num_r", "i4", "Номер регулировочной ступени."),
-            ("ktr_a", "f8", "Коэф. трансформации по анцапфе."),
-            ("ktr_r", "f8", "Коэф. по регулировочной ступени."),
-            ("ktr_a_vc", "f8", "Коэф. по анцапфе (вольтодобавка)."),
-            ("ktr_r_vc", "f8", "Коэф. по ступени (вольтодобавка)."),
-        ),
-    ),
-    RawTableSpec(
-        "load_models",
-        key=("id",),
-        required=False,
-        doc="Статические характеристики P(V)/Q(V) (apply_load_characteristic).",
-        columns=_raw_cols(
-            ("id", "i4", "ID модели (узел.sxn_id, 1-based)."),
-            ("coeff_p_a0", "f8", "P0·a0 — постоянная составляющая."),
-            ("coeff_p_a1", "f8", "Линейная по U."),
-            ("coeff_p_a2", "f8", "Квадратичная по U."),
-            ("coeff_q_b0", "f8", "Q0·b0 — постоянная."),
-            ("coeff_q_b1", "f8", "Линейная по U."),
-            ("coeff_q_b2", "f8", "Квадратичная по U."),
-        ),
-    ),
-)
-
-
-# ===========================================================================
 # Контракт верхнего уровня
 # ===========================================================================
 
 
 @dataclass(frozen=True)
 class SEInputSchema:
-    """Схема входного контракта: набор таблиц (роли KEY/INPUT/WORKING) + сырые.
+    """Схема входного контракта: набор таблиц (роли KEY/INPUT/WORKING).
 
-    Доменные таблицы ``tap_steps``/``load_characteristics``/``shunts`` — формат-
-    агностичная числовая замена raw ``shema_ktr``/``load_models``/``reactors``
-    (формат-резолв делается во внешнем источнике данных). Input-only (роли KEY/INPUT).
+    Доменные таблицы ``tap_steps``/``load_characteristics``/``shunts`` —
+    формат-агностичные числовые входы (выбор отпайки РПН, конверсия единиц,
+    агрегация шунтов выполняются во внешнем источнике данных). Input-only
+    (роли KEY/INPUT).
     """
 
     nodes: TableSchema
@@ -728,7 +638,6 @@ class SEInputSchema:
     tap_steps: TableSchema
     load_characteristics: TableSchema
     shunts: TableSchema
-    raw: tuple[RawTableSpec, ...]
 
     def tables(self) -> tuple[TableSchema, ...]:
         return (
@@ -740,12 +649,6 @@ class SEInputSchema:
             self.load_characteristics,
             self.shunts,
         )
-
-    def raw_table(self, name: str) -> RawTableSpec | None:
-        for rt in self.raw:
-            if rt.name == name:
-                return rt
-        return None
 
 
 @dataclass(frozen=True)
@@ -768,7 +671,6 @@ SE_INPUT = SEInputSchema(
     tap_steps=TAP_STEPS,
     load_characteristics=LOAD_CHARACTERISTICS,
     shunts=SHUNTS,
-    raw=RAW_TABLES,
 )
 
 SE_OUTPUT = SEOutputSchema(

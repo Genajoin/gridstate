@@ -48,9 +48,13 @@ class _Model:
 
     ``run``/``_build_working`` копируют Input: НЕ-``Working`` носители — через
     ``Working.from_model``, готовый ``Working`` — через ``.copy()``. Этот тонкий
-    duck-typed контейнер (коллекции — ``Working.empty()``, raw_tables — dict)
-    идёт по ветке ``from_model``; независимость Input проверяется и для сырого
-    ``Working`` (см. ``test_run_does_not_mutate_raw_working_input``).
+    duck-typed контейнер (коллекции — из ``Working``) идёт по ветке
+    ``from_model``; независимость Input проверяется и для сырого ``Working``
+    (см. ``test_run_does_not_mutate_raw_working_input``).
+
+    Носит 4 основные коллекции (nodes/branches/measurements/generators) и
+    3 доменные input-таблицы (tap_steps/load_characteristics/shunts) — ровно то,
+    что читает working-слой; ``from_model`` доменные таблицы подхватывает по имени.
     """
 
     def __init__(self, src):
@@ -58,7 +62,9 @@ class _Model:
         self.branches = src.branches
         self.measurements = src.measurements
         self.generators = src.generators
-        self.raw_tables = src.raw_tables
+        self.tap_steps = src.tap_steps
+        self.load_characteristics = src.load_characteristics
+        self.shunts = src.shunts
 
 
 def _make_model_with_reactor(reactor_node: int = 1, susceptance_uS: float = 50_000.0):
@@ -140,19 +146,19 @@ def _make_model_with_reactor(reactor_node: int = 1, susceptance_uS: float = 50_0
             )
             next_id += 1
 
-    m.raw_tables["reactors"] = [
+    # Канонический шунт (таблица ``shunts``): B/G уже в См, со знаком и
+    # ON_LINE-статусом. Старый сырой реактор хранил B в мкСм и пересчитывался
+    # ×1e-6 при применении; здесь сразу кладём В = susceptance_uS·1e-6 См, чтобы
+    # воспроизвести прежний эффект (50000 мкСм → 0.05 См → shunt_b=0.05).
+    m.shunts.add(
         {
             "id": 1,
-            "name": "R1",
             "node_id": reactor_node,
-            "num": 1,
-            "reac_id_rastr": 0,
             "conductance": 0.0,
-            "susceptance": susceptance_uS,
+            "susceptance": susceptance_uS * 1e-6,
             "status": True,
-            "ems": 0,
         }
-    ]
+    )
     return _Model(m)
 
 
@@ -177,15 +183,16 @@ def _arrays_equal(coll_a, coll_b) -> bool:
 
 
 def test_working_is_bit_identical_and_independent():
-    """``_build_working`` (Working) бит-в-бит копирует коллекции + raw_tables; копия независима."""
+    """``_build_working`` (Working) бит-в-бит копирует коллекции + таблицу ``shunts``; копия независима."""
     m = _make_model_with_reactor()
     w = _build_working(m)
 
     assert _arrays_equal(m.nodes, w.nodes)
     assert _arrays_equal(m.branches, w.branches)
     assert _arrays_equal(m.measurements, w.measurements)
-    assert set(m.raw_tables) == set(w.raw_tables)
-    assert "reactors" in w.raw_tables
+    # Доменная таблица шунтов скопирована (бит-в-бит) и независима от Input.
+    assert _arrays_equal(m.shunts, w.shunts)
+    assert len(w.shunts.to_numpy()) == 1
 
     # Мутация копии НЕ трогает Input.
     apply_reactors_to_node_shunt(w)
@@ -195,7 +202,11 @@ def test_working_is_bit_identical_and_independent():
 
 def test_apply_reactors_doubles_without_clone():
     """Документируем не-идемпотентность leaf-функции: вызов дважды удваивает
-    shunt (за идемпотентность отвечает working-clone в run(), не leaf)."""
+    shunt (за идемпотентность отвечает working-clone в run(), не leaf).
+
+    ``_Model`` — duck-носитель; ``apply_reactors_to_node_shunt`` читает
+    ``model.shunts`` и пишет ``model.nodes``, поэтому работает и на нём напрямую.
+    """
     m = _make_model_with_reactor()
     apply_reactors_to_node_shunt(m)
     apply_reactors_to_node_shunt(m)
@@ -268,7 +279,7 @@ def test_run_does_not_mutate_raw_working_input(algorithm):
         branches=wrapped.branches.to_numpy(),
         measurements=wrapped.measurements.to_numpy(),
         generators=wrapped.generators.to_numpy(),
-        raw_tables=wrapped.raw_tables,
+        shunts=wrapped.shunts.to_numpy(),
     )
     n_meas = len(w.measurements.to_numpy())
     cfg = PipelineConfig(algorithm=algorithm)
