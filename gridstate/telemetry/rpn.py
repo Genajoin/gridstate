@@ -180,6 +180,48 @@ def _apply_rpn_on_arrays(
     return stats
 
 
+def _apply_tap_steps_on_arrays(
+    branches_arr: np.ndarray, tap_steps_arr: np.ndarray
+) -> dict[str, int | float]:
+    """Применить контракт ``tap_steps`` к ветвям (tap/phase + H30-шунт). Мутирует ``branches_arr``.
+
+    Канон-применение (шаг 4c se_canonical_contract_design): ВЫБОР отпайки уже сделан
+    адаптером (cspase) — ``tap_steps`` несёт целевые ``tap_ratio``/``phase_shift`` +
+    ``shunt_factor`` (=(tap_new/tap_old)², 1.0=без пересчёта). Ядро лишь применяет:
+    пишет tap/phase и H30-факторит шунт (поля ``!=0.0``). Это и есть формат-
+    агностичная физика трансформатора, остающаяся в ядре. Бит-в-бит с
+    :func:`_apply_rpn_on_arrays` при ``sign=1`` (shadow-доказано на ОДУ).
+    """
+    by_id: dict[int, int] = {int(branches_arr[i]["id"]): i for i in range(len(branches_arr))}
+    stats: dict[str, int | float] = {"applied": 0, "shunt_recalc": 0}
+    for ts in tap_steps_arr:
+        idx = by_id.get(int(ts["branch_id"]))
+        if idx is None:
+            continue
+        branches_arr[idx]["tap_ratio"] = float(ts["tap_ratio"])
+        branches_arr[idx]["phase_shift"] = float(ts["phase_shift"])
+        stats["applied"] += 1
+
+        factor = float(ts["shunt_factor"])
+        if factor != 1.0:  # 1.0 — sentinel «без H30» (адаптер); умножение было бы no-op
+            recalc_done = False
+            for field in (
+                "conductance",
+                "susceptance",
+                "conductance_from",
+                "susceptance_from",
+                "conductance_to",
+                "susceptance_to",
+            ):
+                val = float(branches_arr[idx][field])
+                if val != 0.0:
+                    branches_arr[idx][field] = val * factor
+                    recalc_done = True
+            if recalc_done:
+                stats["shunt_recalc"] += 1
+    return stats
+
+
 def apply_rpn_resolved(
     model: Working,
     resolved_taps: list[tuple[int, int, int, int]],
@@ -189,17 +231,24 @@ def apply_rpn_resolved(
 ) -> dict[str, int | float]:
     """Фаза-A (релокация): применить готовый ``resolved_taps`` к ветвям модели.
 
-    Чистое применение (без XML/snapshot/формул): снимок ``branches`` + ``shema_ktr`` →
-    ядро :func:`_apply_rpn_on_arrays` → write-back. Зовётся шагом ``run()`` на своей
-    позиции (до ``apply_telemetry``: tap влияет на variance/Y-bus).
+    Канон-путь (шаг 4c): если ``model.tap_steps`` непуст — выбор отпайки сделан
+    адаптером, ядро применяет :func:`_apply_tap_steps_on_arrays` (tap/phase + H30).
+    Иначе legacy: снимок ``branches`` + raw ``shema_ktr`` → :func:`_apply_rpn_on_arrays`
+    (выбор отпайки в ядре). Зовётся шагом ``run()`` до ``apply_telemetry`` (tap влияет
+    на variance/Y-bus).
     """
     branches_arr = model.branches.to_numpy().copy()
-    stats = _apply_rpn_on_arrays(
-        branches_arr,
-        model.raw_tables.get("shema_ktr"),
-        resolved_taps,
-        skipped_no_branch=skipped_no_branch,
-        skipped_no_tm=skipped_no_tm,
-    )
+    tap_steps_coll = getattr(model, "tap_steps", None)
+    tap_steps_arr = tap_steps_coll.to_numpy() if tap_steps_coll is not None else None
+    if tap_steps_arr is not None and len(tap_steps_arr) > 0:
+        stats = _apply_tap_steps_on_arrays(branches_arr, tap_steps_arr)
+    else:
+        stats = _apply_rpn_on_arrays(
+            branches_arr,
+            model.raw_tables.get("shema_ktr"),
+            resolved_taps,
+            skipped_no_branch=skipped_no_branch,
+            skipped_no_tm=skipped_no_tm,
+        )
     model.branches.update_from_array(branches_arr)
     return stats
