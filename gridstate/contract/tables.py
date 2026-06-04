@@ -210,7 +210,7 @@ NODES = TableSchema(
         ColumnSpec(
             "load_q_max", "f8", Role.INPUT, required=False, doc="Верхняя Q-нагрузка — IPM box."
         ),
-        # --- вход, мутируемый препроцессингом (рабочий слой Фазы 4) ---
+        # --- вход, мутируемый препроцессингом ---
         ColumnSpec(
             "status",
             "bool",
