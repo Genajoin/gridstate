@@ -50,15 +50,15 @@ def _synthesize_node_injection_on_arrays(
 ) -> tuple[list[dict], dict[str, int]]:
     """Построить pseudo P_inj/Q_inj-строки из branch-flow на контрактных массивах.
 
-    vendor-free ядро (CLASS-1, append-паттерн): читает ТОЛЬКО контрактные колонки
+    Ядро (append-паттерн): читает ТОЛЬКО контрактные колонки
     ``node.{id,status}``, ``branch.{status,from_node,to_node,ti_p_from,ti_q_from,
     ti_p_to,ti_q_to}``, ``measurement.{id,status,object_type,measurement_type,value,
     is_pseudo,object_id}``; НЕ мутирует входы, ВОЗВРАЩАЕТ ``(new_rows, stats)``.
 
     **Должно оставаться последовательным Python-циклом** в исходном порядке обхода
     (``nodes_arr`` и incident-список построены детерминированно через ``enumerate`` по
-    ``branches_arr``); суммы ``p_sum/q_sum`` накапливаются в том же порядке →
-    **строгий бит-в-бит 1e-9**. Без collision-skip (id монотонно с ``mid_start``).
+    ``branches_arr``); суммы ``p_sum/q_sum`` накапливаются в том же порядке.
+    Без collision-skip (id монотонно с ``mid_start``).
     """
     # 1) Карты id → измерение (только real, не pseudo).
     p_branch_by_id: dict[int, dict] = {}

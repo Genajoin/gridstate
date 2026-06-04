@@ -62,7 +62,7 @@ def _add_pseudo_measurements_on_arrays(
 ) -> tuple[list[dict], dict]:
     """Построить pseudo V/P_inj/Q_inj-строки на контрактных массивах (НЕ мутирует входы).
 
-    vendor-free ядро (CLASS-1, append-паттерн): читает ТОЛЬКО контрактные колонки
+    Ядро (append-паттерн): читает ТОЛЬКО контрактные колонки
     nodes/branches/measurements + готовый ``node_load_props`` (резолвит адаптер);
     ВОЗВРАЩАЕТ ``(new_rows, stats)``. Семантика kwargs — см. адаптер
     ``add_pseudo_measurements``.
@@ -70,7 +70,7 @@ def _add_pseudo_measurements_on_arrays(
     **Должно оставаться последовательным Python-циклом** по ``nodes_arr`` в исходном
     порядке, с тем же порядком добавления строк внутри узла (V-приор → P_inj → Q_inj)
     и монотонной раздачей ``mid`` — арифметика σ²/p_inj_prior скалярная
-    детерминированная, без векторизации → **строгий бит-в-бит 1e-9**.
+    детерминированная.
     """
     have_v: set[int] = set()
     have_pinj: set[int] = set()
@@ -480,7 +480,7 @@ def add_pseudo_measurements(
     meas_arr = model.measurements.to_numpy()
     branches_arr = model.branches.to_numpy()
 
-    # exist_load/exist_gen заполняет XmlFormat (XML-pipeline);
+    # exist_load/exist_gen заполняет загрузчик входного формата;
     # если они есть — выводим node_load_props из модели автоматически.
     if node_load_props is None and (
         np.any(nodes_arr["exist_load"]) or np.any(nodes_arr["exist_gen"])

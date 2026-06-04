@@ -7,14 +7,15 @@
 поверх контрактных структурированных массивов. Он воспроизводит ровно ту
 поверхность model-API, которую читает/пишет препроцессинг + солвер + сборка
 ``SEResult`` — и НИЧЕГО сверх неё. Рантайм-пути контейнера зависят только от
-numpy: никаких внешних vendor-библиотек.
+numpy: никаких внешних библиотек.
 
-Поверхность (по аудиту working-слоя ``pipeline.run``)
------------------------------------------------------
+Поверхность
+-----------
 
-Контейнер держит ровно 4 коллекции (``nodes`` / ``branches`` / ``measurements`` /
-``generators``) и ``raw_tables``. Никаких иных model-level атрибутов working-слой
-не читает.
+Контейнер держит 4 основные коллекции (``nodes`` / ``branches`` /
+``measurements`` / ``generators``), 3 доменные input-таблицы (``tap_steps`` /
+``load_characteristics`` / ``shunts``) и ``raw_tables`` — ровно то, что читает и
+пишет препроцессинг и солвер.
 
 Каждая коллекция (:class:`_ArrayCollection`) — тонкая обёртка над одним numpy
 structured-массивом (его dtype фиксируется при инициализации — он же контрактный
@@ -347,7 +348,7 @@ class _ArrayCollection:
 
 # ---------------------------------------------------------------------------
 # Working: рабочий слой SE = 4 основные коллекции + raw_tables + 3 доменные
-# input-only таблицы (tap_steps/load_characteristics/shunts, канон-замена raw).
+# input-таблицы (tap_steps / load_characteristics / shunts).
 # ---------------------------------------------------------------------------
 
 
@@ -364,11 +365,12 @@ def _empty_aux(name: str) -> _ArrayCollection:
 
 
 class Working:
-    """numpy-backed рабочий слой SE — замена full-clone ``Working``.
+    """numpy-backed рабочий слой SE.
 
-    Держит 4 коллекции (:class:`_ArrayCollection`) и ``raw_tables`` (dict
-    ``str → np.ndarray``). Поверхность 1:1 с тем, что читает/пишет
-    ``pipeline.run`` working-слоя.
+    Держит 4 основные коллекции (:class:`_ArrayCollection`), 3 доменные
+    input-таблицы (``tap_steps`` / ``load_characteristics`` / ``shunts``) и
+    ``raw_tables`` (dict ``str → np.ndarray``) — поверхность, которую читает и
+    пишет препроцессинг и солвер.
     """
 
     def __init__(
@@ -388,9 +390,9 @@ class Working:
         self.measurements = measurements
         self.generators = generators
         self.raw_tables = raw_tables
-        # Доменные input-only таблицы (канон-замена raw shema_ktr/load_models/reactors;
-        # шаг 2 se_canonical_contract_design). Дефолт — пустая коллекция контрактного
-        # dtype. Читателей в ядре нет до шагов 4a/4b/4c.
+        # Доменные input-only таблицы (формат-агностичная замена raw
+        # shema_ktr/load_models/reactors). Дефолт — пустая коллекция контрактного
+        # dtype.
         self.tap_steps = tap_steps if tap_steps is not None else _empty_aux("tap_steps")
         self.load_characteristics = (
             load_characteristics
@@ -402,12 +404,12 @@ class Working:
     def copy(self) -> Working:
         """Глубокая независимая копия рабочего слоя.
 
-        Каждая из 4 коллекций копируется (массивы независимы, конфиг сохранён),
-        ``raw_tables`` — ``deepcopy``. Гарантирует Input read-only: когда в
-        ``run()`` подан уже готовый ``Working`` (vendor-free / npz-вход), пайплайн
-        работает на копии — добавленные псевдо-измерения и правки V/δ НЕ доходят
-        до переданного объекта (иначе повторный ``run_se`` на том же входе падал
-        с дублем id).
+        Каждая из 4 основных коллекций и 3 доменных таблиц копируется (массивы
+        независимы, конфиг сохранён), ``raw_tables`` — ``deepcopy``. Гарантирует
+        Input read-only: когда в ``run()`` подан уже готовый ``Working``
+        (например, npz-вход), пайплайн работает на копии — добавленные
+        псевдо-измерения и правки V/δ НЕ доходят до переданного объекта (иначе
+        повторный ``run_se`` на том же входе падал с дублем id).
         """
         return Working(
             nodes=self.nodes.copy(),
@@ -433,8 +435,8 @@ class Working:
         raw = getattr(model, "raw_tables", None) or {}
 
         def _aux(name: str) -> _ArrayCollection:
-            # Доменные input-таблицы есть не у всякого источника (PSC-модель их не
-            # несёт — их строит адаптер cspase). Отсутствие → пустая коллекция.
+            # Доменные input-таблицы есть не у всякого источника. Отсутствие →
+            # пустая коллекция.
             coll = getattr(model, name, None)
             if coll is None or not hasattr(coll, "to_numpy"):
                 return _empty_aux(name)

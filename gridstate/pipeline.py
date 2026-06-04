@@ -12,7 +12,7 @@
   toggle-поле). :func:`run` исполняет их по порядку.
 * :func:`manifest` — JSON-сериализуемое описание (шаги + параметры с дефолтами,
   типами, ограничениями, label/help/group). UI строит форму из него — никакого
-  хардкода списка функций/дефолтов на стороне Studio/CLI.
+  хардкода списка функций/дефолтов на стороне UI/CLI.
 
 Прогресс — через callback ``on_event(event: dict)`` (протокол совместим со
 streaming-эвентами UI): ``step_start`` / ``step_done`` / ``step_skipped`` /
@@ -620,13 +620,12 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Реестр шагов (упорядоченный = валидированный run_pipeline)
+# Реестр шагов (упорядоченный = валидированная последовательность прогона)
 # ---------------------------------------------------------------------------
 
 STEPS: list[Step] = [
-    # Порядок normalize→snapshot как в stage_a_from_sql (SE-нейтрально: snapshot
-    # читает tm_values, normalize меняет branch X — независимы; держим тот же
-    # порядок для бит-в-бит с run_pipeline).
+    # Порядок normalize→snapshot SE-нейтрален: snapshot читает tm_values, normalize
+    # меняет branch X — шаги независимы; порядок фиксирован для воспроизводимости.
     Step(
         "normalize_breakers",
         "Нормализация короткозамыкателей",
@@ -851,14 +850,14 @@ def _build_working(model: Any) -> Any:
     Принимает либо объект-модель с коллекциями (строит ``Working`` из его
     ``nodes``/``branches``/``measurements``/``generators``), либо уже готовый
     :class:`~gridstate.working.Working` (тогда возвращает его ``copy()``).
-    Последнее — vendor-free вход: вызывающий собирает ``Working.from_arrays(...)``
+    Последнее — прямой вход: вызывающий собирает ``Working.from_arrays(...)``
     из numpy-массивов и передаёт прямо в ``run``. В обоих случаях результат —
     независимая копия: переданный Input остаётся read-only.
     """
     if isinstance(model, Working):
         # Клон, а НЕ pass-through: иначе run() мутировал бы переданный Working
         # (псевдо-измерения, V/δ) — Input должен оставаться read-only и на
-        # vendor-free / npz-входе (повторный run_se на том же объекте падал).
+        # npz-входе (повторный прогон на том же объекте иначе падал).
         return model.copy()
     return Working.from_model(model)
 

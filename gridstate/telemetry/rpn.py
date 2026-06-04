@@ -26,7 +26,7 @@ def _apply_rpn_on_arrays(
 ) -> dict[str, int | float]:
     """Применить разрешённые №отпаек к ``tap_ratio``/``phase_shift``/шунту (мутирует ``branches_arr``).
 
-    vendor-free float-ядро (CLASS-2): читает ТОЛЬКО контракт — ``branch.{id,tap_ratio,
+    float-ядро над массивами: читает ТОЛЬКО контракт — ``branch.{id,tap_ratio,
     conductance*,susceptance*}`` + raw ``shema_ktr.{type_rpn,num_a,num_r,ktr_a,ktr_r,
     ktr_a_vc,ktr_r_vc}``; пишет ``branch.{tap_ratio,phase_shift,conductance*,susceptance*}``.
     Вся float-математика (ktr_lookup, main-vs-vc выбор по близости к xml_tap, hypot/atan2
@@ -34,13 +34,13 @@ def _apply_rpn_on_arrays(
 
     ``resolved_taps`` — список ``(branch_id, type_rpn, num_a, num_r)`` в порядке
     ``specs.items()`` (адаптер уже отфильтровал spec без ветви / без TM и передал их
-    счётчики ``skipped_no_branch``/``skipped_no_tm`` для бит-в-бит сводки).
+    счётчики ``skipped_no_branch``/``skipped_no_tm`` для итоговой сводки).
 
     **Должно оставаться последовательным циклом** в порядке ``resolved_taps``: выбор
     NUM_PBV — data-dependent argmin по xml_tap (тай-брейк строгий ``<``), main==vc —
     ``<=``; shunt-rescale только при ``|Δtap|>1e-12`` И поле ``!=0.0`` (точное сравнение).
-    Округление hypot/atan2/деления допускает <1e-3 (open-q #3), но порядок сохраняем →
-    фактически бит-в-бит.
+    Округление hypot/atan2/деления допускает расхождение <1e-3, но порядок обхода
+    сохраняется → результат детерминирован.
     """
     sk = shema_ktr_arr
     ktr_lookup: dict[tuple[int, int, int], list[tuple[float, float, float, float]]] = {}
@@ -122,9 +122,9 @@ def _apply_rpn_on_arrays(
             continue
         use_a, use_r = best_use_a, best_use_r
 
-        # XmlFormat-конвенция: tap_ratio = 1 / hypot(ktr_a, ktr_r),
+        # Конвенция входного формата: tap_ratio = 1 / hypot(ktr_a, ktr_r),
         # phase_shift = arctan2(-ktr_r, ktr_a). Re-применяем на новых
-        # коэффициентах. См. xml_format.py:1414-1419.
+        # коэффициентах.
         z2 = use_a * use_a + use_r * use_r
         re = use_a / z2
         im = -use_r / z2
@@ -148,7 +148,6 @@ def _apply_rpn_on_arrays(
         # ``B_new = B_old * (tap_new/tap_old)^2`` (то же для G).
         # Без пересчёта на 3-обм АТ с заметным шунтом ХХ это даёт
         # смещение потерь ~1 % от p_loss_total.
-        # См. issue ``rpn_shunt_recalc`` + memory ``rpn_dynamic_tap_ratio``.
         if old_tap > 1e-9 and abs(new_tap - old_tap) > 1e-12:
             factor = (new_tap / old_tap) ** 2
             recalc_done = False
@@ -185,12 +184,11 @@ def _apply_tap_steps_on_arrays(
 ) -> dict[str, int | float]:
     """Применить контракт ``tap_steps`` к ветвям (tap/phase + H30-шунт). Мутирует ``branches_arr``.
 
-    Канон-применение (шаг 4c se_canonical_contract_design): ВЫБОР отпайки уже сделан
-    адаптером (cspase) — ``tap_steps`` несёт целевые ``tap_ratio``/``phase_shift`` +
-    ``shunt_factor`` (=(tap_new/tap_old)², 1.0=без пересчёта). Ядро лишь применяет:
-    пишет tap/phase и H30-факторит шунт (поля ``!=0.0``). Это и есть формат-
-    агностичная физика трансформатора, остающаяся в ядре. Бит-в-бит с
-    :func:`_apply_rpn_on_arrays` при ``sign=1`` (shadow-доказано на ОДУ).
+    Выбор отпайки сделан вне ядра — ``tap_steps`` несёт целевые ``tap_ratio``/
+    ``phase_shift`` + ``shunt_factor`` (=(tap_new/tap_old)², 1.0=без пересчёта).
+    Ядро лишь применяет: пишет tap/phase и H30-факторит шунт (поля ``!=0.0``).
+    Это формат-агностичная физика трансформатора. Даёт тот же результат, что и
+    :func:`_apply_rpn_on_arrays` при ``sign=1``.
     """
     by_id: dict[int, int] = {int(branches_arr[i]["id"]): i for i in range(len(branches_arr))}
     stats: dict[str, int | float] = {"applied": 0, "shunt_recalc": 0}
@@ -229,13 +227,12 @@ def apply_rpn_resolved(
     skipped_no_branch: int = 0,
     skipped_no_tm: int = 0,
 ) -> dict[str, int | float]:
-    """Фаза-A (релокация): применить готовый ``resolved_taps`` к ветвям модели.
+    """Применить готовый ``resolved_taps`` к ветвям модели.
 
-    Канон-путь (шаг 4c): если ``model.tap_steps`` непуст — выбор отпайки сделан
-    адаптером, ядро применяет :func:`_apply_tap_steps_on_arrays` (tap/phase + H30).
-    Иначе legacy: снимок ``branches`` + raw ``shema_ktr`` → :func:`_apply_rpn_on_arrays`
-    (выбор отпайки в ядре). Зовётся шагом ``run()`` до ``apply_telemetry`` (tap влияет
-    на variance/Y-bus).
+    Если ``model.tap_steps`` непуст — выбор отпайки сделан выше по pipeline, ядро
+    применяет :func:`_apply_tap_steps_on_arrays` (tap/phase + H30). Иначе: снимок
+    ``branches`` + raw ``shema_ktr`` → :func:`_apply_rpn_on_arrays` (выбор отпайки в
+    ядре). Зовётся шагом ``run()`` до ``apply_telemetry`` (tap влияет на variance/Y-bus).
     """
     branches_arr = model.branches.to_numpy().copy()
     tap_steps_coll = getattr(model, "tap_steps", None)

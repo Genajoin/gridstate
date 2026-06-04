@@ -14,13 +14,12 @@
   НЕ сохраняется: ядро его не читает (только косметический счётчик ``unique_guids``).
 
 Загрузчик восстанавливает рабочий слой через :meth:`gridstate.working.Working.from_arrays`
-(vendor-free конструктор) → ``run()`` исполняется без внешних зависимостей.
+(конструктор из массивов) → ``run()`` исполняется без внешних зависимостей.
 
 **Формат планов (v0, провизорный).** ``DerivedInputs`` несёт dict с tuple-ключами
 (``telemetry_resolved``), поэтому планы кодируются ``pickle`` в object-массиве внутри
-``.npz``. Это внутренний Python-формат для проверки границы; стабильный кросс-тул
-формат (JSON-схема планов) вводится, когда проектируется контракт внешнего
-производителя данных. Контрактные ТАБЛИЦЫ хранятся как обычные npz-массивы и читаются
+``.npz``. Это внутренний Python-формат; стабильный кросс-тул формат (JSON-схема
+планов) — на будущее. Контрактные ТАБЛИЦЫ хранятся как обычные npz-массивы и читаются
 любым инструментом.
 """
 
@@ -42,8 +41,8 @@ _DERIVED_KEY = "__derived_pickle__"
 _META_KEY = "__contract_version__"
 _SKIPPED_KEY = "__skipped_raw__"
 _CONTRACT_TABLES = ("nodes", "branches", "measurements", "generators")
-# Доменные input-only таблицы (канон-замена raw shema_ktr/load_models/reactors;
-# шаг 2 se_canonical_contract_design). Опциональны: старые npz без них грузятся
+# Доменные input-only таблицы (формат-агностичная замена raw
+# shema_ktr/load_models/reactors). Опциональны: старые npz без них грузятся
 # (Working.from_arrays даёт пустую коллекцию). Префиксуем, чтобы не путать с
 # основными контрактными и не ломать загрузку старых файлов.
 _AUX_TABLES = ("tap_steps", "load_characteristics", "shunts")
@@ -55,8 +54,7 @@ def _is_npz_clean(arr: np.ndarray) -> bool:
 
     Часть сырых таблиц входного формата (``raw_mete``/``raw_source``/``raw_shema_task_param`` …)
     приходят пустыми/гетерогенными object-массивами. Они не входят в z-вектор/решение
-    SE; пропускаем их, чтобы граница оставалась чистым npz. Бит-в-бит-эквивалентность
-    прогона (тест границы) ДОКАЗЫВАЕТ, что пропущенные таблицы солвером не читаются.
+    SE; пропускаем их, чтобы граница оставалась чистым npz: солвер эти таблицы не читает.
     """
     dt = arr.dtype
     if dt.kind == "O":
@@ -156,9 +154,9 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
 def load_se_input_npz(path: str | Path) -> SEInput:
     """Прочитать ``.npz`` (см. :func:`save_se_input`) в ``SEInput`` — БЕЗ внешних зависимостей и XML.
 
-    Рабочий слой собирается через :meth:`gridstate.working.Working.from_arrays`
-    (vendor-free). Возвращаемый ``SEInput`` готов к ``run(se_input)``: ``derived`` —
-    восстановленные числовые планы → формат-слоя источника прогон не касается.
+    Рабочий слой собирается через :meth:`gridstate.working.Working.from_arrays`.
+    Возвращаемый ``SEInput`` готов к ``run(se_input)``: ``derived`` —
+    восстановленные числовые планы.
     """
     from gridstate.contract.runtime import SEInput
     from gridstate.working import Working

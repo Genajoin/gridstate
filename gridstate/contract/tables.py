@@ -182,7 +182,7 @@ NODES = TableSchema(
             "i4",
             Role.INPUT,
             required=False,
-            doc="Ссылка на load_models — характеристика P(V)/Q(V) (raw-путь, до шага 4a).",
+            doc="Ссылка на load_models — характеристика P(V)/Q(V) (raw-путь).",
         ),
         ColumnSpec(
             "load_model_id",
@@ -190,8 +190,8 @@ NODES = TableSchema(
             Role.INPUT,
             required=False,
             doc=(
-                "Ссылка на load_characteristics.id (0-based, -1=нет). Канон-замена "
-                "sxn_id; читает apply_load_characteristic после шага 4a (адаптер cspase)."
+                "Ссылка на load_characteristics.id (0-based, -1=нет). Формат-агностичная "
+                "замена sxn_id; читает apply_load_characteristic."
             ),
         ),
         ColumnSpec(
@@ -373,8 +373,8 @@ BRANCHES = TableSchema(
             Role.INPUT,
             required=False,
             doc=(
-                "Ссылка на tap_steps.id (0-based, -1=нет РПН). Канон-путь применения "
-                "отпайки: cspase выбирает строку, ядро применяет (apply_rpn, шаг 4c)."
+                "Ссылка на tap_steps.id (0-based, -1=нет РПН). Выбор отпайки делается "
+                "вне ядра, ядро применяет готовую строку (apply_rpn)."
             ),
         ),
         ColumnSpec(
@@ -540,16 +540,16 @@ GENERATORS = TableSchema(
 
 
 # ===========================================================================
-# Доменные числовые таблицы SE-входа (канон-замена raw reactors/shema_ktr/load_models).
-# Формат-резолв (выбор отпайки РПН, конверсия единиц, агрегация) — во внешнем
-# адаптере (cspase); сюда приходят уже числовые, формат-агностичные данные.
-# Вводятся плумбингом (шаг 2 плана se_canonical_contract_design); читателей в ядре
-# нет до шагов 4a/4b/4c. Все колонки KEY/INPUT (ядро не мутирует — читает).
+# Доменные числовые таблицы SE-входа (формат-агностичная замена raw
+# reactors/shema_ktr/load_models). Формат-резолв (выбор отпайки РПН, конверсия
+# единиц, агрегация) делается во внешнем источнике данных; сюда приходят уже
+# числовые, формат-агностичные данные. Все колонки KEY/INPUT (ядро их читает,
+# не мутирует).
 # ===========================================================================
 
-# Ступени РПН/ПБВ: cspase выбирает строку (main-vs-vc по xml_tap), ядро применяет
-# к branches (tap_ratio/phase_shift) + H30-факторинг шунта (shunt_factor). Физика
-# трансформатора остаётся в формат-агностичном ядре.
+# Ступени РПН/ПБВ: строка выбирается вне ядра (main-vs-vc по xml_tap), ядро
+# применяет к branches (tap_ratio/phase_shift) + H30-факторинг шунта (shunt_factor).
+# Физика трансформатора остаётся в формат-агностичном ядре.
 TAP_STEPS = TableSchema(
     name="tap_steps",
     key=("id", "branch_id"),
@@ -716,9 +716,9 @@ RAW_TABLES: tuple[RawTableSpec, ...] = (
 class SEInputSchema:
     """Схема входного контракта: набор таблиц (роли KEY/INPUT/WORKING) + сырые.
 
-    Доменные таблицы ``tap_steps``/``load_characteristics``/``shunts`` — канон-замена
-    raw ``shema_ktr``/``load_models``/``reactors`` (формат-агностичные числовые входы;
-    формат-резолв — во внешнем адаптере cspase). Input-only (роли KEY/INPUT).
+    Доменные таблицы ``tap_steps``/``load_characteristics``/``shunts`` — формат-
+    агностичная числовая замена raw ``shema_ktr``/``load_models``/``reactors``
+    (формат-резолв делается во внешнем источнике данных). Input-only (роли KEY/INPUT).
     """
 
     nodes: TableSchema

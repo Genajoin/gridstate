@@ -1,6 +1,6 @@
-"""ON_LINE-топология: применение ON_LINE-статусов к модели (prep-адаптер + ядро).
+"""ON_LINE-топология: применение ON_LINE-статусов к модели.
 
-Контрактное ядро ``_apply_topology_on_arrays`` + адаптер ``apply_topology_resolved``
+Контрактное ядро ``_apply_topology_on_arrays`` + тонкая обёртка ``apply_topology_resolved``
 (применяет готовый числовой план статусов к ``status`` объектов модели).
 """
 
@@ -19,10 +19,9 @@ ResolvedItem = tuple[str, int, bool | None, str | None]
 def apply_topology_resolved(model: Any, resolved: Sequence[ResolvedItem]) -> dict[str, int]:
     """Применить готовый ``resolved``-план ON_LINE к ``status`` модели.
 
-    Чистое применение (без snapshot/формул): снимок контрактных массивов → ядро
-    :func:`_apply_topology_on_arrays` → write-back. Зовётся шагом ``run()`` на своей
-    позиции (до каскада статусов). ``resolved`` — готовый план статусов
-    ``(tag, parent_id, status|None, eval_skip|None)``.
+    Чистое применение (без формул): снимок контрактных массивов → ядро
+    :func:`_apply_topology_on_arrays` → write-back. ``resolved`` — готовый план
+    статусов ``(tag, parent_id, status|None, eval_skip|None)``.
     """
     arr_nodes = model.nodes.to_numpy().copy()
     arr_branches = model.branches.to_numpy().copy()
@@ -51,12 +50,11 @@ def _apply_topology_on_arrays(
 ) -> dict[str, int]:
     """ЯДРО: применение ON_LINE-статусов над контрактными массивами.
 
-    Чистый статус-каскад: получает готовый план ``resolved`` (eval
-    ON_LINE-формул по snapshot + чтение ``spec.args`` — выполнен в адаптере; элемент
-    ``(tag, parent_id, status|None, eval_skip|None)`` в порядке ``specs.items()``),
-    матчит ``parent_tag`` → целевой массив (nodes/branches/generators/reactors),
-    пишет ``status``-колонку. ``reactors`` — raw-таблица (мутируемая status). Мутирует
-    массивы in place. Без внешних зависимостей, XML и snapshot, без float → строгий бит-в-бит 1e-9.
+    Чистый статус-каскад: получает готовый план ``resolved`` (элемент
+    ``(tag, parent_id, status|None, eval_skip|None)``), матчит ``tag`` → целевой
+    массив (nodes/branches/generators/reactors), пишет ``status``-колонку.
+    ``reactors`` — таблица с мутируемым status. Мутирует массивы in place. Без
+    внешних зависимостей, без float-арифметики.
     """
     by_id_nodes: dict[int, int] = {int(arr_nodes[i]["id"]): i for i in range(len(arr_nodes))}
     by_id_branches: dict[int, int] = {

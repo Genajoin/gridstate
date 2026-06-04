@@ -175,7 +175,8 @@ def write_node_estimates(
     ``node_ids``. Семантика — фактические значения при текущем V
     (аналог ``pnr/qnr/pgr/qgr`` в эталонном отчёте); преобразование к
     номинальным (если PF потребует) выполняется отдельно через
-    ``sxn_id`` + ``raw_tables['load_models']``.
+    ``load_model_id`` + ``load_characteristics`` (либо ``sxn_id`` +
+    ``raw_tables['load_models']``).
 
     ``None`` для любого из массивов значений → соответствующее поле не
     обновляется. Для узлов, не входящих в ``node_ids``, поля остаются как
@@ -432,9 +433,11 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         load_q_estimated = load_q_nominal × (b0 + b1·V_pu + b2·V_pu²)
 
     где ``V_pu = voltage_magnitude / voltage_nominal`` (после SE).
-    Коэффициенты — из ``model.raw_tables['load_models']``; привязка узла
-    к строке таблицы — через **1-based порядковый индекс** ``sxn_id``
-    (``sxn_id == 1`` → первая строка ``Standart1``). Для PQ-const-моделей
+    Коэффициенты берутся из типизированной таблицы ``load_characteristics``
+    (узел ссылается на строку через 0-based индекс ``load_model_id``); при её
+    отсутствии — из ``model.raw_tables['load_models']`` с привязкой через
+    **1-based порядковый индекс** ``sxn_id`` (``sxn_id == 1`` → первая строка
+    ``Standart1``). Для PQ-const-моделей
     (a0=1, a1=a2=0, b0=1, b1=b2=0) пересчёт тождественно даёт
     ``load_*_nominal``.
 
@@ -455,8 +458,9 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
               ``exist_load=False`` (нет нагрузки — нечего пересчитывать).
             * ``skipped_bad_sxn`` — ``sxn_id`` указывает за пределы
               таблицы ``load_models`` (битая ссылка).
-            * ``no_load_models`` — 1 если в модели нет таблицы
-              ``raw_tables['load_models']`` (тогда возвращаем нули).
+            * ``no_load_models`` — 1 если в модели нет ни таблицы
+              ``load_characteristics``, ни ``raw_tables['load_models']``
+              (тогда возвращаем нули).
     """
     out = {
         "updated": 0,
@@ -466,12 +470,11 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         "no_load_models": 0,
     }
 
-    # Источник коэффициентов СХН. Канон ``load_characteristics`` (адаптер cspase,
-    # шаг 4a se_canonical_contract_design) — если таблица непуста И узлы несут
-    # 0-based ссылку ``load_model_id``; иначе legacy raw ``load_models`` + 1-based
-    # ``sxn_id`` (до подключения адаптера). Канон-``id`` = позиционный 0-based, т.е.
-    # ``load_model_id == sxn_id-1`` и ``lc[i]`` коэффициенты == ``lm[i]`` → пересчёт
-    # бит-в-бит (shadow-доказано на ОДУ; см. cspase/adapter/resolve.py).
+    # Источник коэффициентов СХН. Типизированная таблица ``load_characteristics``
+    # — если она непуста И узлы несут 0-based ссылку ``load_model_id``; иначе
+    # raw ``load_models`` + 1-based ``sxn_id``. ``id`` позиционный 0-based, т.е.
+    # ``load_model_id == sxn_id-1`` и ``lc[i]`` коэффициенты == ``lm[i]`` → оба
+    # пути дают идентичный пересчёт.
     nodes_arr = model.nodes.to_numpy()
     node_names = nodes_arr.dtype.names or ()
     lc_coll = getattr(model, "load_characteristics", None)
@@ -496,8 +499,8 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
             continue
         exist_load = bool(row["exist_load"])
 
-        # idx — 0-based строка коэффициентов. Канон: прямой load_model_id (-1=нет).
-        # Legacy: sxn_id-1. Порядок skip-проверок не влияет на пересчёт (во всех
+        # idx — 0-based строка коэффициентов. Прямой путь: load_model_id (-1=нет).
+        # Иначе: sxn_id-1. Порядок skip-проверок не влияет на пересчёт (во всех
         # skip-ветвях recompute отсутствует) — только на stat-счётчики.
         if use_canon:
             idx = int(row["load_model_id"])

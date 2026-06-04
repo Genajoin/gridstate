@@ -57,7 +57,7 @@ def _resolve_merged_on_arrays(meas_arr: np.ndarray) -> dict[str, int]:
     сумма value и variance. Оставляет первую строку (по порядку массива), остальные
     ``status=False``. ``weight`` первой строки = ``1/var`` (бывш. приватный
     ``me._weight``). Мутирует ``meas_arr`` in place. БЕЗ внешних зависимостей и XML. Порядок строк =
-    порядок объектов → бит-в-бит.
+    порядок объектов.
     """
     from collections import defaultdict
 
