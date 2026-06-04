@@ -33,6 +33,56 @@ def test_roundtrip_contract_tables_bit_identical(tmp_path):
     assert se_out.derived is None  # модель без планов
 
 
+def test_roundtrip_aux_domain_tables(tmp_path):
+    """Доменные input-таблицы tap_steps/load_characteristics/shunts (шаг 2
+    se_canonical_contract_design) переживают save/load бит-в-бит."""
+    from gridstate.contract import SE_INPUT
+    from gridstate.working import Working
+
+    taps = np.zeros(1, dtype=SE_INPUT.tap_steps.input_dtype())
+    taps["id"] = [0]
+    taps["branch_id"] = [100]
+    taps["tap_ratio"] = [0.95]
+    taps["shunt_factor"] = [1.0]
+
+    lc = np.zeros(1, dtype=SE_INPUT.load_characteristics.input_dtype())
+    lc["id"] = [0]
+    lc["coeff_p_a2"] = [1.0]
+
+    sh = np.zeros(2, dtype=SE_INPUT.shunts.input_dtype())
+    sh["id"] = [0, 1]
+    sh["node_id"] = [1, 3]
+    sh["susceptance"] = [-150.0, -200.0]
+    sh["status"] = [True, False]
+
+    base = SEInput.from_model(_make_model()).model
+    working = Working.from_arrays(
+        nodes=base.nodes.to_numpy(),
+        branches=base.branches.to_numpy(),
+        measurements=base.measurements.to_numpy(),
+        generators=base.generators.to_numpy(),
+        tap_steps=taps,
+        load_characteristics=lc,
+        shunts=sh,
+    )
+    se_in = SEInput(model=working)
+    p = save_se_input(se_in, tmp_path / "aux.npz")
+    se_out = load_se_input_npz(p)
+
+    for name, ref in (("tap_steps", taps), ("load_characteristics", lc), ("shunts", sh)):
+        got = getattr(se_out.model, name).to_numpy()
+        assert _arrays_bit_identical(got, ref), f"{name}: round-trip не бит-в-бит"
+
+
+def test_aux_domain_tables_absent_loads_empty(tmp_path):
+    """Старый npz без aux-таблиц грузится: коллекции пустые, прогон не падает."""
+    se_in = SEInput.from_model(_make_model())  # модель без aux
+    p = save_se_input(se_in, tmp_path / "noaux.npz")
+    se_out = load_se_input_npz(p)
+    for name in ("tap_steps", "load_characteristics", "shunts"):
+        assert len(getattr(se_out.model, name)) == 0
+
+
 def test_roundtrip_derived_plans(tmp_path):
     """``DerivedInputs`` (5 планов) восстанавливаются; ``snapshot`` → пустой (ядру не нужен)."""
     from gridstate.contract.derived import DerivedInputs

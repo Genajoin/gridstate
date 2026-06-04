@@ -42,6 +42,12 @@ _DERIVED_KEY = "__derived_pickle__"
 _META_KEY = "__contract_version__"
 _SKIPPED_KEY = "__skipped_raw__"
 _CONTRACT_TABLES = ("nodes", "branches", "measurements", "generators")
+# Доменные input-only таблицы (канон-замена raw shema_ktr/load_models/reactors;
+# шаг 2 se_canonical_contract_design). Опциональны: старые npz без них грузятся
+# (Working.from_arrays даёт пустую коллекцию). Префиксуем, чтобы не путать с
+# основными контрактными и не ломать загрузку старых файлов.
+_AUX_TABLES = ("tap_steps", "load_characteristics", "shunts")
+_AUX_PREFIX = "aux__"
 
 
 def _is_npz_clean(arr: np.ndarray) -> bool:
@@ -117,6 +123,14 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
         coll = getattr(model, name)
         arrays[name] = np.asarray(coll.to_numpy())
 
+    # Доменные input-only таблицы (опционально — источник может их не нести).
+    for name in _AUX_TABLES:
+        coll = getattr(model, name, None)
+        if coll is not None and hasattr(coll, "to_numpy"):
+            arr = np.asarray(coll.to_numpy())
+            if len(arr) > 0:
+                arrays[f"{_AUX_PREFIX}{name}"] = arr
+
     raw = getattr(model, "raw_tables", None) or {}
     skipped: list[str] = []
     for key, table in raw.items():
@@ -156,12 +170,18 @@ def load_se_input_npz(path: str | Path) -> SEInput:
             for key in files
             if key.startswith(_RAW_PREFIX)
         }
+        aux = {
+            name: np.asarray(npz[f"{_AUX_PREFIX}{name}"])
+            for name in _AUX_TABLES
+            if f"{_AUX_PREFIX}{name}" in files
+        }
         working = Working.from_arrays(
             nodes=np.asarray(npz["nodes"]),
             branches=np.asarray(npz["branches"]),
             measurements=np.asarray(npz["measurements"]),
             generators=np.asarray(npz["generators"]),
             raw_tables=raw_tables,
+            **aux,
         )
         blob = pickle.loads(bytes(npz[_DERIVED_KEY])) if _DERIVED_KEY in files else None
         contract_version = str(npz[_META_KEY]) if _META_KEY in files else None

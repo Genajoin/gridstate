@@ -346,8 +346,21 @@ class _ArrayCollection:
 
 
 # ---------------------------------------------------------------------------
-# Working: рабочий слой SE = 4 коллекции + raw_tables.
+# Working: рабочий слой SE = 4 основные коллекции + raw_tables + 3 доменные
+# input-only таблицы (tap_steps/load_characteristics/shunts, канон-замена raw).
 # ---------------------------------------------------------------------------
+
+
+def _empty_aux(name: str) -> _ArrayCollection:
+    """Пустая коллекция доменной input-таблицы с её контрактным dtype.
+
+    ``name`` ∈ {tap_steps, load_characteristics, shunts}. Lazy-импорт контракта
+    (как в :meth:`Working.empty`) — избегаем циклической зависимости при загрузке.
+    """
+    from gridstate.contract import SE_INPUT
+
+    schema = getattr(SE_INPUT, name)
+    return _ArrayCollection(np.zeros(0, dtype=schema.input_dtype()))
 
 
 class Working:
@@ -366,12 +379,25 @@ class Working:
         measurements: _ArrayCollection,
         generators: _ArrayCollection,
         raw_tables: dict[str, np.ndarray],
+        tap_steps: _ArrayCollection | None = None,
+        load_characteristics: _ArrayCollection | None = None,
+        shunts: _ArrayCollection | None = None,
     ) -> None:
         self.nodes = nodes
         self.branches = branches
         self.measurements = measurements
         self.generators = generators
         self.raw_tables = raw_tables
+        # Доменные input-only таблицы (канон-замена raw shema_ktr/load_models/reactors;
+        # шаг 2 se_canonical_contract_design). Дефолт — пустая коллекция контрактного
+        # dtype. Читателей в ядре нет до шагов 4a/4b/4c.
+        self.tap_steps = tap_steps if tap_steps is not None else _empty_aux("tap_steps")
+        self.load_characteristics = (
+            load_characteristics
+            if load_characteristics is not None
+            else _empty_aux("load_characteristics")
+        )
+        self.shunts = shunts if shunts is not None else _empty_aux("shunts")
 
     def copy(self) -> Working:
         """Глубокая независимая копия рабочего слоя.
@@ -389,6 +415,9 @@ class Working:
             measurements=self.measurements.copy(),
             generators=self.generators.copy(),
             raw_tables=copy.deepcopy(self.raw_tables),
+            tap_steps=self.tap_steps.copy(),
+            load_characteristics=self.load_characteristics.copy(),
+            shunts=self.shunts.copy(),
         )
 
     @classmethod
@@ -402,6 +431,16 @@ class Working:
         читает.
         """
         raw = getattr(model, "raw_tables", None) or {}
+
+        def _aux(name: str) -> _ArrayCollection:
+            # Доменные input-таблицы есть не у всякого источника (PSC-модель их не
+            # несёт — их строит адаптер cspase). Отсутствие → пустая коллекция.
+            coll = getattr(model, name, None)
+            if coll is None or not hasattr(coll, "to_numpy"):
+                return _empty_aux(name)
+            arr = coll.to_numpy()
+            return _ArrayCollection(arr.copy()) if len(arr) > 0 else _empty_aux(name)
+
         return cls(
             nodes=_ArrayCollection(model.nodes.to_numpy().copy()),
             branches=_ArrayCollection(model.branches.to_numpy().copy()),
@@ -412,6 +451,9 @@ class Working:
             ),
             generators=_ArrayCollection(model.generators.to_numpy().copy()),
             raw_tables=copy.deepcopy(dict(raw)),
+            tap_steps=_aux("tap_steps"),
+            load_characteristics=_aux("load_characteristics"),
+            shunts=_aux("shunts"),
         )
 
     @classmethod
@@ -423,14 +465,25 @@ class Working:
         measurements: np.ndarray,
         generators: np.ndarray,
         raw_tables: dict[str, np.ndarray] | None = None,
+        tap_steps: np.ndarray | None = None,
+        load_characteristics: np.ndarray | None = None,
+        shunts: np.ndarray | None = None,
     ) -> Working:
         """Построить ``Working`` напрямую из контрактных numpy-массивов.
 
         Основной вход: внешний загрузчик/тест собирает структурированные массивы
-        схемы ``SE_INPUT`` (nodes/branches/measurements/generators + сырые
-        таблицы) и передаёт их сюда. Массивы копируются (вход read-only).
-        ``measurements`` получает те же add-дефолты, что и :meth:`from_model`.
+        схемы ``SE_INPUT`` (nodes/branches/measurements/generators + доменные
+        tap_steps/load_characteristics/shunts + сырые таблицы) и передаёт их сюда.
+        Массивы копируются (вход read-only). Доменные таблицы опциональны (None →
+        пустая коллекция). ``measurements`` получает те же add-дефолты, что и
+        :meth:`from_model`.
         """
+
+        def _aux(arr: np.ndarray | None, name: str) -> _ArrayCollection:
+            if arr is None or len(np.asarray(arr)) == 0:
+                return _empty_aux(name)
+            return _ArrayCollection(np.asarray(arr).copy())
+
         return cls(
             nodes=_ArrayCollection(np.asarray(nodes).copy()),
             branches=_ArrayCollection(np.asarray(branches).copy()),
@@ -441,6 +494,9 @@ class Working:
             ),
             generators=_ArrayCollection(np.asarray(generators).copy()),
             raw_tables=copy.deepcopy(dict(raw_tables)) if raw_tables else {},
+            tap_steps=_aux(tap_steps, "tap_steps"),
+            load_characteristics=_aux(load_characteristics, "load_characteristics"),
+            shunts=_aux(shunts, "shunts"),
         )
 
     @classmethod
