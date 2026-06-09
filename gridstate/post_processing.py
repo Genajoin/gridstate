@@ -31,6 +31,7 @@ from gridstate.algebra.base import (
     SIDE_TO,
     BaseAlgebra,
 )
+from gridstate.bounds import resolve_bounds
 from gridstate.units import BASE_MVA, NetworkPU
 
 
@@ -247,6 +248,11 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
     уже сделано через box-vars (``write_node_estimates``), вызывать его
     дополнительно не нужно.
 
+    Границы трактуются через :func:`gridstate.bounds.resolve_bounds`:
+    незаполненная пара ``(0, 0)`` и сентинелы ±9999 = «не задано» →
+    оценка не клипуется (раньше (0, 0) зануляла оценку — узлы без
+    заданных лимитов теряли всю нагрузку/генерацию).
+
     Логика разнесения (по каждому активному узлу):
 
     * **transit** (``exist_load=0`` AND ``exist_gen=0``) →
@@ -304,14 +310,14 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
         p_inj = float(row["p_inj_calc"])
         q_inj = float(row["q_inj_calc"])
 
-        load_p_min = float(row["load_p_min"])
-        load_p_max = float(row["load_p_max"])
-        load_q_min = float(row["load_q_min"])
-        load_q_max = float(row["load_q_max"])
-        gen_p_min = float(row["generation_p_min"])
-        gen_p_max = float(row["generation_p_max"])
-        gen_q_min = float(row["generation_q_min"])
-        gen_q_max = float(row["generation_q_max"])
+        # Незаданные/сентинельные границы → ±inf («не клиповать»). Без
+        # этого пара (0, 0) — numpy-default незаполненного поля —
+        # зануляла оценку, а ±9999 у load_q фактически не встречалась,
+        # зато мусорные суммы лимитов генераторов клиповали Q к хламу.
+        load_p_min, load_p_max = resolve_bounds(row["load_p_min"], row["load_p_max"])
+        load_q_min, load_q_max = resolve_bounds(row["load_q_min"], row["load_q_max"])
+        gen_p_min, gen_p_max = resolve_bounds(row["generation_p_min"], row["generation_p_max"])
+        gen_q_min, gen_q_max = resolve_bounds(row["generation_q_min"], row["generation_q_max"])
 
         load_p_est = 0.0
         load_q_est = 0.0

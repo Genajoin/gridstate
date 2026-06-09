@@ -12,8 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gridstate.contract import SEInput
-from gridstate.contract import SE_INPUT
+from gridstate.contract import SE_INPUT, SEInput
 from gridstate.contract import run as contract_run
 from gridstate.contract.serialize import load_se_input_npz, save_se_input
 from gridstate.pipeline import PipelineConfig

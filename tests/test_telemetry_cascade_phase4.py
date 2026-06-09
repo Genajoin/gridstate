@@ -115,7 +115,14 @@ def test_aggregate_generators_core_sums_active_only():
         ]
     )
     stats = _aggregate_generators_on_arrays(nodes, gens)
-    assert stats == {"updated_nodes": 1, "active_gens": 2, "off_gens": 1, "missing_node": 1}
+    assert stats == {
+        "updated_nodes": 1,
+        "active_gens": 2,
+        "off_gens": 1,
+        "missing_node": 1,
+        "sentinel_p_nodes": 0,
+        "sentinel_q_nodes": 0,
+    }
     assert float(nodes[0]["generation_p"]) == 30.0  # 10+20, off-100 исключён
     assert float(nodes[0]["generation_q"]) == 3.0
     assert float(nodes[0]["generation_p_max"]) == 40.0  # 15+25

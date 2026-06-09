@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from gridstate.bounds import resolve_bounds
 from gridstate.state import StateLayout
 from gridstate.units import BASE_MVA
 from gridstate.z_vector import (
@@ -79,6 +80,7 @@ def build_ipm_setup(
     balance_weight_factor: float = 0.1,
     bound_relax: float = 0.0,
     sentinel_abs: float = 9000.0,
+    default_box_halfwidth_pu: float = 50.0,
     prior_sigma2_normal_pu: float = 0.0,
     prior_sigma2_bus_equiv_pu: float = 0.01,
     prior_sigma2_inj_pu: float = 0.0,
@@ -94,19 +96,27 @@ def build_ipm_setup(
             наследует ``n_bus, slack_idx, non_slack_idx`` и добавляет
             box-секции.
         balance_sigma2: дисперсия (p.u.²) для balance-pseudo-meas. Если
-            ``None`` (default) — вычисляется адаптивно как
-            ``1 / (max(data_weight) * balance_weight_factor)``,
-            где ``data_weight = 1/σ²`` существующих measurements. Это
-            гарантирует что balance в ``balance_weight_factor`` раз
-            «жёстче» самой жёсткой data-меры, без overflow в normal
-            equations.
-        balance_weight_factor: множитель weight баланса относительно
-            max data-weight. Используется при ``balance_sigma2=None``.
-            Default 10 — баланс на порядок жёстче самой точной TI.
+            ``None`` (default) — вычисляется адаптивно:
+            ``σ²_balance = median(σ²_data) / balance_weight_factor``
+            (median, а не min: минимум часто аутлаер и порождает
+            balance-вес, перебивающий данные на порядки).
+        balance_weight_factor: отношение веса (1/σ²) баланса к весу
+            медианной data-меры. Используется при ``balance_sigma2=None``.
+            Default 0.1 — баланс в 10 раз МЯГЧЕ медианной TI по σ²:
+            калибровка в пользу data-fit; узловой баланс достигается
+            солвером как стационарная точка, а не вбивается весом.
+            Значения >1 делают баланс жёстче медианной меры.
         bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
             (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
         sentinel_abs: |значение| ≥ этого считается «не задано» в
             NODE_DTYPE (sentinel ±9999 — контрактная конвенция).
+        default_box_halfwidth_pu: полуширина (p.u.) дефолтной коробки
+            ``[-hw, +hw]`` для exist_*-узла с незаданными границами.
+            Default 50 p.u. (±5 ГВт/ГВАр) — заведомо шире любого
+            реального узла, барьер фактически не действует, значением
+            управляют balance + TI. Дефолтные коробки не получают
+            BUS-эквивалент-prior (широки не из-за фиктивного
+            эквивалента, а из-за отсутствия данных).
         prior_sigma2_normal_pu: σ² (p.u.²) prior-меры для box-var
             узла с обычной коробкой (ширина ≤ ``bus_equiv_width_threshold_pu``).
             Default ``0`` — prior не создаётся, data-меры через TI на
@@ -161,13 +171,17 @@ def build_ipm_setup(
     def _resolve_prior_sigma2(
         bounds: tuple[float, float],
         has_inj: bool,
+        *,
+        is_default_box: bool = False,
     ) -> float:
         """σ²_prior для box-var.
 
         Иерархия (от tight к loose):
         * широкая коробка (width > bus_equiv_threshold) → bus_equiv_pu
           (tight, не даёт solver'у раскидать невязку по фиктивному
-          5-10 ГВт-эквиваленту);
+          5-10 ГВт-эквиваленту); НЕ применяется к дефолтным коробкам
+          (``is_default_box=True``) — они широкие не потому что узел
+          BUS-эквивалент, а потому что границы в данных не заданы;
         * обычная коробка + init из TI (has_inj=True) → inj_pu (tight,
           закрепляет solver около свежих данных);
         * обычная коробка + init из node-row (has_inj=False) →
@@ -175,30 +189,43 @@ def build_ipm_setup(
           подтягивают значение).
         """
         width = abs(bounds[1] - bounds[0])
-        if width > float(bus_equiv_width_threshold_pu):
+        if not is_default_box and width > float(bus_equiv_width_threshold_pu):
             return float(prior_sigma2_bus_equiv_pu)
         if has_inj:
             return float(prior_sigma2_inj_pu)
         return float(prior_sigma2_normal_pu)
 
-    def _bound_pair_or_none(lo_raw: float, hi_raw: float) -> tuple[float, float] | None:
-        """Вернуть ``(lo, hi)`` в p.u. или ``None`` если границы не заданы.
+    def _bound_pair(
+        lo_raw: float, hi_raw: float, default_halfwidth_pu: float
+    ) -> tuple[float, float, bool]:
+        """``(lo, hi, is_default)`` в p.u.; незаданные границы → широкий дефолт.
 
-        ``None`` если: оба нули, или оба sentinel, или ``hi - lo < 1e-9``.
+        Незаданность (оба ~0 / сентинелы ±9999 / вырожденная или
+        перевёрнутая пара) трактуется по :mod:`gridstate.bounds` и
+        заменяется симметричной коробкой ``±default_halfwidth_pu``.
+        Полузаданная пара (один сентинел) сохраняет валидную сторону.
+
+        Раньше незаданные пары давали ``None`` → box-var **не
+        создавалась**, при этом balance-уравнение узла оставалось —
+        и прижимало его инжекцию к нулю как у transit-узла. Для Q это
+        массовый случай (Q-лимиты заполнены редко) — реактивная выдача
+        генераторных узлов насильно занулялась.
         """
-        if abs(lo_raw) >= sentinel_abs and abs(hi_raw) >= sentinel_abs:
-            return None
-        if abs(lo_raw) < 1e-9 and abs(hi_raw) < 1e-9:
-            return None
-        lo_pu = float(lo_raw) / BASE_MVA
-        hi_pu = float(hi_raw) / BASE_MVA
+        lo_res, hi_res = resolve_bounds(lo_raw, hi_raw, sentinel_abs=sentinel_abs)
+        lo_pu = lo_res / BASE_MVA if np.isfinite(lo_res) else -float(default_halfwidth_pu)
+        hi_pu = hi_res / BASE_MVA if np.isfinite(hi_res) else float(default_halfwidth_pu)
+        is_default = not (np.isfinite(lo_res) and np.isfinite(hi_res))
         if hi_pu - lo_pu < 1e-9:
-            return None
-        if bound_relax > 0:
+            # Вырожденная валидная пара (lo==hi) — узкий «гвоздь» барьер
+            # не переживёт; расширяем симметрично на дефолт.
+            lo_pu -= float(default_halfwidth_pu)
+            hi_pu += float(default_halfwidth_pu)
+            is_default = True
+        if bound_relax > 0 and not is_default:
             width = hi_pu - lo_pu
             lo_pu -= bound_relax * width
             hi_pu += bound_relax * width
-        return lo_pu, hi_pu
+        return lo_pu, hi_pu, is_default
 
     def _init_in_box(value_pu: float, bounds: tuple[float, float]) -> float:
         """Init box-var: текущее значение из node-таблицы зажатое в [lo, hi]
@@ -248,51 +275,57 @@ def build_ipm_setup(
         qgen_init_mvar = float(row["generation_q"])
         qnag_init_mvar = float(row["load_q"])
 
+        # КАЖДЫЙ exist_*-узел получает box-var (незаданные границы →
+        # широкий дефолт): balance-уравнение пишется для всех активных
+        # узлов, и узел с exist_* но без переменной вкладывался бы в
+        # него нулём — его P/Q-инжекция прижималась бы к нулю как у
+        # transit. Полное покрытие также гарантирует, что
+        # ``write_node_estimates`` заполнит все 4 ``*_estimated`` поля.
         if exist_gen:
-            # Pgen
-            b = _bound_pair_or_none(
+            lo, hi, dflt = _bound_pair(
                 float(row["generation_p_min"]),
                 float(row["generation_p_max"]),
+                default_box_halfwidth_pu,
             )
-            if b is not None:
-                pgen_pos_list.append(pos)
-                pgen_lo.append(b[0])
-                pgen_hi.append(b[1])
-                pgen_init_l.append(_init_in_box(pgen_init_mw / BASE_MVA, b))
-                pgen_prior_s2.append(_resolve_prior_sigma2(b, has_p_inj))
-            # Qgen
-            b = _bound_pair_or_none(
+            pgen_pos_list.append(pos)
+            pgen_lo.append(lo)
+            pgen_hi.append(hi)
+            pgen_init_l.append(_init_in_box(pgen_init_mw / BASE_MVA, (lo, hi)))
+            pgen_prior_s2.append(_resolve_prior_sigma2((lo, hi), has_p_inj, is_default_box=dflt))
+
+            lo, hi, dflt = _bound_pair(
                 float(row["generation_q_min"]),
                 float(row["generation_q_max"]),
+                default_box_halfwidth_pu,
             )
-            if b is not None:
-                qgen_pos_list.append(pos)
-                qgen_lo.append(b[0])
-                qgen_hi.append(b[1])
-                qgen_init_l.append(_init_in_box(qgen_init_mvar / BASE_MVA, b))
-                qgen_prior_s2.append(_resolve_prior_sigma2(b, has_q_inj))
+            qgen_pos_list.append(pos)
+            qgen_lo.append(lo)
+            qgen_hi.append(hi)
+            qgen_init_l.append(_init_in_box(qgen_init_mvar / BASE_MVA, (lo, hi)))
+            qgen_prior_s2.append(_resolve_prior_sigma2((lo, hi), has_q_inj, is_default_box=dflt))
 
         if exist_load:
-            b = _bound_pair_or_none(
+            lo, hi, dflt = _bound_pair(
                 float(row["load_p_min"]),
                 float(row["load_p_max"]),
+                default_box_halfwidth_pu,
             )
-            if b is not None:
-                pnag_pos_list.append(pos)
-                pnag_lo.append(b[0])
-                pnag_hi.append(b[1])
-                pnag_init_l.append(_init_in_box(pnag_init_mw / BASE_MVA, b))
-                pnag_prior_s2.append(_resolve_prior_sigma2(b, has_p_inj))
-            b = _bound_pair_or_none(
+            pnag_pos_list.append(pos)
+            pnag_lo.append(lo)
+            pnag_hi.append(hi)
+            pnag_init_l.append(_init_in_box(pnag_init_mw / BASE_MVA, (lo, hi)))
+            pnag_prior_s2.append(_resolve_prior_sigma2((lo, hi), has_p_inj, is_default_box=dflt))
+
+            lo, hi, dflt = _bound_pair(
                 float(row["load_q_min"]),
                 float(row["load_q_max"]),
+                default_box_halfwidth_pu,
             )
-            if b is not None:
-                qnag_pos_list.append(pos)
-                qnag_lo.append(b[0])
-                qnag_hi.append(b[1])
-                qnag_init_l.append(_init_in_box(qnag_init_mvar / BASE_MVA, b))
-                qnag_prior_s2.append(_resolve_prior_sigma2(b, has_q_inj))
+            qnag_pos_list.append(pos)
+            qnag_lo.append(lo)
+            qnag_hi.append(hi)
+            qnag_init_l.append(_init_in_box(qnag_init_mvar / BASE_MVA, (lo, hi)))
+            qnag_prior_s2.append(_resolve_prior_sigma2((lo, hi), has_q_inj, is_default_box=dflt))
 
     pgen_node_pos = np.asarray(pgen_pos_list, dtype=np.int64)
     qgen_node_pos = np.asarray(qgen_pos_list, dtype=np.int64)
