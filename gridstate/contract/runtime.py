@@ -120,6 +120,10 @@ class SEOutput:
     iterations: int = 0
     objective_value: float = float("nan")
     algorithm: str = ""
+    # Детализация success (см. SEResult.convergence_status): для IPM
+    # "kkt"/"completed"/"stalled"/"error", для WLS "converged"/"not_converged".
+    convergence_status: str = ""
+    message: str = ""
     v_pu: np.ndarray = field(default_factory=lambda: np.empty(0))
     delta_rad: np.ndarray = field(default_factory=lambda: np.empty(0))
     contract_version: str = CONTRACT_VERSION
@@ -137,6 +141,8 @@ class SEOutput:
             iterations=int(result.iterations),
             objective_value=float(result.objective_value),
             algorithm=str(result.algorithm),
+            convergence_status=str(result.convergence_status),
+            message=str(result.message),
             v_pu=result.v_pu,
             delta_rad=result.delta_rad,
             result=result,

@@ -51,7 +51,27 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class IPMResult:
-    """Результат IPM-solver'а."""
+    """Результат IPM-solver'а.
+
+    Attributes:
+        status: двухуровневая сходимость:
+
+            * ``"kkt"`` — строгая стационарность
+              (``grad_inf < max(1e-2, inner_tol·100)``);
+            * ``"completed"`` — μ-расписание барьера пройдено до
+              ``mu_min`` без ошибок: решение в стационарной зоне
+              барьерного пути и пригодно, хотя строгий KKT-порог не
+              достигнут (на реальных моделях |grad|∞ ~1–100 из-за шкалы
+              весов 1/σ² — НЕ признак разноса);
+            * ``"stalled"`` — солвер остановился до завершения
+              расписания (lazy-break без принятых шагов / исчерпан
+              ``outer_max``);
+            * ``"error"`` — терминальная ошибка (spsolve fail,
+              non-finite step).
+        success: ``status in ("kkt", "completed")`` — «решение
+          пригодно». Прежняя семантика (только строгий KKT) давала
+          ложный «не сошёлся» на всех региональных моделях.
+    """
 
     x: np.ndarray
     success: bool
@@ -61,6 +81,7 @@ class IPMResult:
     mu_final: float
     grad_inf_final: float
     message: str = ""
+    status: str = "error"
 
 
 def _project_to_interior(
@@ -308,6 +329,7 @@ def solve_ipm(
         mu = 0.0
 
     outer_iter = 0
+    schedule_done = False
     for outer_iter in range(outer_max):
         any_inner_step = False  # Lazy outer: если ни одного шага → break.
         # IPM-специфика: adaptive c_eff пересчитывается **каждый outer** —
@@ -375,6 +397,7 @@ def solve_ipm(
                     mu_final=mu,
                     grad_inf_final=grad_inf,
                     message=message,
+                    status="error",
                 )
 
             if not np.all(np.isfinite(dx)):
@@ -388,6 +411,7 @@ def solve_ipm(
                     mu_final=mu,
                     grad_inf_final=grad_inf,
                     message=message,
+                    status="error",
                 )
 
             # Trust-region clip: |Δx|∞ ≤ tr_radius. Сохраняем направление,
@@ -455,6 +479,7 @@ def solve_ipm(
             break  # WLS-режим: один outer-pass.
 
         if mu <= mu_min:
+            schedule_done = True
             break
         # Lazy outer: если на этой outer ни одного шага не приняли —
         # solver застрял (плоский min или плохая обусловленность).
@@ -463,23 +488,33 @@ def solve_ipm(
             logger.debug("ipm: no inner step at outer=%d (μ=%.3e) — break outer", outer_iter, mu)
             break
         mu = max(mu * mu_factor, mu_min * 0.5)
+    else:
+        # for завершился без break: исчерпан outer_max.
+        schedule_done = mu <= mu_min
 
     # Финальная невязка/objective
     r_final = residual_fn(x)
     obj_data = 0.5 * float(r_final @ (R_inv @ r_final))
 
-    success = grad_inf < max(1e-2, inner_tol * 100)
+    kkt = grad_inf < max(1e-2, inner_tol * 100)
+    if kkt:
+        status = "kkt"
+    elif schedule_done:
+        status = "completed"
+    else:
+        status = "stalled"
+    success = status in ("kkt", "completed")
     if not message:
-        if success:
-            message = (
-                f"converged: outer={outer_iter + 1}, inner_total={iter_inner_total}, "
-                f"μ_final={mu:.2e}, |grad|∞={grad_inf:.2e}"
-            )
+        detail = (
+            f"outer={outer_iter + 1}, inner_total={iter_inner_total}, "
+            f"μ_final={mu:.2e}, |grad|∞={grad_inf:.2e}"
+        )
+        if status == "kkt":
+            message = f"converged (kkt): {detail}"
+        elif status == "completed":
+            message = f"completed (μ-schedule done, kkt loose): {detail}"
         else:
-            message = (
-                f"max iter exceeded: outer={outer_iter + 1}, inner_total={iter_inner_total}, "
-                f"μ_final={mu:.2e}, |grad|∞={grad_inf:.2e}"
-            )
+            message = f"stalled before μ_min: {detail}"
 
     return IPMResult(
         x=x,
@@ -490,6 +525,7 @@ def solve_ipm(
         mu_final=mu,
         grad_inf_final=grad_inf,
         message=message,
+        status=status,
     )
 
 

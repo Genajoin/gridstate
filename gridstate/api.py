@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from gridstate.algorithms.ipm import solve_ipm
+from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.wls import solve_wls
 from gridstate.result import SEResult, extract_output_tables
 from gridstate.state import StateLayout, flat_start, flat_start_with_box, pack, unpack, unpack_full
@@ -112,7 +112,7 @@ def estimate(
         # узловыми balance-уравнениями. ipm_kwargs пробрасываются
         # в build_ipm_setup (prior_sigma2_*, balance_weight_factor,
         # bound_relax и т.д.) — для A/B-калибровок через canon.
-        e_final, success, iterations, objective = _run_ipm(
+        ipm_res = _run_ipm(
             model,
             network_pu,
             ybus,
@@ -130,7 +130,13 @@ def estimate(
             **ipm_kwargs,
         )
         # _run_ipm уже записал *_estimated в model.nodes; layout
-        # внутри изменился, для unpack используем длину e_final.
+        # внутри изменился, для unpack используем V/δ-префикс state-вектора.
+        e_final = ipm_res.x
+        success = ipm_res.success
+        iterations = ipm_res.iterations_outer
+        objective = ipm_res.objective_data
+        algo_message = ipm_res.message
+        convergence_status = ipm_res.status
         delta, v_pu = unpack(e_final[: 2 * network_pu.n_bus - 1], layout)
     else:
         # 5. WLS
@@ -152,6 +158,8 @@ def estimate(
 
         # 6. Распаковка состояния и запись обратно в модель
         delta, v_pu = unpack(e_final, layout)
+        algo_message = ""
+        convergence_status = "converged" if success else "not_converged"
     write_results_to_model(model, v_pu, delta, network_pu, yf=yf, yt=yt, ybus=ybus)
     # 7. Постпроцессинг measurements: estimated_si/value/residual.
     from gridstate.post_processing import write_measurement_estimates
@@ -190,7 +198,13 @@ def estimate(
         algorithm=algorithm,
         v_pu=v_pu,
         delta_rad=delta,
-        message="" if success else (f"Не сошёлся за {iterations}/{max_iterations} итераций"),
+        convergence_status=convergence_status,
+        # Для IPM пробрасывается диагностика солвера (μ_final, |grad|∞ и
+        # причина остановки) — раньше она терялась в _run_ipm, и UI видел
+        # только голое «не сошёлся».
+        message=algo_message
+        if algo_message
+        else ("" if success else f"Не сошёлся за {iterations}/{max_iterations} итераций"),
         # Output-контейнер: все результаты keyed по id (узлы/ветви/меры),
         # извлечённые из модели после записи. Канонический Output-контракт.
         outputs=extract_output_tables(model),
@@ -338,12 +352,13 @@ def _run_ipm(
     huber_leverage_b_threshold_pu: float = 2.0,
     huber_w_floor: float = 0.05,
     **ipm_kwargs: Any,
-) -> tuple[np.ndarray, bool, int, float]:
+) -> IPMResult:
     """IPM-режим: расширяет state-vector box-vars и решает primal log-barrier WLS.
 
-    Возвращает ``e_final`` длины ``layout_ipm.size`` (включая box-секции),
-    ``success``, ``iterations``, ``objective``. Значения box-vars из
-    результата записывает в ``model.nodes`` через ``write_node_estimates``.
+    Возвращает :class:`IPMResult` целиком (``x`` длины ``layout_ipm.size``
+    включая box-секции, двухуровневый ``status``, диагностику μ/grad).
+    Значения box-vars из результата записывает в ``model.nodes`` через
+    ``write_node_estimates``.
     """
     from gridstate.algebra.base import BaseAlgebra
     from gridstate.post_processing import write_node_estimates
@@ -494,9 +509,4 @@ def _run_ipm(
             load_q=qnag * BASE_MVA,
         )
 
-    return (
-        result.x,
-        result.success,
-        result.iterations_outer,
-        result.objective_data,
-    )
+    return result

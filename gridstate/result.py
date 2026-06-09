@@ -247,6 +247,11 @@ class SEResult:
     v_pu: np.ndarray = field(default_factory=lambda: np.empty(0))
     delta_rad: np.ndarray = field(default_factory=lambda: np.empty(0))
     message: str = ""
+    # Детализация сходимости. WLS: "converged"/"not_converged". IPM —
+    # двухуровневая (см. IPMResult.status): "kkt" (строгая стационарность),
+    # "completed" (μ-расписание пройдено, решение пригодно), "stalled",
+    # "error". success == True ⇔ status ∈ {kkt, completed, converged}.
+    convergence_status: str = ""
 
     # Output-контейнер — результаты keyed по id (узлы/ветви/меры), параллельно
     # Input-коллекциям. Канонический Output-контракт для адаптеров (Input
