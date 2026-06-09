@@ -7,7 +7,7 @@ import math
 
 import numpy as np
 
-from gridstate.bounds import SENTINEL_ABS, is_sentinel, resolve_bounds
+from gridstate.bounds import SENTINEL_VALUE, is_sentinel, resolve_bounds
 
 
 # ---------------------------------------------------------------------------
@@ -26,10 +26,15 @@ def test_resolve_bounds_sentinel_pair_is_unbounded():
 
 
 def test_resolve_bounds_half_sentinel_kept_as_is():
-    """Полусентинельная пара сохраняется: большая сторона неотличима от
-    реальных границ BUS-эквивалентов (±десятки ГВт)."""
+    """Полусентинельная пара сохраняется (вторая сторона — данные)."""
     assert resolve_bounds(-9999.0, 120.0) == (-9999.0, 120.0)
     assert resolve_bounds(0.0, 42500.0) == (0.0, 42500.0)
+
+
+def test_resolve_bounds_large_real_pair_is_data():
+    """Реальная пара большого масштаба (узел-эквивалент: load 10..30 ГВт)
+    НЕ трактуется сентинельной — порог |v|>=9000 это ломал."""
+    assert resolve_bounds(10000.0, 30000.0) == (10000.0, 30000.0)
 
 
 def test_resolve_bounds_inverted_pair_is_unbounded():
@@ -43,11 +48,15 @@ def test_resolve_bounds_valid_pair_passthrough():
     assert resolve_bounds(0.0, 80.0) == (0.0, 80.0)
 
 
-def test_is_sentinel():
+def test_is_sentinel_exact_value():
+    """Сентинел — ТОЧНОЕ ±9999, не порог: реальные границы того же
+    масштаба (10000, 30000, 42500) — данные, их нельзя съедать."""
     assert is_sentinel(9999.0)
     assert is_sentinel(-9999.0)
-    assert not is_sentinel(8999.9)
-    assert SENTINEL_ABS == 9000.0
+    assert not is_sentinel(10000.0)
+    assert not is_sentinel(9000.0)
+    assert not is_sentinel(42500.0)
+    assert SENTINEL_VALUE == 9999.0
 
 
 # ---------------------------------------------------------------------------

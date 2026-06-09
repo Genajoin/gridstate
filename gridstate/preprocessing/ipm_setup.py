@@ -79,7 +79,6 @@ def build_ipm_setup(
     balance_sigma2: float | None = None,
     balance_weight_factor: float = 0.1,
     bound_relax: float = 0.0,
-    sentinel_abs: float = 9000.0,
     default_box_halfwidth_pu: float = 50.0,
     prior_sigma2_normal_pu: float = 0.0,
     prior_sigma2_bus_equiv_pu: float = 0.01,
@@ -108,8 +107,6 @@ def build_ipm_setup(
             Значения >1 делают баланс жёстче медианной меры.
         bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
             (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
-        sentinel_abs: |значение| ≥ этого считается «не задано» в
-            NODE_DTYPE (sentinel ±9999 — контрактная конвенция).
         default_box_halfwidth_pu: полуширина (p.u.) дефолтной коробки
             ``[-hw, +hw]`` для exist_*-узла с незаданными границами.
             Default 50 p.u. (±5 ГВт/ГВАр) — заведомо шире любого
@@ -211,7 +208,7 @@ def build_ipm_setup(
         массовый случай (Q-лимиты заполнены редко) — реактивная выдача
         генераторных узлов насильно занулялась.
         """
-        lo_res, hi_res = resolve_bounds(lo_raw, hi_raw, sentinel_abs=sentinel_abs)
+        lo_res, hi_res = resolve_bounds(lo_raw, hi_raw)
         lo_pu = lo_res / BASE_MVA if np.isfinite(lo_res) else -float(default_halfwidth_pu)
         hi_pu = hi_res / BASE_MVA if np.isfinite(hi_res) else float(default_halfwidth_pu)
         is_default = not (np.isfinite(lo_res) and np.isfinite(hi_res))
@@ -395,6 +392,22 @@ def build_ipm_setup(
 
     z_aug = np.zeros(n_new, dtype=np.float64)
     z_aug[:n_old] = z
+    # Prior-строки якорим к INIT box-var (материализованный load/gen в p.u.),
+    # а НЕ к нулю: BUS-эквивалент с фиктивной gross-парой (нагрузка 10 ГВт +
+    # генерация 12 ГВт на одном узле) при z=0 терял якорь — tight prior
+    # пиннил обе переменные к нулю, и солвер расщеплял чистый переток
+    # симметрично (±1.9 ГВт вместо 10/12). Балансы+TI по-прежнему правят
+    # NET; prior удерживает GROSS-уровень.
+    if n_prior > 0:
+        prior_z = np.concatenate(
+            [
+                np.asarray(pgen_init_l, dtype=np.float64)[pgen_prior_mask],
+                np.asarray(qgen_init_l, dtype=np.float64)[qgen_prior_mask],
+                np.asarray(pnag_init_l, dtype=np.float64)[pnag_prior_mask],
+                np.asarray(qnag_init_l, dtype=np.float64)[qnag_prior_mask],
+            ]
+        )
+        z_aug[n_old + 2 * n_balance :] = prior_z
 
     # R: расширяем диагональ.
     # Adaptive balance_sigma2: berём median (а не min) σ² у data-meas как

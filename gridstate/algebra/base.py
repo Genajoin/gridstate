@@ -200,9 +200,12 @@ class BaseAlgebra:
             )
             h[m] = Sbus[op[m]].imag - box_q
 
-        # ----- Soft-prior к 0 для box-vars (KIND_BOX_PRIOR_*) -----
+        # ----- Soft-prior для box-vars (KIND_BOX_PRIOR_*) -----
         # Применяется только в IPM-режиме (есть layout с box-секциями).
-        # h(x) = текущее значение box-var на узле; z=0 → штраф на |x|.
+        # h(x) = текущее значение box-var на узле; z несёт ЯКОРЬ prior'а
+        # (init-значение переменной — материализованный load/gen в p.u.;
+        # см. build_ipm_setup) → штраф на |x − z|. Раньше z был 0, и tight
+        # bus-equiv prior пиннил gross-пары эквивалентов к нулю.
         if self.layout is not None and self.layout.has_box:
             for prior_kind, est_arr, node_pos_arr in (
                 (KIND_BOX_PRIOR_PGEN, pgen_estimated, self.layout.pgen_node_pos),
