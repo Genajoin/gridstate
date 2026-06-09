@@ -308,6 +308,17 @@ NODES_OUTPUT = TableSchema(
         ColumnSpec(
             "generation_q_estimated", "f8", Role.OUTPUT, doc="Фактическая Q-генерация, МВАр."
         ),
+        ColumnSpec(
+            "solved",
+            "i1",
+            Role.OUTPUT,
+            doc=(
+                "1 — узел вошёл в расчёт SE (есть решение V/δ); 0 — отсечён "
+                "препроцессингом (off/изолирован): его OUTPUT-поля нулевые, а "
+                "voltage_magnitude несёт входное значение. Маркер для "
+                "потребителей (promote/PF): не принимать нули за оценку."
+            ),
+        ),
     ),
 )
 

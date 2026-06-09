@@ -44,6 +44,7 @@ NODE_OUTPUT_FIELDS: tuple[str, ...] = (
     "load_q_estimated",
     "generation_p_estimated",
     "generation_q_estimated",
+    "solved",
 )
 BRANCH_OUTPUT_FIELDS: tuple[str, ...] = (
     "power_from_p",
