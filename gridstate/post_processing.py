@@ -1,13 +1,14 @@
 """Постпроцессинг результатов SE — обратная запись в ``model.measurements``.
 
 После сходимости WLS вектор ``z`` (измерения в p.u.) и оценочные значения
-``h(x)`` известны, но в ``Measurement`` поля ``estimated_si``,
-``estimated_value``, ``residual`` остаются нулевыми. Этот модуль заполняет
-их в исходных единицах (МВт / МВАр / кВ / А) для дальнейшей аналитики
-(bad-data detection, отчёты, плагины).
+``h(x)`` известны, но в ``Measurement`` поля ``estimated_si`` и
+``residual`` остаются нулевыми. Этот модуль заполняет их в исходных
+единицах (МВт / МВАр / кВ / А) для дальнейшей аналитики (bad-data
+detection, отчёты, плагины).
 
 Поля заполняются для **активных** measurements, попавших в
-``meas_index`` (т.е. учтённых WLS).
+``meas_index`` (т.е. учтённых WLS). Меры вне ``meas_index`` получают
+``NaN`` — явная пометка «не оценено».
 """
 
 from __future__ import annotations
@@ -105,7 +106,7 @@ def write_measurement_estimates(
     meas_index: MeasurementIndex,
     z: np.ndarray,
 ) -> dict[str, int]:
-    """Заполнить ``estimated_si``/``estimated_value``/``residual`` в measurements.
+    """Заполнить ``estimated_si``/``residual`` в measurements.
 
     Args:
         model: ``Working``, обновляется in-place.
@@ -119,8 +120,14 @@ def write_measurement_estimates(
 
     Заполняет (только для measurements попавших в meas_index):
         * ``estimated_si`` — h(x) в исходных единицах;
-        * ``estimated_value`` — копия (для совместимости с предыдущим API);
         * ``residual`` — value (исходное измерение) − estimated_si.
+
+    Меры ВНЕ ``meas_index`` (неактивные / не учтённые WLS) получают
+    ``estimated_si = residual = NaN`` — явная семантика «не оценено» вместо
+    молчаливого нуля из zero-fill коллекции. Потребители оценок/невязок (UI,
+    promote, аналитика) обязаны быть NaN-aware. Внутренние bad-data/χ²
+    считают остатки от живого вектора ``z − h(x)`` в ``quality_summary`` /
+    ``validation.bad_data``, а НЕ от этой колонки — на них NaN не влияет.
 
     Returns:
         ``{"updated": N, "missing": N}``.
@@ -142,6 +149,13 @@ def write_measurement_estimates(
     # Быстрый доступ по id.
     by_id = {int(me.id): me for me in measurements}
 
+    # Сначала помечаем ВСЕ меры как «не оценено» (NaN), затем перекрываем
+    # оценёнными. Без этого меры вне meas_index несли бы 0 из zero-fill
+    # коллекции, неотличимый от настоящей нулевой оценки.
+    for me_init in measurements:
+        me_init.estimated_si = float("nan")
+        me_init.residual = float("nan")
+
     updated = 0
     missing = 0
     for i in range(len(meas_id_arr)):
@@ -152,7 +166,6 @@ def write_measurement_estimates(
             continue
         h_val = float(h_si[i])
         me.estimated_si = h_val
-        me.estimated_value = h_val
         # residual в исходных единицах: value (в исходных) − estimated.
         me.residual = float(me.value) - h_val
         updated += 1

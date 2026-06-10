@@ -59,7 +59,6 @@ BRANCH_OUTPUT_FIELDS: tuple[str, ...] = (
 )
 MEAS_OUTPUT_FIELDS: tuple[str, ...] = (
     "estimated_si",
-    "estimated_value",
     "residual",
 )
 
@@ -186,7 +185,7 @@ class OutputTables:
         branches: ``id`` + :data:`BRANCH_OUTPUT_FIELDS`
             (power_from/to_p/q, current_from/to, loss_p/q, loading_pct).
         measurements: ``id`` + :data:`MEAS_OUTPUT_FIELDS`
-            (estimated_si, estimated_value, residual).
+            (estimated_si, residual).
     """
 
     nodes: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=[("id", "i8")]))

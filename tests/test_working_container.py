@@ -34,7 +34,6 @@ MEAS_READ_ATTRS = (
     "is_pseudo",
     "filter_flag",
     "estimated_si",
-    "estimated_value",
     "residual",
 )
 # ``name`` НЕ включён: это строковое поле, усекаемое по ширине U-dtype колонки

@@ -456,3 +456,56 @@ def test_write_node_estimates_from_inj_stats_counters():
     assert stats["both"] == 1
     assert stats["transit"] == 1
     assert stats["updated"] == 4
+
+
+# ---------------------------------------------------------------------------
+# NaN-семантика estimated_si/residual для неоценённых мер (П5).
+# ---------------------------------------------------------------------------
+
+
+def test_measurement_estimates_nan_for_unestimated():
+    """Мера вне meas_index → estimated_si/residual = NaN; оценённая → число.
+
+    После SE активные меры несут h(x)/невязку в исходных единицах, а
+    неактивная (status=False, не попавшая в z-вектор) остаётся NaN —
+    отличимой от настоящего нуля. Регресс на молчаливые нули zero-fill.
+    """
+    from gridstate.api import estimate
+    from gridstate.z_vector import KIND_VOLTAGE, OBJ_NODE
+    from tests.test_bad_data import _three_bus_with_clean_measurements
+
+    m, _, _ = _three_bus_with_clean_measurements()
+    # Заведомо неактивная мера — НЕ войдёт в meas_index.
+    inactive_id = 999_001
+    m.measurements.add(
+        {
+            "id": inactive_id,
+            "object_type": OBJ_NODE,
+            "object_id": 2,
+            "measurement_type": KIND_VOLTAGE,
+            "value": 108.0,
+            "variance": 0.01,
+            "status": False,
+            "quality": 0,
+        }
+    )
+
+    res = estimate(m, tolerance=1e-10)
+    assert res.success
+
+    by_id = {int(me.id): me for me in res.model.measurements}
+
+    # Неоценённая (status=False) → NaN в обоих OUTPUT-полях.
+    inactive = by_id[inactive_id]
+    assert np.isnan(float(inactive.estimated_si))
+    assert np.isnan(float(inactive.residual))
+
+    # Хотя бы одна оценённая мера несёт конечные число.
+    estimated = [
+        me
+        for mid, me in by_id.items()
+        if mid != inactive_id and np.isfinite(float(me.estimated_si))
+    ]
+    assert estimated, "ожидались оценённые меры с конечным estimated_si"
+    for me in estimated:
+        assert np.isfinite(float(me.residual))

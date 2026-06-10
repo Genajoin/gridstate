@@ -501,7 +501,6 @@ MEASUREMENTS_OUTPUT = TableSchema(
     columns=(
         ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор измерения."),
         ColumnSpec("estimated_si", "f8", Role.OUTPUT, doc="Оценка нашего SE, исходные единицы."),
-        ColumnSpec("estimated_value", "f8", Role.OUTPUT, doc="Универсальное оценённое значение."),
         ColumnSpec("residual", "f8", Role.OUTPUT, doc="Невязка value − estimated."),
     ),
 )
