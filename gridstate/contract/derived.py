@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -19,19 +19,17 @@ class DerivedInputs:
     Каждое поле — готовый числовой план соответствующего шага (или ``None``, если
     шаг отключён). Шаги ``run()`` применяют их контрактными ядрами:
 
-    * ``snapshot`` — ``{guid → значение}`` (нужен только производителю данных; ядро
-      его не читает, лишь косметический счётчик ``unique_guids``);
     * ``topology_resolved`` — план статусов ON_LINE;
-    * ``rpn_resolved`` — ``(resolved_taps, skipped_no_branch, skipped_no_tm)``;
     * ``telemetry_resolved`` / ``telemetry_arg_keys`` / ``telemetry_total_args`` —
       z-вектор измерений;
     * ``materialize_obs`` — наблюдаемый узловой режим;
     * ``voltage_nominal`` — ``{node_id → vn}`` (off-by-default шаг).
+
+    Применение РПН идёт через входную таблицу ``tap_steps`` (выбор отпайки сделал
+    производитель данных), а не через поле этого контейнера.
     """
 
-    snapshot: dict = field(default_factory=dict)
     topology_resolved: list | None = None
-    rpn_resolved: tuple | None = None
     telemetry_resolved: dict | None = None
     telemetry_arg_keys: list | None = None
     telemetry_total_args: int = 0

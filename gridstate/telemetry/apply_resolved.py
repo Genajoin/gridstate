@@ -1,9 +1,11 @@
-"""Применение телеметрии/материализации к узловому режиму (prep-ядра + адаптеры).
+"""Применение предвычисленных числовых планов телеметрии/материализации к режиму.
 
 Контрактные ядра z-вектора (``_apply_telemetry_on_arrays``) и материализации режима
 (``_materialize_area_on_arrays``) + тонкие адаптеры применения готовых числовых планов
-(``apply_telemetry_resolved`` / ``apply_materialize_resolved``). Спецификации привязок
-(``FormulaSpec`` / ``ArgEntry`` + kind-карты) — в ``gridstate.telemetry._specs``.
+(``apply_telemetry_resolved`` / ``apply_materialize_resolved``). Планы вычислены вне
+ядра производителем данных; здесь — только применение к массивам ``SE_INPUT`` (без
+формат-слоя источника). Kind-карты замеров (``_KIND_MAP`` / ``_NODE_INJ_MAP`` /
+``_INJ_MT``) — в ``gridstate.telemetry._specs``.
 """
 
 from __future__ import annotations
@@ -14,13 +16,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from gridstate.telemetry._specs import (
-    _INJ_MT,
-    _KIND_MAP,
-    _NODE_INJ_MAP,
-    ArgEntry,  # noqa: F401  (реэкспорт для обратной совместимости)
-    FormulaSpec,
-)
+from gridstate.telemetry._specs import _INJ_MT, _KIND_MAP, _NODE_INJ_MAP
 from gridstate.telemetry.loss_filter import is_branch_q_consistent_with_physics
 from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_QUESTIONABLE, aggregate_qualities
 from gridstate.telemetry.units import variance_branch_q, variance_power, variance_voltage
@@ -122,8 +118,8 @@ def _apply_telemetry_on_arrays(
 
     Чистая работа над ``SE_INPUT.measurements`` (``meas_arr``, мутируется
     in-place) / ``SE_INPUT.nodes`` (``nodes_arr``) / ``SE_INPUT.branches``
-    (``branches_arr``). БЕЗ внешних зависимостей, БЕЗ snapshot, БЕЗ FORMULE: все XML/snapshot
-    значения уже посчитаны адаптером и переданы в ``resolved`` —
+    (``branches_arr``). БЕЗ внешних зависимостей, БЕЗ формул источника: все числовые
+    значения мер уже посчитаны адаптером и переданы в ``resolved`` —
     ``{(obj_id, kind): (value|None, n_resolved, guid_first, quality)}``.
     Порядок итерации задаётся ``arg_keys`` (= ``list(args.keys())``).
 
@@ -183,9 +179,9 @@ def _apply_telemetry_on_arrays(
 
     # Pre-pass: распознать ветви с sign-inconsistent P-измерениями
     # (PBEG и PEND оба входят в линию, т.е. одного знака после
-    # учёта invert) — это указывает на битые привязки FORMULE-ARG
-    # к не той ветви или на устаревшую телеметрию. Сами branch-meas
-    # таких ветвей не активируем.
+    # учёта invert) — это указывает на битую привязку меры к не той
+    # ветви или на устаревшую телеметрию. Сами branch-meas таких ветвей
+    # не активируем.
     inconsistent_branches: set[int] = set()
     if sign_inconsistency_threshold_mw is not None:
         for obj_id, kind in arg_keys:
@@ -197,10 +193,10 @@ def _apply_telemetry_on_arrays(
             v_end = resolved[(obj_id, "PEND")][0]
             if v_beg is None or v_end is None:
                 continue
-            # PBEG/PEND-значения уже учитывают `INVERT_CK2011` для
-            # своих ARG. На физически согласованной ВЛ выполняется
-            # ``v_beg ≈ -v_end + потери``, т.е. они **противоположных
-            # знаков**. Если |v_beg + v_end| превосходит порог —
+            # PBEG/PEND-значения приходят с уже применённым знаком (инверсия
+            # закодирована во входном числовом плане адаптером). На физически
+            # согласованной ВЛ выполняется ``v_beg ≈ -v_end + потери``, т.е. они
+            # **противоположных знаков**. Если |v_beg + v_end| превосходит порог —
             # это либо знак-аномалия, либо неправильная привязка.
             if abs(v_beg + v_end) >= sign_inconsistency_threshold_mw:
                 inconsistent_branches.add(int(obj_id))
@@ -460,111 +456,6 @@ def _apply_telemetry_on_arrays(
             stats["applied_questionable"] += 1
 
     return stats, new_rows
-
-
-def _val_twin(a: float, b: float, rtol: float, atol: float) -> bool:
-    return abs(a - b) <= max(atol, rtol * max(abs(a), abs(b)))
-
-
-def assign_cod_from_xml(
-    model: Working,
-    args: dict[tuple[int, str], FormulaSpec],
-    *,
-    dup_val_rtol: float = 0.01,
-    dup_val_atol: float = 0.5,
-    apply: str = "mark",
-    representative: str = "none",
-) -> dict[str, int]:
-    """Пометить дубли замеров «один SCADA-сигнал на несколько объектов».
-
-    Один физический SCADA-сигнал может зеркалиться на 2+ объекта модели с равным
-    значением; группа-ключ — поле ``numer`` первого ARG привязки. Здесь активные
-    V/branch-меры группируются по ``numer``: если один ``numer`` стоит на ≥2 РАЗНЫХ
-    объектах с value-twin (равным значением) — это дубль-кластер. По умолчанию все
-    копии помечаются ``filter_flag=7`` («дубль»); опционально одна копия
-    (минимальный object_id) оставляется представителем.
-
-    Узловые инжекции (PN/PG/QN/QG) НЕ обрабатываются: они агрегируются в один
-    P_inj/Q_inj на узел (нет одиночного ``numer``), а дубли «генерация дважды» уже
-    нейтрализованы ``aggregate_generators_to_node`` + неттингом. Здесь — V и
-    branch-flow.
-
-    Args:
-        model: модель с активными measurements (после применения телеметрии).
-        args: ``dict[(object_id, kind) → FormulaSpec]`` (``ArgEntry`` несёт ``numer``).
-        dup_val_rtol, dup_val_atol: допуск равенства value для value-twin.
-        apply: ``"mark"`` — только ``filter_flag=7`` (статус не трогаем); ``"drop"`` —
-            дополнительно ``status=False`` у дублей.
-        representative: ``"none"`` (default) — метить ВСЕ копии value-twin кластера;
-            ``"min_object"`` — оставить одну копию (минимальный object_id) как якорь.
-
-    Returns:
-        ``{"clusters": N, "marked_cod7": N, "dropped": N, "groups_numer": N}``.
-    """
-    arr = model.measurements.to_numpy().copy()
-    # карта (ot, mt, side, oid) → primary NUMER (только V + branch-flow kinds)
-    numer_by_key: dict[tuple[int, int, int, int], str] = {}
-    for (oid, kind), spec in args.items():
-        if kind not in _KIND_MAP or not spec.args:
-            continue
-        nmr = (spec.args[0].numer or "").strip()
-        if not nmr:
-            continue
-        ot, mt, side, _sign = _KIND_MAP[kind]
-        numer_by_key[(ot, mt, side, int(oid))] = nmr
-
-    # активные меры с известным NUMER → группировка
-    groups: dict[str, list[int]] = defaultdict(list)  # numer → row idx
-    field_names = arr.dtype.names or ()
-    for i in range(len(arr)):
-        if not bool(arr[i]["status"]):
-            continue
-        if "is_pseudo" in field_names and bool(arr[i]["is_pseudo"]):
-            continue
-        key = (
-            int(arr[i]["object_type"]),
-            int(arr[i]["measurement_type"]),
-            int(arr[i]["branch_side"]),
-            int(arr[i]["object_id"]),
-        )
-        nmr_lookup = numer_by_key.get(key)
-        if nmr_lookup:
-            groups[nmr_lookup].append(i)
-
-    stats = {"clusters": 0, "marked_cod7": 0, "dropped": 0, "groups_numer": len(groups)}
-    for _nmr, idxs in groups.items():
-        if len(idxs) < 2:
-            continue
-        # требуем ≥2 РАЗНЫХ объекта (cross-object) + value-twin
-        by_obj: dict[int, int] = {}
-        for i in idxs:
-            by_obj.setdefault(int(arr[i]["object_id"]), i)
-        if len(by_obj) < 2:
-            continue
-        members = list(by_obj.values())
-        v0 = float(arr[members[0]]["value"])
-        if not all(
-            _val_twin(v0, float(arr[i]["value"]), dup_val_rtol, dup_val_atol) for i in members
-        ):
-            continue
-        # representative="none" → метить ВСЕ копии (как в исходной OC); иначе оставить
-        # одну (min object_id) как cod=0-якорь.
-        rep = (
-            None
-            if representative == "none"
-            else min(members, key=lambda i: int(arr[i]["object_id"]))
-        )
-        stats["clusters"] += 1
-        for i in members:
-            if i == rep:
-                continue
-            arr[i]["filter_flag"] = 7  # cod=7 «Дубль замера»
-            stats["marked_cod7"] += 1
-            if apply == "drop":
-                arr[i]["status"] = False
-                stats["dropped"] += 1
-    model.measurements.update_from_array(arr)
-    return stats
 
 
 def _materialize_area_on_arrays(

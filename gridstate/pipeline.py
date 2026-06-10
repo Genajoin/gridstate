@@ -57,10 +57,10 @@ from gridstate.telemetry import (
     normalize_breaker_reactance,
     resolve_merged_measurement_conflicts,
 )
+from gridstate.telemetry.apply_resolved import apply_materialize_resolved, apply_telemetry_resolved
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.rpn import apply_rpn_resolved
 from gridstate.telemetry.voltage_nominal import apply_voltage_nominal_resolved
-from gridstate.telemetry.xml_args import apply_materialize_resolved, apply_telemetry_resolved
 from gridstate.topology import (
     disable_disconnected_components,
     disable_isolated_nodes,
@@ -318,6 +318,15 @@ class PipelineConfig:
         max=100.0,
         help="None = авто (1.5 для wls, 2.0 для ipm). >0 включает робастный downweight.",
     )
+    top_residuals_n: int = _param(
+        20,
+        group=_G_EST,
+        label="Топ-N худших невязок",
+        control="number",
+        min=0,
+        max=200,
+        help="Размер worst_residuals/worst_imbalance в quality summary (bad-data панель).",
+    )
 
     # --- IPM ---
     ipm_balance_weight_factor: float = _param(
@@ -400,7 +409,12 @@ class Step:
     description: str
     fn: Callable[[_Ctx], dict | None]
     toggle: str | None = None  # имя bool-поля cfg; None = всегда вкл
-    needs_xml: bool = False
+    needs_derived: bool = False  # шагу нужен числовой план DerivedInputs (иначе скип)
+    # Сетевая деривация: шаг мутирует ТОЛЬКО сетевые таблицы (nodes/branches/
+    # generators — статусы, tap, R/X/G/B, шунты, типы узлов), не measurements.
+    # Подмножество network=True исполняется prepare_network() для
+    # материализации решаемой сети без прогона SE («одна сеть» для SE/PF).
+    network: bool = False
 
 
 def _effective_huber_c(cfg: PipelineConfig) -> float:
@@ -418,13 +432,6 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
 
 
 # --- реализации шагов (каждая принимает ctx, возвращает stats-dict) ---
-
-
-def _s_snapshot(ctx: _Ctx) -> dict:
-    # Снимок ТМ вычисляется производителем данных вне ядра; шаг лишь рапортует.
-    # needs_xml ⇒ ctx.derived заполнен.
-    assert ctx.derived is not None  # инвариант: needs_xml-шаг
-    return {"unique_guids": len(ctx.derived.snapshot)}
 
 
 def _s_normalize_breakers(ctx: _Ctx) -> dict:
@@ -569,6 +576,7 @@ def _s_estimate(ctx: _Ctx) -> dict:
         "tolerance": cfg.tolerance,
         "max_iterations": cfg.max_iterations,
         "huber_c": huber_c,
+        "quality_summary_top_n": cfg.top_residuals_n,
     }
     if cfg.algorithm == "ipm":
         kw.update(_ipm_kwargs(cfg))
@@ -595,6 +603,7 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
             "max_iterations": 150,
             "tolerance": 1e-4 if cfg.algorithm == "wls" else 1e-3,
             "huber_c": huber_c,
+            "quality_summary_top_n": cfg.top_residuals_n,
         }
         if cfg.algorithm == "ipm":
             kw.update(_ipm_kwargs(cfg))
@@ -614,8 +623,6 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
 # ---------------------------------------------------------------------------
 
 STEPS: list[Step] = [
-    # Порядок normalize→snapshot SE-нейтрален: snapshot читает tm_values, normalize
-    # меняет branch X — шаги независимы; порядок фиксирован для воспроизводимости.
     Step(
         "normalize_breakers",
         "Нормализация короткозамыкателей",
@@ -623,14 +630,7 @@ STEPS: list[Step] = [
         "volt-aware X_pu для R=X=0 ветвей.",
         _s_normalize_breakers,
         toggle="normalize_breakers",
-    ),
-    Step(
-        "snapshot",
-        "TM-снимок",
-        _G_XML,
-        "Снимок телеметрии guid→значение (рапорт уникальных guid).",
-        _s_snapshot,
-        needs_xml=True,
+        network=True,
     ),
     Step(
         "voltage_nominal",
@@ -639,7 +639,8 @@ STEPS: list[Step] = [
         "Заполнить voltage_nominal=0 узлов из плана Vnom.",
         _s_voltage_nominal,
         toggle="apply_voltage_nominal",
-        needs_xml=True,
+        needs_derived=True,
+        network=True,
     ),
     Step(
         "topology",
@@ -648,7 +649,8 @@ STEPS: list[Step] = [
         "Применить план ON_LINE-статусов → status.",
         _s_topology,
         toggle="apply_topology",
-        needs_xml=True,
+        needs_derived=True,
+        network=True,
     ),
     Step(
         "rpn",
@@ -657,7 +659,8 @@ STEPS: list[Step] = [
         "Применить план № отпаек → динамический tap_ratio.",
         _s_rpn,
         toggle="apply_rpn",
-        needs_xml=True,
+        needs_derived=True,
+        network=True,
     ),
     Step(
         "reactors",
@@ -666,6 +669,7 @@ STEPS: list[Step] = [
         "apply_reactors_to_node_shunt.",
         _s_reactors,
         toggle="apply_reactors",
+        network=True,
     ),
     Step(
         "telemetry",
@@ -673,7 +677,7 @@ STEPS: list[Step] = [
         _G_XML,
         "Применить z-вектор → measurements.",
         _s_telemetry,
-        needs_xml=True,
+        needs_derived=True,
     ),
     # --- хвост stage_a: slack + типы + каскад статусов ---
     Step(
@@ -683,6 +687,7 @@ STEPS: list[Step] = [
         "refine_slack_to_one.",
         _s_refine_slack,
         toggle="refine_slack",
+        network=True,
     ),
     Step(
         "refine_node_types",
@@ -691,6 +696,7 @@ STEPS: list[Step] = [
         "refine_node_types_from_generators.",
         _s_refine_node_types,
         toggle="refine_node_types",
+        network=True,
     ),
     Step(
         "disable_orphan_branches",
@@ -699,6 +705,7 @@ STEPS: list[Step] = [
         "disable_orphan_branches.",
         _s_disable_orphan_branches,
         toggle="disable_orphan_branches",
+        network=True,
     ),
     Step(
         "disable_disconnected",
@@ -707,6 +714,7 @@ STEPS: list[Step] = [
         "disable_disconnected_components + повтор orphan-branches (H46).",
         _s_disable_disconnected,
         toggle="disable_disconnected",
+        network=True,
     ),
     Step(
         "disable_isolated",
@@ -715,6 +723,7 @@ STEPS: list[Step] = [
         "disable_isolated_nodes.",
         _s_disable_isolated,
         toggle="disable_isolated",
+        network=True,
     ),
     Step(
         "generator_status",
@@ -723,6 +732,7 @@ STEPS: list[Step] = [
         "apply_generator_status_from_node.",
         _s_generator_status,
         toggle="apply_generator_status",
+        network=True,
     ),
     # --- этап B: отбраковка измерений + режим + псевдо ---
     Step(
@@ -796,7 +806,7 @@ STEPS: list[Step] = [
         "Применить наблюдаемый режим node.pn/qn/pg/qg.",
         _s_materialize,
         toggle="materialize",
-        needs_xml=True,
+        needs_derived=True,
     ),
     Step(
         "add_pseudo",
@@ -923,8 +933,8 @@ def run(
         derived: предвычисленные числовые планы (:class:`~gridstate.contract.derived.
             DerivedInputs`) — топология/РПН/телеметрия/материализация/Vnom. Если
             задан — шаги применяют готовые планы контрактными ядрами. Если ``None`` —
-            XML/формат-зависимые шаги (помеченные ``needs_xml``) пропускаются (модель
-            должна уже нести измерения).
+            шаги, требующие числового плана (помеченные ``needs_derived``), пропускаются
+            (модель должна уже нести измерения).
         on_event: callback прогресса. Получает dict-события ``step_start`` /
             ``step_done`` / ``step_skipped`` / ``step_error`` / ``final``.
         init_state: прошлый ``SEResult`` для **тёплого старта** (цепочка
@@ -953,7 +963,7 @@ def run(
 
     # Числовые планы (топология/РПН/телеметрия/материализация/Vnom) приходят готовыми
     # (``derived``) — производитель данных вычислил их вне ядра. Шаги ниже применяют их
-    # контрактными ядрами на своих позициях. Если планов нет — needs_xml-шаги
+    # контрактными ядрами на своих позициях. Если планов нет — needs_derived-шаги
     # пропускаются (модель должна уже нести измерения).
     if derived is not None:
         ctx.derived = derived
@@ -973,7 +983,7 @@ def run(
                 },
             )
             continue
-        if step.needs_xml and ctx.derived is None:
+        if step.needs_derived and ctx.derived is None:
             _emit(
                 on_event,
                 {"type": "step_skipped", "name": step.name, "reason": "нет XML-деривации"},
@@ -1016,6 +1026,75 @@ def run(
     return ctx.result
 
 
+def prepare_network(
+    model: Any,
+    *,
+    config: PipelineConfig | None = None,
+    derived: DerivedInputs | None = None,
+    on_event: Callable[[dict], None] | None = None,
+) -> Working:
+    """Выполнить ТОЛЬКО сетевые деривации пайплайна и вернуть ``Working``.
+
+    Исполняет подмножество ``STEPS`` с ``network=True`` (нормализация
+    выключателей, Vnom, ON_LINE-топология, РПН, реакторы, slack/типы узлов,
+    каскады статусов, статусы генераторов) — без телеметрии, псевдо-мер и
+    солвера. Результат — сеть в том состоянии, в котором её решает SE.
+
+    Назначение — материализация «одной сети»: перенос полученного сетевого
+    состояния в модель-носитель (это делает внешний адаптер) делает вход
+    консистентным для SE/PF/последующих расчётов; сами деривации
+    идемпотентны на материализованной сети (повторный прогон — no-op),
+    поэтому последующий полный ``run`` даёт бит-в-бит тот же результат.
+
+    Args:
+        model: носитель контрактных таблиц (как у :func:`run`). НЕ мутируется.
+        config: :class:`PipelineConfig` — уважаются те же toggle'ы.
+        derived: числовые планы; без них needs_derived-шаги пропускаются.
+        on_event: callback прогресса (события как у :func:`run`).
+
+    Returns:
+        ``Working`` — рабочая копия с применёнными сетевыми деривациями.
+    """
+    cfg = config or PipelineConfig()
+    working: Working = _build_working(model)
+    ctx = _Ctx(model=working, cfg=cfg)
+    if derived is not None:
+        ctx.derived = derived
+
+    for step in STEPS:
+        if not step.network:
+            continue
+        if step.toggle is not None and not getattr(cfg, step.toggle):
+            _emit(
+                on_event,
+                {
+                    "type": "step_skipped",
+                    "name": step.name,
+                    "reason": f"отключено ({step.toggle}=False)",
+                },
+            )
+            continue
+        if step.needs_derived and ctx.derived is None:
+            _emit(
+                on_event,
+                {"type": "step_skipped", "name": step.name, "reason": "нет XML-деривации"},
+            )
+            continue
+        _emit(on_event, {"type": "step_start", "name": step.name})
+        t0 = time.monotonic()
+        stats = step.fn(ctx) or {}
+        _emit(
+            on_event,
+            {
+                "type": "step_done",
+                "name": step.name,
+                "stats": stats,
+                "duration_ms": int((time.monotonic() - t0) * 1000),
+            },
+        )
+    return working
+
+
 # ---------------------------------------------------------------------------
 # Манифест для UI (JSON-сериализуемый)
 # ---------------------------------------------------------------------------
@@ -1028,7 +1107,7 @@ def manifest() -> dict:
 
         {
           "steps":  [{name, title, group, description, optional, toggle,
-                      default_enabled, needs_xml}, ...],   # порядок исполнения
+                      default_enabled, needs_derived}, ...],   # порядок исполнения
           "params": [{name, type, default, control, group, label, help,
                       min?, max?, choices?, depends?}, ...],
           "groups": ["XML-препроцессинг", "Режим...", ...],   # порядок секций
@@ -1079,7 +1158,7 @@ def manifest() -> dict:
                 "default_enabled": (
                     getattr(cfg_defaults, step.toggle) if step.toggle is not None else True
                 ),
-                "needs_xml": step.needs_xml,
+                "needs_derived": step.needs_derived,
             }
         )
 

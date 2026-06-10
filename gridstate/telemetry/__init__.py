@@ -7,6 +7,10 @@
 числовыми массивами ``SE_INPUT`` (без формат-слоя источника).
 """
 
+from gridstate.telemetry.apply_resolved import (
+    apply_materialize_resolved,
+    apply_telemetry_resolved,
+)
 from gridstate.telemetry.loss_filter import (
     BranchLossReport,
     analyze_branch_loss_consistency,
@@ -25,7 +29,6 @@ from gridstate.telemetry.quality import (
 )
 from gridstate.telemetry.rpn import apply_rpn_resolved
 from gridstate.telemetry.topology import (
-    RpnSpec,
     aggregate_generators_to_node,
     apply_generator_status_from_node,
     apply_reactors_to_node_shunt,
@@ -44,23 +47,13 @@ from gridstate.telemetry.voltage_filter import (
     apply_voltage_range_filter,
 )
 from gridstate.telemetry.voltage_nominal import apply_voltage_nominal_resolved
-from gridstate.telemetry.xml_args import (
-    ArgEntry,
-    FormulaSpec,
-    apply_materialize_resolved,
-    apply_telemetry_resolved,
-    assign_cod_from_xml,
-)
 
 
 __all__ = [
     "QUALITY_BAD",
     "QUALITY_GOOD",
     "QUALITY_QUESTIONABLE",
-    "ArgEntry",
     "BranchLossReport",
-    "FormulaSpec",
-    "RpnSpec",
     "aggregate_generators_to_node",
     "aggregate_qualities",
     "analyze_branch_loss_consistency",
@@ -73,7 +66,6 @@ __all__ = [
     "apply_voltage_meas_calibration_for_gen_nodes",
     "apply_voltage_nominal_resolved",
     "apply_voltage_range_filter",
-    "assign_cod_from_xml",
     "compute_branch_loss_formulas",
     "deactivate_orphan_measurements",
     "inverse_classifier",

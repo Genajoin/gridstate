@@ -30,6 +30,9 @@ MANIFEST
 *.manifest
 *.spec
 
+# Jupyter Notebook
+.ipynb_checkpoints/
+
 # Unit test / coverage reports
 htmlcov/
 .tox/

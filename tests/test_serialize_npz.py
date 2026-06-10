@@ -12,15 +12,25 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gridstate.contract import SEInput
+from gridstate.contract import SE_INPUT, SEInput
 from gridstate.contract import run as contract_run
 from gridstate.contract.serialize import load_se_input_npz, save_se_input
 from gridstate.pipeline import PipelineConfig
 from tests.test_contract_runtime import _arrays_bit_identical, _make_model
 
 
+def _input_columns_bit_identical(a: np.ndarray, b: np.ndarray, table: str) -> bool:
+    """Сравнить только INPUT-колонки (KEY + INPUT + WORKING) двух массивов."""
+    in_dt = getattr(SE_INPUT, table).input_dtype()
+    for col in in_dt.names:
+        nan_aware = a.dtype[col].kind in "fc"
+        if not np.array_equal(a[col], b[col], equal_nan=nan_aware):
+            return False
+    return True
+
+
 def test_roundtrip_contract_tables_bit_identical(tmp_path):
-    """Контрактные таблицы (nodes/branches/measurements/generators) — бит-в-бит."""
+    """Контрактные таблицы (nodes/branches/measurements/generators) — бит-в-бит по INPUT-колонкам."""
     se_in = SEInput.from_model(_make_model())
     p = save_se_input(se_in, tmp_path / "m.npz")
     se_out = load_se_input_npz(p)
@@ -28,9 +38,33 @@ def test_roundtrip_contract_tables_bit_identical(tmp_path):
     for table in ("nodes", "branches", "measurements", "generators"):
         a = getattr(se_in.model, table).to_numpy()
         b = getattr(se_out.model, table).to_numpy()
-        assert _arrays_bit_identical(a, b), f"{table}: round-trip не бит-в-бит"
+        # Генераторы не имеют OUTPUT — полные массивы идентичны
+        if table == "generators":
+            assert _arrays_bit_identical(a, b), f"{table}: round-trip не бит-в-бит"
+        else:
+            # Остальные таблицы: OUTPUT-колонки в se_out — нули (добавлены expand_to_io),
+            # поэтому сравниваем только INPUT-колонки контракта
+            assert _input_columns_bit_identical(a, b, table), f"{table}: INPUT-колонки не бит-в-бит"
     assert se_out.contract_version == se_in.contract_version
     assert se_out.derived is None  # модель без планов
+
+
+def test_npz_has_no_output_columns(tmp_path):
+    """Сохранённый NPZ содержит только INPUT-колонки (без OUTPUT)."""
+    from gridstate.contract.tables import SE_INPUT as _SE_INPUT
+
+    se_in = SEInput.from_model(_make_model())
+    p = save_se_input(se_in, tmp_path / "clean.npz")
+
+    with np.load(p, allow_pickle=False) as npz:
+        for table in ("nodes", "branches", "measurements"):
+            arr = np.asarray(npz[table])
+            in_dt = getattr(_SE_INPUT, table).input_dtype()
+            # Массив должен иметь ровно input_dtype — ни больше, ни меньше
+            assert set(arr.dtype.names or ()) == set(in_dt.names or ()), (
+                f"{table}: NPZ содержит лишние колонки: "
+                f"{set(arr.dtype.names or ()) - set(in_dt.names or ())}"
+            )
 
 
 def test_roundtrip_domain_tables(tmp_path):
@@ -84,13 +118,11 @@ def test_domain_tables_absent_loads_empty(tmp_path):
 
 
 def test_roundtrip_derived_plans(tmp_path):
-    """``DerivedInputs`` (5 планов) восстанавливаются; ``snapshot`` → пустой (ядру не нужен)."""
+    """``DerivedInputs`` (числовые планы шагов) восстанавливаются round-trip."""
     from gridstate.contract.derived import DerivedInputs
 
     derived = DerivedInputs(
-        snapshot={"abc": object()},  # должен НЕ сериализоваться (ядро его не читает)
         topology_resolved=[("LINE", 100, False, None), ("NODE", 2, True, None)],
-        rpn_resolved=([(100, 5, 3, 7)], 2, 1),
         telemetry_resolved={(1, "PN"): (12.5, 2, "guid-1", 0), (100, "QBEG"): (-3.0, 1, "g2", 1)},
         telemetry_arg_keys=[(1, "PN"), (100, "QBEG")],
         telemetry_total_args=42,
@@ -103,13 +135,51 @@ def test_roundtrip_derived_plans(tmp_path):
 
     assert d is not None
     assert d.topology_resolved == derived.topology_resolved
-    assert d.rpn_resolved == derived.rpn_resolved
     assert d.telemetry_resolved == derived.telemetry_resolved
     assert d.telemetry_arg_keys == derived.telemetry_arg_keys
     assert d.telemetry_total_args == derived.telemetry_total_args
     assert d.materialize_obs == derived.materialize_obs
     assert d.voltage_nominal == derived.voltage_nominal
-    assert d.snapshot == {}  # по дизайну не переносится
+
+
+def _rewrite_contract_version(path, new_version: str):
+    """Перезаписать ``__contract_version__`` в npz (остальное — без изменений)."""
+    with np.load(path, allow_pickle=False) as npz:
+        arrays = {k: npz[k] for k in npz.files}
+    arrays["__contract_version__"] = np.asarray(str(new_version))
+    np.savez_compressed(path, **arrays)
+
+
+def test_load_npz_raises_on_incompatible_version(tmp_path):
+    """Загрузка npz с несовместимым (другой major) contract_version падает явно.
+
+    Граница входа обязана отбраковать данные старой схемы (например, под
+    контракт 1.0.0 после заморозки 2.0.0), а не молча грузить несовместимую
+    структуру, которая упадёт глубже непонятной ошибкой.
+    """
+    from gridstate.contract.version import current_version
+
+    se_in = SEInput.from_model(_make_model())
+    p = save_se_input(se_in, tmp_path / "stale.npz")
+
+    incompatible = f"{current_version().major - 1 if current_version().major > 0 else current_version().major + 1}.0.0"
+    _rewrite_contract_version(p, incompatible)
+
+    with pytest.raises(ValueError) as exc:
+        load_se_input_npz(p)
+    msg = str(exc.value)
+    # Сообщение несёт обе версии и подсказку перегенерировать.
+    assert incompatible in msg
+    assert "перегенерируйте" in msg.lower()
+
+
+def test_load_npz_accepts_current_version(tmp_path):
+    """Sanity: npz, собранный текущим контрактом, грузится без ошибки версии."""
+    se_in = SEInput.from_model(_make_model())
+    p = save_se_input(se_in, tmp_path / "fresh.npz")
+    # Не должно бросать — версия совпадает со встроенной.
+    se_out = load_se_input_npz(p)
+    assert se_out.contract_version == se_in.contract_version
 
 
 @pytest.mark.parametrize("algorithm", ["wls", "ipm"])

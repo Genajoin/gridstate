@@ -1,13 +1,14 @@
 """Постпроцессинг результатов SE — обратная запись в ``model.measurements``.
 
 После сходимости WLS вектор ``z`` (измерения в p.u.) и оценочные значения
-``h(x)`` известны, но в ``Measurement`` поля ``estimated_si``,
-``estimated_value``, ``residual`` остаются нулевыми. Этот модуль заполняет
-их в исходных единицах (МВт / МВАр / кВ / А) для дальнейшей аналитики
-(bad-data detection, отчёты, плагины).
+``h(x)`` известны, но в ``Measurement`` поля ``estimated_si`` и
+``residual`` остаются нулевыми. Этот модуль заполняет их в исходных
+единицах (МВт / МВАр / кВ / А) для дальнейшей аналитики (bad-data
+detection, отчёты, плагины).
 
 Поля заполняются для **активных** measurements, попавших в
-``meas_index`` (т.е. учтённых WLS).
+``meas_index`` (т.е. учтённых WLS). Меры вне ``meas_index`` получают
+``NaN`` — явная пометка «не оценено».
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from gridstate.algebra.base import (
     SIDE_TO,
     BaseAlgebra,
 )
+from gridstate.bounds import resolve_bounds
 from gridstate.units import BASE_MVA, NetworkPU
 
 
@@ -104,7 +106,7 @@ def write_measurement_estimates(
     meas_index: MeasurementIndex,
     z: np.ndarray,
 ) -> dict[str, int]:
-    """Заполнить ``estimated_si``/``estimated_value``/``residual`` в measurements.
+    """Заполнить ``estimated_si``/``residual`` в measurements.
 
     Args:
         model: ``Working``, обновляется in-place.
@@ -118,8 +120,14 @@ def write_measurement_estimates(
 
     Заполняет (только для measurements попавших в meas_index):
         * ``estimated_si`` — h(x) в исходных единицах;
-        * ``estimated_value`` — копия (для совместимости с предыдущим API);
         * ``residual`` — value (исходное измерение) − estimated_si.
+
+    Меры ВНЕ ``meas_index`` (неактивные / не учтённые WLS) получают
+    ``estimated_si = residual = NaN`` — явная семантика «не оценено» вместо
+    молчаливого нуля из zero-fill коллекции. Потребители оценок/невязок (UI,
+    promote, аналитика) обязаны быть NaN-aware. Внутренние bad-data/χ²
+    считают остатки от живого вектора ``z − h(x)`` в ``quality_summary`` /
+    ``validation.bad_data``, а НЕ от этой колонки — на них NaN не влияет.
 
     Returns:
         ``{"updated": N, "missing": N}``.
@@ -141,6 +149,13 @@ def write_measurement_estimates(
     # Быстрый доступ по id.
     by_id = {int(me.id): me for me in measurements}
 
+    # Сначала помечаем ВСЕ меры как «не оценено» (NaN), затем перекрываем
+    # оценёнными. Без этого меры вне meas_index несли бы 0 из zero-fill
+    # коллекции, неотличимый от настоящей нулевой оценки.
+    for me_init in measurements:
+        me_init.estimated_si = float("nan")
+        me_init.residual = float("nan")
+
     updated = 0
     missing = 0
     for i in range(len(meas_id_arr)):
@@ -151,7 +166,6 @@ def write_measurement_estimates(
             continue
         h_val = float(h_si[i])
         me.estimated_si = h_val
-        me.estimated_value = h_val
         # residual в исходных единицах: value (в исходных) − estimated.
         me.residual = float(me.value) - h_val
         updated += 1
@@ -247,6 +261,11 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
     уже сделано через box-vars (``write_node_estimates``), вызывать его
     дополнительно не нужно.
 
+    Границы трактуются через :func:`gridstate.bounds.resolve_bounds`:
+    незаполненная пара ``(0, 0)`` и сентинелы ±9999 = «не задано» →
+    оценка не клипуется (раньше (0, 0) зануляла оценку — узлы без
+    заданных лимитов теряли всю нагрузку/генерацию).
+
     Логика разнесения (по каждому активному узлу):
 
     * **transit** (``exist_load=0`` AND ``exist_gen=0``) →
@@ -304,14 +323,14 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
         p_inj = float(row["p_inj_calc"])
         q_inj = float(row["q_inj_calc"])
 
-        load_p_min = float(row["load_p_min"])
-        load_p_max = float(row["load_p_max"])
-        load_q_min = float(row["load_q_min"])
-        load_q_max = float(row["load_q_max"])
-        gen_p_min = float(row["generation_p_min"])
-        gen_p_max = float(row["generation_p_max"])
-        gen_q_min = float(row["generation_q_min"])
-        gen_q_max = float(row["generation_q_max"])
+        # Незаданные/сентинельные границы → ±inf («не клиповать»). Без
+        # этого пара (0, 0) — numpy-default незаполненного поля —
+        # зануляла оценку, а ±9999 у load_q фактически не встречалась,
+        # зато мусорные суммы лимитов генераторов клиповали Q к хламу.
+        load_p_min, load_p_max = resolve_bounds(row["load_p_min"], row["load_p_max"])
+        load_q_min, load_q_max = resolve_bounds(row["load_q_min"], row["load_q_max"])
+        gen_p_min, gen_p_max = resolve_bounds(row["generation_p_min"], row["generation_p_max"])
+        gen_q_min, gen_q_max = resolve_bounds(row["generation_q_min"], row["generation_q_max"])
 
         load_p_est = 0.0
         load_q_est = 0.0

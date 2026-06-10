@@ -407,6 +407,10 @@ def write_results_to_model(
         update: dict[str, Any] = {
             "voltage_magnitude": float(voltage_kv[pos]),
             "voltage_angle": float(delta_rad[pos]),
+            # Маркер «узел решён»: только узлы network_pu получают 1;
+            # отсечённые препроцессингом остаются solved=0 — их нули в
+            # OUTPUT нельзя принимать за оценку (promote/PF фильтруют).
+            "solved": 1,
         }
         if p_inj_mw is not None and q_inj_mvar is not None:
             node = model.nodes.get_by_id(int(node_id))

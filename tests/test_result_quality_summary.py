@@ -123,3 +123,25 @@ def test_seresult_worst_residuals_top_n_kwarg() -> None:
     assert res.success
     assert len(res.worst_residuals) <= 3
     assert len(res.worst_imbalance) <= 3
+
+
+def test_seresult_worst_residuals_object_binding() -> None:
+    """``ResidualRow`` несёт объектную привязку: object_kind/object_id/σ/is_pseudo."""
+    m, _, _ = _three_bus_with_clean_measurements()
+    res = estimate(m, tolerance=1e-10)
+    assert res.success
+    assert len(res.worst_residuals) > 0
+
+    node_ids = {int(n.id) for n in m.nodes}
+    branch_ids = {int(b.id) for b in m.branches}
+    for row in res.worst_residuals:
+        assert row.object_kind in (0, 1)
+        if row.object_kind == 0:
+            assert row.object_id in node_ids
+            assert row.branch_side == -1
+        else:
+            assert row.object_id in branch_ids
+            assert row.branch_side in (0, 1)
+        assert np.isfinite(row.sigma) and row.sigma > 0
+        # Синтетические измерения — не псевдо.
+        assert row.is_pseudo is False

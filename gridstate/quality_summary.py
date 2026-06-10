@@ -99,6 +99,8 @@ def top_worst_residuals(
     z: np.ndarray,
     *,
     n: int = 10,
+    network_pu: NetworkPU | None = None,
+    is_pseudo: np.ndarray | None = None,
 ) -> list[ResidualRow]:
     """Топ-``n`` измерений по ``|r_N|`` (десятками; default 10).
 
@@ -107,6 +109,12 @@ def top_worst_residuals(
     в ``ResidualRow.value/expected/residual`` записываются p.u.-значения.
     Для исходных единиц следует смотреть ``model.measurements[id].value``
     и ``estimated_si`` (заполнены ``write_measurement_estimates``).
+
+    Args:
+        network_pu: если задан — ``object_pos`` из ``meas_index``
+            разрешается в ``id`` объекта (``bus_ids``/``branch_ids``) для
+            ``ResidualRow.object_id``.
+        is_pseudo: (m,) bool в z-порядке — пометка псевдо-приоров.
     """
     if r.size == 0:
         return []
@@ -124,6 +132,14 @@ def top_worst_residuals(
         z_val = float(z[pos])
         r_val = float(r[pos])
         h_val = z_val - r_val
+        obj_kind = int(meas_index.object_kind[pos])
+        obj_pos = int(meas_index.object_pos[pos])
+        obj_id = 0
+        if network_pu is not None:
+            if obj_kind == 0 and 0 <= obj_pos < network_pu.n_bus:
+                obj_id = int(network_pu.bus_ids[obj_pos])
+            elif obj_kind == 1 and 0 <= obj_pos < network_pu.n_branch:
+                obj_id = int(network_pu.branch_ids[obj_pos])
         rows.append(
             ResidualRow(
                 measurement_id=int(meas_index.meas_id[pos]),
@@ -132,6 +148,11 @@ def top_worst_residuals(
                 expected=h_val,
                 residual=r_val,
                 normalized_residual=float(rn[pos]),
+                sigma=float(np.sqrt(sigma2[pos])),
+                object_kind=obj_kind,
+                object_id=obj_id,
+                branch_side=int(meas_index.branch_side[pos]),
+                is_pseudo=bool(is_pseudo[pos]) if is_pseudo is not None else False,
             )
         )
     return rows

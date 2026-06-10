@@ -92,7 +92,7 @@ class MeasurementIndex:
         object_kind: 0=Node / 1=Branch / 2=Generator.
         object_pos: позиционный индекс объекта.
         branch_side: сторона ветви (0=from, 1=to, -1=не ветвь).
-        meas_id: исходный ``Measurement.id`` — для записи ``estimated_value``
+        meas_id: исходный ``Measurement.id`` — для записи ``estimated_si``
             и ``residual`` обратно после сходимости.
     """
 

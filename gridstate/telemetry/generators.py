@@ -69,8 +69,20 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
     Читает ``gen.{node_id,status,power_output,reactive_output,power_min,power_max,
     reactive_min,reactive_max}`` и ``node.id``; пишет ``node.{generation_p,
     generation_q,generation_p_min,generation_p_max,generation_q_min,generation_q_max}``.
-    Возвращает ``{"updated_nodes":N,"active_gens":N,"off_gens":N,"missing_node":N}``.
+
+    Лимиты: суммируются только **валидные** пары; если хотя бы один
+    активный генератор узла несёт сентинел (|лимит| ≥ ``SENTINEL_ABS``,
+    «нет данных»), узловая пара помечается сентинелом ±9999 — диапазон
+    узла неизвестен. Раньше сентинелы суммировались как числа: реальный
+    диапазон [-50, 100] + сентинельный [-9999, 9999] давал мусор
+    [-10049, 10099] — узел либо терял box-var в IPM, либо ложно
+    классифицировался BUS-эквивалентом с tight-prior к нулю.
+
+    Возвращает ``{"updated_nodes":N,"active_gens":N,"off_gens":N,
+    "missing_node":N,"sentinel_p_nodes":N,"sentinel_q_nodes":N}``.
     """
+    from gridstate.bounds import is_sentinel
+
     node_pos: dict[int, int] = {int(nodes_arr[i]["id"]): i for i in range(len(nodes_arr))}
 
     stats = {
@@ -78,12 +90,17 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
         "active_gens": 0,
         "off_gens": 0,
         "missing_node": 0,
+        "sentinel_p_nodes": 0,
+        "sentinel_q_nodes": 0,
     }
 
     # Сначала обнуляем gen-поля у всех узлов, чтобы повторный вызов
     # давал стабильный результат (off-генераторы перестают учитываться).
     touched: set[int] = set()
     aggregates: dict[int, dict[str, float]] = {}
+    # Узлы, где хотя бы один генератор без валидной P/Q-пары лимитов.
+    p_unknown: set[int] = set()
+    q_unknown: set[int] = set()
 
     for i in range(len(gens_arr)):
         nid = int(gens_arr[i]["node_id"])
@@ -107,22 +124,44 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
         )
         agg["p"] += float(gens_arr[i]["power_output"])
         agg["q"] += float(gens_arr[i]["reactive_output"])
-        agg["p_min"] += float(gens_arr[i]["power_min"])
-        agg["p_max"] += float(gens_arr[i]["power_max"])
-        agg["q_min"] += float(gens_arr[i]["reactive_min"])
-        agg["q_max"] += float(gens_arr[i]["reactive_max"])
+
+        p_min = float(gens_arr[i]["power_min"])
+        p_max = float(gens_arr[i]["power_max"])
+        if is_sentinel(p_min) or is_sentinel(p_max):
+            p_unknown.add(nid)
+        else:
+            agg["p_min"] += p_min
+            agg["p_max"] += p_max
+
+        q_min = float(gens_arr[i]["reactive_min"])
+        q_max = float(gens_arr[i]["reactive_max"])
+        if is_sentinel(q_min) or is_sentinel(q_max):
+            q_unknown.add(nid)
+        else:
+            agg["q_min"] += q_min
+            agg["q_max"] += q_max
 
     for nid, agg in aggregates.items():
         i = node_pos[nid]
         nodes_arr[i]["generation_p"] = agg["p"]
         nodes_arr[i]["generation_q"] = agg["q"]
-        nodes_arr[i]["generation_p_min"] = agg["p_min"]
-        nodes_arr[i]["generation_p_max"] = agg["p_max"]
-        nodes_arr[i]["generation_q_min"] = agg["q_min"]
-        nodes_arr[i]["generation_q_max"] = agg["q_max"]
+        if nid in p_unknown:
+            nodes_arr[i]["generation_p_min"] = -9999.0
+            nodes_arr[i]["generation_p_max"] = 9999.0
+        else:
+            nodes_arr[i]["generation_p_min"] = agg["p_min"]
+            nodes_arr[i]["generation_p_max"] = agg["p_max"]
+        if nid in q_unknown:
+            nodes_arr[i]["generation_q_min"] = -9999.0
+            nodes_arr[i]["generation_q_max"] = 9999.0
+        else:
+            nodes_arr[i]["generation_q_min"] = agg["q_min"]
+            nodes_arr[i]["generation_q_max"] = agg["q_max"]
         touched.add(nid)
 
     stats["updated_nodes"] = len(touched)
+    stats["sentinel_p_nodes"] = len(p_unknown)
+    stats["sentinel_q_nodes"] = len(q_unknown)
     return stats
 
 
@@ -142,7 +181,10 @@ def aggregate_generators_to_node(model: Any) -> dict[str, int]:
     Off-генераторы исключаются из всех сумм (их Q-лимиты не объединяются
     в Q-диапазон узла). Узлы без active-генераторов остаются с теми
     значениями generation_p_min/max и generation_q_min/max что были до
-    вызова (NODE_DTYPE-default = 0).
+    вызова (NODE_DTYPE-default = 0). Сентинельные лимиты (±9999, «нет
+    данных») не суммируются: узел с хотя бы одним таким генератором
+    получает сентинельную пару — «диапазон неизвестен» (см.
+    ``_aggregate_generators_on_arrays``).
 
     Идемпотентна: повторный вызов даёт тот же результат, потому что
     суммы перезаписываются полностью (не аккумулируются).

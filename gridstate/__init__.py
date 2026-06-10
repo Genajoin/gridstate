@@ -19,6 +19,7 @@ from gridstate.contract.serialize import (
     load_se_input_npz,
     save_se_input,
 )
+from gridstate.losses import BranchLossRow, SystemLosses, compute_system_losses
 from gridstate.pipeline import (
     PipelineConfig,
 )
@@ -59,6 +60,7 @@ except PackageNotFoundError:  # pragma: no cover - un-installed source tree
 
 __all__ = [
     "BadDataResult",
+    "BranchLossRow",
     "Chi2Result",
     "Chi2Summary",
     "ImbalanceRow",
@@ -69,10 +71,12 @@ __all__ = [
     "SEInput",
     "SEOutput",
     "SEResult",
+    "SystemLosses",
     "__version__",
     "analyze_observability",
     "chi2_analysis",
     "compute_normalized_residuals_report",
+    "compute_system_losses",
     "estimate",
     "load_se_input",
     "load_se_input_npz",

@@ -239,3 +239,79 @@ class TestWLSEquivalence:
         )
         assert result.iterations_outer == 1
         assert result.mu_final == 0.0  # WLS-режим обнуляет μ
+
+
+class TestConvergenceStatus:
+    """Двухуровневый статус: kkt / completed / stalled / error."""
+
+    @staticmethod
+    def _problem(z_value: float):
+        z = np.array([z_value])
+        r_inv = np.array([1.0])
+
+        def residual(x: np.ndarray) -> np.ndarray:
+            return z - np.array([x[0]])
+
+        def jac(x: np.ndarray) -> csr_matrix:
+            return csr_matrix(np.array([[1.0]]))
+
+        return residual, jac, r_inv
+
+    def test_clean_convergence_is_kkt(self) -> None:
+        residual, jac, r_inv = self._problem(3.0)
+        result = solve_ipm(
+            x_init=np.array([0.5]),
+            residual_fn=residual,
+            jacobian_fn=jac,
+            r_inv_diag=r_inv,
+            box_idx=np.array([0]),
+            box_lo=np.array([0.0]),
+            box_hi=np.array([10.0]),
+        )
+        assert result.status == "kkt"
+        assert result.success
+
+    def test_schedule_done_loose_kkt_is_completed_and_success(self) -> None:
+        """μ-расписание пройдено, но строгий KKT не достигнут → completed,
+        success=True (раньше — ложный «не сошёлся»)."""
+        residual, jac, r_inv = self._problem(10.0)
+        # Активная граница + крошечный inner_max: grad у барьера не
+        # успевает стать < tol, но μ доходит до mu_min.
+        result = solve_ipm(
+            x_init=np.array([1.0]),
+            residual_fn=residual,
+            jacobian_fn=jac,
+            r_inv_diag=r_inv,
+            box_idx=np.array([0]),
+            box_lo=np.array([0.0]),
+            box_hi=np.array([2.0]),
+            inner_tol=1e-12,  # заведомо недостижимый строгий порог
+            outer_max=200,
+        )
+        assert result.mu_final <= 1e-6
+        if result.status != "kkt":  # при экстремальном tol ожидаем completed
+            assert result.status == "completed"
+            assert result.success
+        assert "μ_final" in result.message
+
+    def test_error_status_on_nonfinite(self) -> None:
+        z = np.array([3.0])
+        r_inv = np.array([1.0])
+
+        def residual(x: np.ndarray) -> np.ndarray:
+            return z - np.array([x[0]])
+
+        def jac_bad(x: np.ndarray) -> csr_matrix:
+            return csr_matrix(np.array([[np.nan]]))  # nan → non-finite шаг
+
+        result = solve_ipm(
+            x_init=np.array([0.5]),
+            residual_fn=residual,
+            jacobian_fn=jac_bad,
+            r_inv_diag=r_inv,
+            box_idx=np.array([0]),
+            box_lo=np.array([0.0]),
+            box_hi=np.array([10.0]),
+        )
+        assert result.status == "error"
+        assert not result.success
