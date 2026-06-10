@@ -410,6 +410,11 @@ class Step:
     fn: Callable[[_Ctx], dict | None]
     toggle: str | None = None  # имя bool-поля cfg; None = всегда вкл
     needs_xml: bool = False
+    # Сетевая деривация: шаг мутирует ТОЛЬКО сетевые таблицы (nodes/branches/
+    # generators — статусы, tap, R/X/G/B, шунты, типы узлов), не measurements.
+    # Подмножество network=True исполняется prepare_network() для
+    # материализации решаемой сети без прогона SE («одна сеть» для SE/PF).
+    network: bool = False
 
 
 def _effective_huber_c(cfg: PipelineConfig) -> float:
@@ -634,6 +639,7 @@ STEPS: list[Step] = [
         "volt-aware X_pu для R=X=0 ветвей.",
         _s_normalize_breakers,
         toggle="normalize_breakers",
+        network=True,
     ),
     Step(
         "snapshot",
@@ -651,6 +657,7 @@ STEPS: list[Step] = [
         _s_voltage_nominal,
         toggle="apply_voltage_nominal",
         needs_xml=True,
+        network=True,
     ),
     Step(
         "topology",
@@ -660,6 +667,7 @@ STEPS: list[Step] = [
         _s_topology,
         toggle="apply_topology",
         needs_xml=True,
+        network=True,
     ),
     Step(
         "rpn",
@@ -669,6 +677,7 @@ STEPS: list[Step] = [
         _s_rpn,
         toggle="apply_rpn",
         needs_xml=True,
+        network=True,
     ),
     Step(
         "reactors",
@@ -677,6 +686,7 @@ STEPS: list[Step] = [
         "apply_reactors_to_node_shunt.",
         _s_reactors,
         toggle="apply_reactors",
+        network=True,
     ),
     Step(
         "telemetry",
@@ -694,6 +704,7 @@ STEPS: list[Step] = [
         "refine_slack_to_one.",
         _s_refine_slack,
         toggle="refine_slack",
+        network=True,
     ),
     Step(
         "refine_node_types",
@@ -702,6 +713,7 @@ STEPS: list[Step] = [
         "refine_node_types_from_generators.",
         _s_refine_node_types,
         toggle="refine_node_types",
+        network=True,
     ),
     Step(
         "disable_orphan_branches",
@@ -710,6 +722,7 @@ STEPS: list[Step] = [
         "disable_orphan_branches.",
         _s_disable_orphan_branches,
         toggle="disable_orphan_branches",
+        network=True,
     ),
     Step(
         "disable_disconnected",
@@ -718,6 +731,7 @@ STEPS: list[Step] = [
         "disable_disconnected_components + повтор orphan-branches (H46).",
         _s_disable_disconnected,
         toggle="disable_disconnected",
+        network=True,
     ),
     Step(
         "disable_isolated",
@@ -726,6 +740,7 @@ STEPS: list[Step] = [
         "disable_isolated_nodes.",
         _s_disable_isolated,
         toggle="disable_isolated",
+        network=True,
     ),
     Step(
         "generator_status",
@@ -734,6 +749,7 @@ STEPS: list[Step] = [
         "apply_generator_status_from_node.",
         _s_generator_status,
         toggle="apply_generator_status",
+        network=True,
     ),
     # --- этап B: отбраковка измерений + режим + псевдо ---
     Step(
@@ -1025,6 +1041,75 @@ def run(
     )
     assert ctx.result is not None  # _s_estimate (без toggle) всегда заполняет result
     return ctx.result
+
+
+def prepare_network(
+    model: Any,
+    *,
+    config: PipelineConfig | None = None,
+    derived: DerivedInputs | None = None,
+    on_event: Callable[[dict], None] | None = None,
+) -> Working:
+    """Выполнить ТОЛЬКО сетевые деривации пайплайна и вернуть ``Working``.
+
+    Исполняет подмножество ``STEPS`` с ``network=True`` (нормализация
+    выключателей, Vnom, ON_LINE-топология, РПН, реакторы, slack/типы узлов,
+    каскады статусов, статусы генераторов) — без телеметрии, псевдо-мер и
+    солвера. Результат — сеть в том состоянии, в котором её решает SE.
+
+    Назначение — материализация «одной сети» (см. cspase): перенос
+    полученного сетевого состояния в модель-носитель делает вход
+    консистентным для SE/PF/последующих расчётов; сами деривации
+    идемпотентны на материализованной сети (повторный прогон — no-op),
+    поэтому последующий полный ``run`` даёт бит-в-бит тот же результат.
+
+    Args:
+        model: носитель контрактных таблиц (как у :func:`run`). НЕ мутируется.
+        config: :class:`PipelineConfig` — уважаются те же toggle'ы.
+        derived: числовые планы; без них needs_xml-шаги пропускаются.
+        on_event: callback прогресса (события как у :func:`run`).
+
+    Returns:
+        ``Working`` — рабочая копия с применёнными сетевыми деривациями.
+    """
+    cfg = config or PipelineConfig()
+    working: Working = _build_working(model)
+    ctx = _Ctx(model=working, cfg=cfg)
+    if derived is not None:
+        ctx.derived = derived
+
+    for step in STEPS:
+        if not step.network:
+            continue
+        if step.toggle is not None and not getattr(cfg, step.toggle):
+            _emit(
+                on_event,
+                {
+                    "type": "step_skipped",
+                    "name": step.name,
+                    "reason": f"отключено ({step.toggle}=False)",
+                },
+            )
+            continue
+        if step.needs_xml and ctx.derived is None:
+            _emit(
+                on_event,
+                {"type": "step_skipped", "name": step.name, "reason": "нет XML-деривации"},
+            )
+            continue
+        _emit(on_event, {"type": "step_start", "name": step.name})
+        t0 = time.monotonic()
+        stats = step.fn(ctx) or {}
+        _emit(
+            on_event,
+            {
+                "type": "step_done",
+                "name": step.name,
+                "stats": stats,
+                "duration_ms": int((time.monotonic() - t0) * 1000),
+            },
+        )
+    return working
 
 
 # ---------------------------------------------------------------------------

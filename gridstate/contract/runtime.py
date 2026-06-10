@@ -224,3 +224,30 @@ def run(
         init_state=prev,
     )
     return SEOutput.from_result(result)
+
+
+def prepare_network(
+    se_input: SEInput,
+    *,
+    config: Any = None,
+    on_event: Callable[[dict], None] | None = None,
+    validate: bool = True,
+) -> Any:
+    """Контрактная обёртка :func:`gridstate.pipeline.prepare_network`.
+
+    Выполняет ТОЛЬКО сетевые деривации пайплайна (топология/РПН/реакторы/
+    нормализация/каскады статусов) над входным контрактом и возвращает
+    ``Working`` — сеть в том состоянии, в котором её решает SE. Сам
+    ``se_input`` не мутируется. Применение результата к модели-носителю —
+    забота адаптера (см. cspase ``materialize_network``).
+    """
+    from gridstate.pipeline import prepare_network as _pipeline_prepare
+
+    if validate:
+        se_input.validate(strict=True)
+    return _pipeline_prepare(
+        se_input.model,
+        config=config,
+        derived=se_input.derived,
+        on_event=on_event,
+    )

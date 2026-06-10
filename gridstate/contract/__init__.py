@@ -20,6 +20,7 @@ from gridstate.contract.runtime import (
     SEInput,
     SEOutput,
     load_se_input,
+    prepare_network,
     run,
 )
 from gridstate.contract.tables import (
@@ -86,6 +87,7 @@ __all__ = [
     "current_version",
     "is_data_compatible",
     "load_se_input",
+    "prepare_network",
     "run",
     "validate_input",
 ]
