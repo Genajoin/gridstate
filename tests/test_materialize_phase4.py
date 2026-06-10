@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from gridstate.contract import SE_INPUT
-from gridstate.telemetry.xml_args import _materialize_area_on_arrays
+from gridstate.telemetry.apply_resolved import _materialize_area_on_arrays
 
 
 # Поле «нагрузка P» как репрезентативный канал (адаптер вызывает ядро 4× для

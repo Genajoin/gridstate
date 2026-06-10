@@ -14,19 +14,19 @@ import numpy as np
 import pytest
 
 from gridstate.contract import SE_INPUT
+from gridstate.telemetry.apply_resolved import _apply_telemetry_on_arrays
 from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_GOOD, QUALITY_QUESTIONABLE
 from gridstate.telemetry.units import (
     variance_branch_q,
     variance_power,
     variance_voltage,
 )
-from gridstate.telemetry.xml_args import _apply_telemetry_on_arrays
 
 
 OT_NODE, OT_BRANCH = 0, 1
 MT_P, MT_Q, MT_V, MT_PINJ, MT_QINJ = 0, 1, 2, 4, 5
 
-# _KIND_MAP (xml_args): U→(0,2,-1), PBEG→(1,0,0), PEND→(1,0,+1),
+# _KIND_MAP (_specs): U→(0,2,-1), PBEG→(1,0,0), PEND→(1,0,+1),
 #                       QBEG→(1,1,0), QEND→(1,1,+1).
 
 

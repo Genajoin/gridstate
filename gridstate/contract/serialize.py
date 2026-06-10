@@ -9,9 +9,9 @@
 * контрактные таблицы ``SE_INPUT`` — ``nodes`` / ``branches`` / ``measurements`` /
   ``generators`` + доменные ``tap_steps`` / ``load_characteristics`` / ``shunts``
   (структурированные numpy-массивы);
-* :class:`~gridstate.contract.derived.DerivedInputs` — 5 числовых планов (топология / РПН /
-  телеметрия / материализация / Vnom), результат обработки источника. ``snapshot``
-  НЕ сохраняется: ядро его не читает (только косметический счётчик ``unique_guids``).
+* :class:`~gridstate.contract.derived.DerivedInputs` — числовые планы (топология /
+  телеметрия / материализация / Vnom), результат обработки источника. Применение РПН
+  идёт через входную таблицу ``tap_steps``, а не через ``DerivedInputs``.
 
 Загрузчик восстанавливает рабочий слой через :meth:`gridstate.working.Working.from_arrays`
 (конструктор из массивов) → ``run()`` исполняется без внешних зависимостей.
@@ -54,35 +54,27 @@ def _schema_map() -> dict[str, Any]:
 
 
 def _derived_to_blob(derived: Any) -> dict | None:
-    """``DerivedInputs`` → сериализуемый dict (без ``snapshot`` — ядру не нужен)."""
+    """``DerivedInputs`` → сериализуемый dict (числовые планы шагов)."""
     if derived is None:
         return None
     return {
         "topology_resolved": derived.topology_resolved,
-        "rpn_resolved": derived.rpn_resolved,
         "telemetry_resolved": derived.telemetry_resolved,
         "telemetry_arg_keys": derived.telemetry_arg_keys,
         "telemetry_total_args": derived.telemetry_total_args,
         "materialize_obs": derived.materialize_obs,
         "voltage_nominal": derived.voltage_nominal,
-        "snapshot_size": len(derived.snapshot) if derived.snapshot else 0,
     }
 
 
 def _blob_to_derived(blob: dict | None) -> Any:
-    """Сериализованный dict → ``DerivedInputs`` (``snapshot`` восстанавливается пустым).
-
-    ``snapshot`` ядро не читает (см. модульный docstring) — пустой dict даёт лишь
-    ``unique_guids=0`` в репорте шага телеметрии (косметика), прогон идентичен.
-    """
+    """Сериализованный dict → ``DerivedInputs`` (числовые планы шагов)."""
     if blob is None:
         return None
     from gridstate.contract.derived import DerivedInputs
 
     return DerivedInputs(
-        snapshot={},
         topology_resolved=blob["topology_resolved"],
-        rpn_resolved=blob["rpn_resolved"],
         telemetry_resolved=blob["telemetry_resolved"],
         telemetry_arg_keys=blob["telemetry_arg_keys"],
         telemetry_total_args=blob["telemetry_total_args"],

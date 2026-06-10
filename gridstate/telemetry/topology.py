@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-from gridstate.telemetry._specs import RpnSpec
 from gridstate.telemetry.generators import (
     aggregate_generators_to_node,
     apply_generator_status_from_node,
@@ -28,7 +27,6 @@ from gridstate.telemetry.shunts import (
 
 
 __all__ = [
-    "RpnSpec",
     "aggregate_generators_to_node",
     "apply_generator_status_from_node",
     "apply_reactors_to_node_shunt",

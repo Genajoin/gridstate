@@ -1,53 +1,15 @@
-"""Спецификации привязок телеметрии + kind-маппинги (prep-слой).
+"""Kind-карты телеметрии: kind-код замера → семантика (object_type / mt / side / sign).
 
-Дата-классы привязок измерения → переменные (``ArgEntry``/``FormulaSpec``/``RpnSpec``)
-+ чистые kind→семантика карты (``_KIND_MAP``/``_NODE_INJ_MAP``/``_INJ_MT``). Чистый
-stdlib — потребляются контрактными ядрами prep-слоя (``_apply_telemetry_on_arrays`` /
-``assign_cod`` / ``_materialize_area_on_arrays``).
+Чистые stdlib-таблицы, потребляемые контрактным ядром z-вектора
+(``gridstate.telemetry.apply_resolved._apply_telemetry_on_arrays``): связывают
+строковый kind замера с числовыми координатами в ``SE_INPUT.measurements``.
+
+Дата-классы привязок (``ArgEntry`` / ``FormulaSpec`` / ``RpnSpec``) — формат-специфика
+приёмного слоя источника и живут во внешнем адаптере данных, а НЕ в публичном ядре:
+ядро получает уже вычисленные числовые планы (``DerivedInputs``), не зная их формата.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass, field
-
-
-@dataclass
-class ArgEntry:
-    """Одна именованная ARG-привязка переменной к источнику замера."""
-
-    name: str
-    guid: str
-    invert: bool
-    numer: str = ""  # номер SCADA-сигнала (id кластера дублей)
-
-
-@dataclass
-class FormulaSpec:
-    """Выражение + список ARG-привязок одного attachment измерения.
-
-    Один attachment содержит:
-
-    * ``formula`` — выражение;
-    * 0..N ``ArgEntry`` — переменные выражения.
-
-    Семантика: подставляем ``ARG.name → value(ARG.guid, snapshot)``,
-    инвертируем по ``invert``, вычисляем выражение.
-    """
-
-    formula: str
-    args: list[ArgEntry] = field(default_factory=list)
-
-    @property
-    def first_guid(self) -> str:
-        return self.args[0].guid if self.args else ""
-
-    @property
-    def first_invert(self) -> bool:
-        return self.args[0].invert if self.args else False
-
-
-# Backward-compat alias: одиночный-ARG спецификатор маппится на FormulaSpec.first_*.
-ArgRef = FormulaSpec
 
 
 # kind → (object_type, measurement_type, branch_side, sign)
@@ -73,28 +35,3 @@ _NODE_INJ_MAP: dict[str, tuple[str, int]] = {
 }
 
 _INJ_MT = {"P": 4, "Q": 5}
-
-
-@dataclass(frozen=True)
-class RpnSpec:
-    """Спецификация РПН (регулирование под нагрузкой) одной ветви.
-
-    Привязывает ``branch_id`` (= OBJ_ID в ``model.branches``) к ARG-ссылкам
-    на TM-значения номеров отпаек продольного (``NUM_A``) и поперечного
-    (``NUM_R``) РПН и к таблице ``SHEMA_KTR`` через ``type_rpn``.
-
-    Attributes:
-        branch_id: OBJ_ID ветви (= ``model.branches.id``).
-        type_rpn: тип РПН (ключ в ``SHEMA_KTR``).
-        formula_x: выражение продольного № анцапф.
-        args_x: ARG-ы выражения X.
-        formula_y: выражение поперечного (ВДТ); ``""`` если нет.
-        args_y: ARG-ы выражения Y.
-    """
-
-    branch_id: int
-    type_rpn: int
-    formula_x: str
-    args_x: tuple[ArgEntry, ...]
-    formula_y: str
-    args_y: tuple[ArgEntry, ...]

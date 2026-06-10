@@ -145,7 +145,7 @@ _BUILD_MODEL_SRC = textwrap.dedent(
 )
 
 
-# Конфиг без формат-зависимостей: materialize выключен (needs_xml-шаг и так
+# Конфиг без формат-зависимостей: materialize выключен (needs_derived-шаг и так
 # пропустится без планов, но явно отключаем, чтобы не зависеть от этого).
 _RUN_SRC = textwrap.dedent(
     """

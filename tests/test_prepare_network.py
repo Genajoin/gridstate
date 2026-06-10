@@ -39,7 +39,7 @@ def test_network_steps_marked() -> None:
     assert {s.name for s in STEPS if s.network} == expected
     # Мер-шаги и солвер — НЕ network.
     non_network = {s.name for s in STEPS if not s.network}
-    for name in ("snapshot", "telemetry", "add_pseudo", "estimate"):
+    for name in ("telemetry", "add_pseudo", "estimate"):
         assert name in non_network
 
 

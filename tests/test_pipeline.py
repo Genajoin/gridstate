@@ -34,7 +34,7 @@ def test_manifest_steps_have_required_fields():
             "optional",
             "toggle",
             "default_enabled",
-            "needs_xml",
+            "needs_derived",
         }
         # optional ⟺ есть toggle-поле
         assert s["optional"] == (s["toggle"] is not None)

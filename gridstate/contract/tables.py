@@ -178,20 +178,13 @@ NODES = TableSchema(
             doc="Узел может нести генерацию — write-split, IPM box, PV-promotion.",
         ),
         ColumnSpec(
-            "sxn_id",
-            "i4",
-            Role.INPUT,
-            required=False,
-            doc="Ссылка на load_models — характеристика P(V)/Q(V) (raw-путь).",
-        ),
-        ColumnSpec(
             "load_model_id",
             "i4",
             Role.INPUT,
             required=False,
             doc=(
-                "Ссылка на load_characteristics.id (0-based, -1=нет). Формат-агностичная "
-                "замена sxn_id; читает apply_load_characteristic."
+                "Ссылка на load_characteristics.id (0-based, -1=нет) — характеристика "
+                "P(V)/Q(V) узла; читает apply_load_characteristic."
             ),
         ),
         ColumnSpec(
@@ -458,16 +451,6 @@ MEASUREMENTS = TableSchema(
             "max_value", "f8", Role.INPUT, required=False, doc="Верхняя достоверная граница."
         ),
         ColumnSpec("name", "U128", Role.INPUT, required=False, doc="Имя измерения."),
-        ColumnSpec("formula", "U256", Role.INPUT, required=False, doc="FORMULE из XML."),
-        ColumnSpec(
-            "source_numer", "i4", Role.INPUT, required=False, doc="NUMER аргумента источника."
-        ),
-        ColumnSpec(
-            "tip_ti", "U16", Role.INPUT, required=False, doc="Категория ТИ из эталонной SE."
-        ),
-        ColumnSpec("prv_num", "U16", Role.INPUT, required=False, doc="Номер провайдера."),
-        ColumnSpec("validity_timeout", "i4", Role.INPUT, required=False, doc="VALIDITYTIMEOUTSEC."),
-        ColumnSpec("guid_measurement", "U40", Role.INPUT, required=False, doc="GUID измерения."),
         # --- вход, мутируемый/деривируемый препроцессингом ---
         ColumnSpec(
             "value", "f8", Role.WORKING, doc="Значение меры. Пишут телеметрия/материализация."
@@ -499,8 +482,13 @@ MEASUREMENTS = TableSchema(
         ),
         ColumnSpec("is_pseudo", "bool", Role.WORKING, doc="Псевдо-приор (add_pseudo/синтез)."),
         ColumnSpec("filter_flag", "i1", Role.WORKING, doc="Причина деактивации (0=ok, …)."),
-        ColumnSpec("source_code", "U16", Role.WORKING, doc="Код источника СКАДА (CK2011)."),
-        ColumnSpec("source_guid", "U40", Role.WORKING, doc="GUID источника (CKGUID)."),
+        ColumnSpec(
+            "source_code",
+            "U16",
+            Role.WORKING,
+            doc="Метка происхождения меры (источник/препроцессинг).",
+        ),
+        ColumnSpec("source_guid", "U40", Role.WORKING, doc="GUID источника данных."),
     ),
 )
 

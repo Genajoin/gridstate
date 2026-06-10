@@ -67,7 +67,7 @@ def variance_branch_q(
 
     где ``charging_mvar = |B_si|·Vn²`` (полная зарядная, см.
     :func:`gridstate.telemetry.loss_filter.compute_expected_q_imbalance_mvar`).
-    Зеркалит инлайн-логику ``apply_telemetry`` (``gridstate.telemetry.xml_args``)
+    Зеркалит инлайн-логику ``apply_telemetry`` (``gridstate.telemetry.apply_resolved``)
     и используется в Цех-2/3-мосте ``build_measurements_from_ti``.
 
     Args:

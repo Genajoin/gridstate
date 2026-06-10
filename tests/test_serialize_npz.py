@@ -118,13 +118,11 @@ def test_domain_tables_absent_loads_empty(tmp_path):
 
 
 def test_roundtrip_derived_plans(tmp_path):
-    """``DerivedInputs`` (5 планов) восстанавливаются; ``snapshot`` → пустой (ядру не нужен)."""
+    """``DerivedInputs`` (числовые планы шагов) восстанавливаются round-trip."""
     from gridstate.contract.derived import DerivedInputs
 
     derived = DerivedInputs(
-        snapshot={"abc": object()},  # должен НЕ сериализоваться (ядро его не читает)
         topology_resolved=[("LINE", 100, False, None), ("NODE", 2, True, None)],
-        rpn_resolved=([(100, 5, 3, 7)], 2, 1),
         telemetry_resolved={(1, "PN"): (12.5, 2, "guid-1", 0), (100, "QBEG"): (-3.0, 1, "g2", 1)},
         telemetry_arg_keys=[(1, "PN"), (100, "QBEG")],
         telemetry_total_args=42,
@@ -137,13 +135,11 @@ def test_roundtrip_derived_plans(tmp_path):
 
     assert d is not None
     assert d.topology_resolved == derived.topology_resolved
-    assert d.rpn_resolved == derived.rpn_resolved
     assert d.telemetry_resolved == derived.telemetry_resolved
     assert d.telemetry_arg_keys == derived.telemetry_arg_keys
     assert d.telemetry_total_args == derived.telemetry_total_args
     assert d.materialize_obs == derived.materialize_obs
     assert d.voltage_nominal == derived.voltage_nominal
-    assert d.snapshot == {}  # по дизайну не переносится
 
 
 @pytest.mark.parametrize("algorithm", ["wls", "ipm"])
