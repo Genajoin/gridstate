@@ -172,6 +172,7 @@ def load_se_input_npz(path: str | Path) -> SEInput:
     """
     from gridstate.contract import SE_INPUT, SE_OUTPUT
     from gridstate.contract.runtime import SEInput
+    from gridstate.contract.version import CONTRACT_VERSION, is_data_compatible
     from gridstate.working import Working
 
     with np.load(path, allow_pickle=False) as npz:
@@ -194,6 +195,17 @@ def load_se_input_npz(path: str | Path) -> SEInput:
         )
         blob = pickle.loads(bytes(npz[_DERIVED_KEY])) if _DERIVED_KEY in files else None
         contract_version = str(npz[_META_KEY]) if _META_KEY in files else None
+
+    # Граница входа: версия данных в файле должна быть совместима со встроенным
+    # контрактом библиотеки. Падаем РАНО и ЯВНО (а не тихо грузим несовместимую
+    # схему, которая упадёт глубже в пайплайне непонятной ошибкой).
+    if contract_version is not None and not is_data_compatible(contract_version):
+        raise ValueError(
+            f"Несовместимая версия контракта в npz {Path(path).name!r}: "
+            f"файл собран под {contract_version}, библиотека ожидает "
+            f"{CONTRACT_VERSION} (major должны совпадать). "
+            f"Перегенерируйте npz актуальным инструментом-источником."
+        )
 
     derived = _blob_to_derived(blob)
     kwargs: dict[str, Any] = {"model": working, "derived": derived}

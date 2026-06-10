@@ -27,10 +27,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-# Текущая версия контракта данных SE. Стартуем с 1.0.0 — первая явная фиксация
-# контракта. Бамп — по политике выше; синхронно обновлять при изменении
-# :mod:`gridstate.contract.tables`.
-CONTRACT_VERSION = "1.0.0"
+# Текущая версия контракта данных SE. 2.0.0 — заморозка канонического контракта
+# после G2-чистки (удалены поля formula/source_numer/tip_ti/prv_num/
+# validity_timeout/guid_measurement, NODES.sxn_id, DerivedInputs.snapshot/
+# rpn_resolved) — ломающее изменение схемы (MAJOR-бамп). Бамп — по политике выше;
+# синхронно обновлять при изменении :mod:`gridstate.contract.tables`.
+CONTRACT_VERSION = "2.0.0"
 
 # Ключ, под которым версия контракта кладётся в метаданные данных
 # (``model.metadata`` / будущий ``SEInput.meta``). Валидатор читает его на входе.

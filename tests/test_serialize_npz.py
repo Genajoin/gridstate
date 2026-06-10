@@ -142,6 +142,46 @@ def test_roundtrip_derived_plans(tmp_path):
     assert d.voltage_nominal == derived.voltage_nominal
 
 
+def _rewrite_contract_version(path, new_version: str):
+    """Перезаписать ``__contract_version__`` в npz (остальное — без изменений)."""
+    with np.load(path, allow_pickle=False) as npz:
+        arrays = {k: npz[k] for k in npz.files}
+    arrays["__contract_version__"] = np.asarray(str(new_version))
+    np.savez_compressed(path, **arrays)
+
+
+def test_load_npz_raises_on_incompatible_version(tmp_path):
+    """Загрузка npz с несовместимым (другой major) contract_version падает явно.
+
+    Граница входа обязана отбраковать данные старой схемы (например, под
+    контракт 1.0.0 после заморозки 2.0.0), а не молча грузить несовместимую
+    структуру, которая упадёт глубже непонятной ошибкой.
+    """
+    from gridstate.contract.version import current_version
+
+    se_in = SEInput.from_model(_make_model())
+    p = save_se_input(se_in, tmp_path / "stale.npz")
+
+    incompatible = f"{current_version().major - 1 if current_version().major > 0 else current_version().major + 1}.0.0"
+    _rewrite_contract_version(p, incompatible)
+
+    with pytest.raises(ValueError) as exc:
+        load_se_input_npz(p)
+    msg = str(exc.value)
+    # Сообщение несёт обе версии и подсказку перегенерировать.
+    assert incompatible in msg
+    assert "перегенерируйте" in msg.lower()
+
+
+def test_load_npz_accepts_current_version(tmp_path):
+    """Sanity: npz, собранный текущим контрактом, грузится без ошибки версии."""
+    se_in = SEInput.from_model(_make_model())
+    p = save_se_input(se_in, tmp_path / "fresh.npz")
+    # Не должно бросать — версия совпадает со встроенной.
+    se_out = load_se_input_npz(p)
+    assert se_out.contract_version == se_in.contract_version
+
+
 @pytest.mark.parametrize("algorithm", ["wls", "ipm"])
 def test_run_bit_identical_via_npz(tmp_path, algorithm):
     """End-to-end: ``run`` из npz ≡ ``run`` из исходной модели (бит-в-бит)."""
