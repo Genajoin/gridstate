@@ -68,7 +68,7 @@ def test_prepare_network_applies_network_steps() -> None:
 
 
 def _materialize(target, prepared) -> None:
-    """Имитация cspase ``materialize_network``: перенос сетевого состояния.
+    """Имитация материализации сети внешним адаптером: перенос сетевого состояния.
 
     Протокол переноса (контракт C2): статусы узлов/ветвей, электрические
     параметры ветвей (tap/R/X/G/B), типы узлов. Узловые ``shunt_g/b`` НЕ

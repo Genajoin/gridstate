@@ -239,7 +239,7 @@ def prepare_network(
     нормализация/каскады статусов) над входным контрактом и возвращает
     ``Working`` — сеть в том состоянии, в котором её решает SE. Сам
     ``se_input`` не мутируется. Применение результата к модели-носителю —
-    забота адаптера (см. cspase ``materialize_network``).
+    забота внешнего адаптера.
     """
     from gridstate.pipeline import prepare_network as _pipeline_prepare
 
