@@ -692,6 +692,10 @@ STEPS: list[Step] = [
         "Применить план № отпаек → динамический tap_ratio.",
         _s_rpn,
         toggle="apply_rpn",
+        # needs_derived — наследие: выбор отпайки давно едет через входную
+        # таблицу tap_steps (производитель данных), derived шаг не читает.
+        # Флаг оставлен сознательно (бит-в-бит): derived=None означает
+        # «вход без деривации», и применять РПН на таком входе не нужно.
         needs_derived=True,
         network=True,
     ),
@@ -704,6 +708,8 @@ STEPS: list[Step] = [
         toggle="apply_reactors",
         network=True,
     ),
+    # ИНВАРИАНТ ПОРЯДКА: telemetry строго ПОСЛЕ rpn — применение z-вектора
+    # читает branch.susceptance, который H30-шунт-факторизация РПН меняет.
     Step(
         "telemetry",
         "Телеметрия (z-вектор)",
@@ -792,6 +798,11 @@ STEPS: list[Step] = [
         _s_refine_node_types,
         toggle="refine_node_types",
     ),
+    # ИНВАРИАНТ ПОРЯДКА (цепочка из 4 шагов, перестановка молча меняет числа):
+    # aggregate_generators (перезаписывает node.generation_* суммой активных
+    # генераторов) → materialize (наблюдаемый режим поверх) → add_pseudo
+    # (P/Q-приоры читают итоговые pg−pn) → flow_sigma_floor (селектор
+    # is_pseudo==0 требует, чтобы все псевдо-меры уже были добавлены).
     Step(
         "aggregate_generators",
         "Агрегировать генераторы к узлу",
@@ -877,6 +888,48 @@ STEPS: list[Step] = [
 # ---------------------------------------------------------------------------
 # Исполнение
 # ---------------------------------------------------------------------------
+
+# Страж согласованности config ↔ derived («cfg дважды»): производитель планов
+# и исполнитель шагов обязаны гейтиться ОДНИМ конфигом. Если включённый шаг
+# не получил свой план — это рассинхрон конфигов (derive с одним cfg, run с
+# другим), а не легальный вход; падаем рано и понятно, не assert'ом внутри
+# шага. materialize здесь сознательно НЕ перечислен: его план опционален
+# (шаг мягко скипается с reason — легальный вход без наблюдаемого режима).
+_REQUIRED_DERIVED_PLANS: dict[str, tuple[str, ...]] = {
+    "voltage_nominal": ("voltage_nominal",),
+    "topology": ("topology_resolved",),
+    "telemetry": ("telemetry_resolved", "telemetry_arg_keys"),
+}
+
+
+def _check_derived_consistency(
+    cfg: PipelineConfig, derived: DerivedInputs, *, network_only: bool = False
+) -> None:
+    """Проверить, что каждый включённый needs_derived-шаг получил свой план.
+
+    Вызывается только при ``derived is not None`` (вход без деривации легален —
+    needs_derived-шаги тогда пропускаются целиком).
+    """
+    missing: list[str] = []
+    for step in STEPS:
+        plans = _REQUIRED_DERIVED_PLANS.get(step.name)
+        if not plans:
+            continue
+        if network_only and not step.network:
+            continue
+        if step.toggle is not None and not getattr(cfg, step.toggle):
+            continue
+        missing.extend(
+            f"шаг '{step.name}' включён, derived.{attr} отсутствует"
+            for attr in plans
+            if getattr(derived, attr, None) is None
+        )
+    if missing:
+        raise ValueError(
+            "Рассинхрон config ↔ derived: "
+            + "; ".join(missing)
+            + ". Деривация планов и прогон обязаны гейтиться одним и тем же config."
+        )
 
 
 def _emit(on_event: Callable[[dict], None] | None, event: dict) -> None:
@@ -1006,6 +1059,7 @@ def run(
     # контрактными ядрами на своих позициях. Если планов нет — needs_derived-шаги
     # пропускаются (модель должна уже нести измерения).
     if derived is not None:
+        _check_derived_consistency(cfg, derived)
         ctx.derived = derived
 
     _emit(
@@ -1099,6 +1153,7 @@ def prepare_network(
     working: Working = _build_working(model)
     ctx = _Ctx(model=working, cfg=cfg)
     if derived is not None:
+        _check_derived_consistency(cfg, derived, network_only=True)
         ctx.derived = derived
 
     for step in STEPS:
