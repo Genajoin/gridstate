@@ -49,6 +49,7 @@ from gridstate.preprocessing import (
 from gridstate.result import SEResult
 from gridstate.telemetry import (
     aggregate_generators_to_node,
+    apply_flow_sigma_floor,
     apply_generator_status_from_node,
     apply_reactors_to_node_shunt,
     apply_voltage_meas_calibration_for_gen_nodes,
@@ -197,6 +198,18 @@ class PipelineConfig:
         group=_G_XML,
         label="Калибровка σ² V ген-узлов",
         help="apply_voltage_meas_calibration_for_gen_nodes.",
+    )
+    flow_sigma_floor_kv_frac: float | None = _param(
+        None,
+        group=_G_XML,
+        label="σ-floor flow-мер (доля шкалы)",
+        control="number",
+        min=0.0,
+        max=1.0,
+        help="σ_min real branch-flow мер P/Q = доля шкалы канала √3·Vn·1кА "
+        "(Vn ветви = max(Vn концов)): variance := max(variance, floor²). "
+        "Лечит пере-доверие мелким потокам (σ≈α·|z| занижена при малых z). "
+        "None = выключено; 0.010 = 1 % шкалы (110 кВ → 1.9 МВт, 500 кВ → 8.7 МВт).",
     )
 
     # --- Режим ---
@@ -567,6 +580,16 @@ def _s_add_pseudo(ctx: _Ctx) -> dict:
     )
 
 
+def _s_flow_sigma_floor(ctx: _Ctx) -> dict:
+    # σ-floor real-flow мер от шкалы канала. Идёт ПОСЛЕ add_pseudo: селектор
+    # is_pseudo==0 гарантирует, что псевдо-приоры не затрагиваются, а итоговые
+    # variance real-flow мер соответствуют валидированному A/B-прототипу.
+    frac = ctx.cfg.flow_sigma_floor_kv_frac
+    if frac is None or frac <= 0:
+        return {"skipped": "выключено (flow_sigma_floor_kv_frac=None)"}
+    return dict(apply_flow_sigma_floor(ctx.model, kv_frac=float(frac)) or {})
+
+
 def _s_estimate(ctx: _Ctx) -> dict:
     cfg = ctx.cfg
     huber_c = _effective_huber_c(cfg)
@@ -815,6 +838,13 @@ STEPS: list[Step] = [
         "add_pseudo_measurements.",
         _s_add_pseudo,
         toggle="add_pseudo",
+    ),
+    Step(
+        "flow_sigma_floor",
+        "σ-floor flow-мер от шкалы канала",
+        _G_XML,
+        "apply_flow_sigma_floor: variance real branch-flow мер ≥ (frac·√3·Vn·1кА)².",
+        _s_flow_sigma_floor,
     ),
     Step(
         "estimate",
