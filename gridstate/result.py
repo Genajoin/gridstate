@@ -90,12 +90,19 @@ class ResidualRow:
         measurement_id: ``Measurement.id`` исходного измерения.
         kind: текстовый ярлык типа (``"V"``/``"P"``/``"Q"``/``"I"``/
             ``"P_inj"``/``"Q_inj"``/``"?"``).
-        value: исходное значение измерения в исходных единицах
-            (кВ/МВт/МВАр/А).
-        expected: модельное значение ``h(x)`` в тех же единицах.
-        residual: ``value − expected`` в исходных единицах.
+        value: значение измерения ``z`` в p.u. (исходные единицы — в
+            ``measurements.value``/``estimated_si`` по ``measurement_id``).
+        expected: модельное значение ``h(x)`` в p.u.
+        residual: ``value − expected`` в p.u.
         normalized_residual: ``|r| / √diag(Ω)`` — нормированный остаток
             (Abur & Expósito §5.6). ``inf`` для non-redundant измерений.
+        sigma: σ измерения в p.u. (``√σ²`` из R-матрицы); ``nan`` если
+            недоступна.
+        object_kind: 0=узел / 1=ветвь / 2=генератор; ``-1`` — неизвестно.
+        object_id: ``id`` объекта измерения (узла/ветви); ``0`` если
+            неизвестен.
+        branch_side: сторона ветви (0=from, 1=to, ``-1`` — не ветвь).
+        is_pseudo: псевдо-приор (``add_pseudo``/синтез), не телеизмерение.
     """
 
     measurement_id: int
@@ -104,6 +111,11 @@ class ResidualRow:
     expected: float
     residual: float
     normalized_residual: float
+    sigma: float = float("nan")
+    object_kind: int = -1
+    object_id: int = 0
+    branch_side: int = -1
+    is_pseudo: bool = False
 
 
 @dataclass

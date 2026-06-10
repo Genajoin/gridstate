@@ -276,8 +276,29 @@ def _populate_quality_summary(
         sigma2 = r_matrix.diagonal().astype(np.float64).copy()
         sigma2[sigma2 < 1e-12] = 1e-12
 
+        # Пометка псевдо-приоров в z-порядке: meas_id → is_pseudo из коллекции.
+        is_pseudo_z: np.ndarray | None = None
+        meas_arr = measurements.to_numpy()
+        if meas_arr.size and "is_pseudo" in (meas_arr.dtype.names or ()):
+            pseudo_by_id = dict(
+                zip(meas_arr["id"].tolist(), meas_arr["is_pseudo"].tolist(), strict=True)
+            )
+            is_pseudo_z = np.array(
+                [bool(pseudo_by_id.get(int(mid), False)) for mid in meas_index.meas_id],
+                dtype=bool,
+            )
+
         result.chi2 = compute_chi2(r_vec, sigma2, n_state=int(layout.size))
-        result.worst_residuals = top_worst_residuals(r_vec, sigma2, H, meas_index, z, n=top_n)
+        result.worst_residuals = top_worst_residuals(
+            r_vec,
+            sigma2,
+            H,
+            meas_index,
+            z,
+            n=top_n,
+            network_pu=network_pu,
+            is_pseudo=is_pseudo_z,
+        )
         result.worst_imbalance = top_worst_imbalance(model, n=top_n)
         result.observability_warnings = observability_warnings_from_H(
             H,

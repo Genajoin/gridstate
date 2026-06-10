@@ -318,6 +318,15 @@ class PipelineConfig:
         max=100.0,
         help="None = авто (1.5 для wls, 2.0 для ipm). >0 включает робастный downweight.",
     )
+    top_residuals_n: int = _param(
+        20,
+        group=_G_EST,
+        label="Топ-N худших невязок",
+        control="number",
+        min=0,
+        max=200,
+        help="Размер worst_residuals/worst_imbalance в quality summary (bad-data панель).",
+    )
 
     # --- IPM ---
     ipm_balance_weight_factor: float = _param(
@@ -569,6 +578,7 @@ def _s_estimate(ctx: _Ctx) -> dict:
         "tolerance": cfg.tolerance,
         "max_iterations": cfg.max_iterations,
         "huber_c": huber_c,
+        "quality_summary_top_n": cfg.top_residuals_n,
     }
     if cfg.algorithm == "ipm":
         kw.update(_ipm_kwargs(cfg))
@@ -595,6 +605,7 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
             "max_iterations": 150,
             "tolerance": 1e-4 if cfg.algorithm == "wls" else 1e-3,
             "huber_c": huber_c,
+            "quality_summary_top_n": cfg.top_residuals_n,
         }
         if cfg.algorithm == "ipm":
             kw.update(_ipm_kwargs(cfg))
