@@ -46,6 +46,7 @@ def estimate(
     zero_injection: ZeroInjectionMode | None = None,
     huber_c: float = 1.5,
     huber_use_mad: bool = False,
+    reconcile_balance: bool = True,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Выполнить оценку состояния по модели и телеметрии.
@@ -69,6 +70,11 @@ def estimate(
         max_iterations: предельное число итераций Gauss-Newton.
         zero_injection: как обрабатывать узлы без инъекции (пока не
             используется — placeholder под Фазу 2).
+        reconcile_balance: закрыть узловой небаланс оценок финальным
+            пост-пассом (``gen_est − load_est ≡ p/q_inj_calc``, см.
+            :func:`gridstate.post_processing.reconcile_node_balance`).
+            Default ``True`` — выход SE согласован как режим (вход PF,
+            промоут). V/δ и сходимость не затрагиваются.
 
     Returns:
         ``SEResult`` с полями ``success``, ``iterations``, ``objective_value``
@@ -189,6 +195,16 @@ def estimate(
         # Если модель содержит СХН (``load_characteristics``) и узел на неё
         # ссылается, перекрыть load_*_estimated полиномом P(V)/Q(V).
         apply_load_characteristic(model)
+
+    # 9. Финализация разнесения: закрыть остаточный узловой небаланс
+    # (мягкий IPM / клипы и СХН-перекрытие WLS-разноса), чтобы выход SE был
+    # согласованным режимом: gen_est − load_est ≡ p/q_inj_calc. Последним —
+    # после всех правок *_estimated, до extract_output_tables.
+    if reconcile_balance:
+        from gridstate.post_processing import reconcile_node_balance
+
+        reconcile_stats = reconcile_node_balance(model)
+        logger.debug("reconcile_node_balance: %s", reconcile_stats)
 
     result = SEResult(
         model=model,

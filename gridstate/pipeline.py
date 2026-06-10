@@ -392,6 +392,14 @@ class PipelineConfig:
         depends={"anti_overshoot": True},
         help="Узлы выше этого порога без real-V-меры зажимаются. default 1.15.",
     )
+    reconcile_balance: bool = _toggle(
+        True,
+        group=_G_POST,
+        label="Закрыть узловой небаланс оценок",
+        help="reconcile_node_balance: финализировать разнесение gen/load — "
+        "слить остаток inj_calc − (gen−load) по разметке узла. Выход SE "
+        "становится согласованным режимом (вход PF, промоут). V/δ не задеты.",
+    )
 
 
 def default_config() -> PipelineConfig:
@@ -600,6 +608,7 @@ def _s_estimate(ctx: _Ctx) -> dict:
         "max_iterations": cfg.max_iterations,
         "huber_c": huber_c,
         "quality_summary_top_n": cfg.top_residuals_n,
+        "reconcile_balance": cfg.reconcile_balance,
     }
     if cfg.algorithm == "ipm":
         kw.update(_ipm_kwargs(cfg))
@@ -627,6 +636,7 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
             "tolerance": 1e-4 if cfg.algorithm == "wls" else 1e-3,
             "huber_c": huber_c,
             "quality_summary_top_n": cfg.top_residuals_n,
+            "reconcile_balance": cfg.reconcile_balance,
         }
         if cfg.algorithm == "ipm":
             kw.update(_ipm_kwargs(cfg))
