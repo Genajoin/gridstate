@@ -20,8 +20,11 @@ if TYPE_CHECKING:
 
 # Некоторые входные форматы подменяют ветви-«короткозамыкатели» с R=X=0
 # на R=0, X=1.0 Ом. Значение фиксировано в Омах → в p.u. зависит от класса
-# напряжения узла. Константа должна совпадать с sentinel-X входного формата.
-_BREAKER_X_SENTINEL_OHM = 1.0
+# напряжения узла. Константа должна совпадать с sentinel-X входного формата —
+# имя публичное: производитель данных сверяет свою конвенцию кросс-тестом.
+BREAKER_X_SENTINEL_OHM = 1.0
+# Прежнее приватное имя — обратная совместимость импортов (telemetry.topology).
+_BREAKER_X_SENTINEL_OHM = BREAKER_X_SENTINEL_OHM
 
 
 def apply_reactors_to_node_shunt(model: Working) -> dict[str, int | float]:
@@ -152,7 +155,7 @@ def _normalize_breaker_reactance_on_arrays(
         # 1e-3 и S_base=100 это Vn≈316 кВ — нет в реальных классах). Даже
         # на этой точке повторный матч пересчитывает X в то же значение
         # (value-idempotent), завышая лишь счётчик "normalized".
-        if abs(r) > 1e-12 or abs(x - _BREAKER_X_SENTINEL_OHM) > 1e-9:
+        if abs(r) > 1e-12 or abs(x - BREAKER_X_SENTINEL_OHM) > 1e-9:
             continue
         vn = vn_by_id.get(int(branches_arr[i]["from_node"]), 0.0)
         if vn <= 0.0:
