@@ -39,6 +39,7 @@ from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 from gridstate.api import estimate, populate_quality_summary
+from gridstate.bad_data_repass import apply_bad_data_plan, classify_bad_data
 from gridstate.contract.derived import DerivedInputs
 from gridstate.post_processing import refine_anti_overshoot
 from gridstate.preprocessing import (
@@ -374,6 +375,60 @@ class PipelineConfig:
     )
 
     # --- Пост-обработка (Линия C) ---
+    bad_data: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="Bad-data re-pass (двухпроходный)",
+        help="Классификация real-мер по остаткам решённого SE (flip знак-флипов, "
+        "reject битых нулей/монстров, демпф Qinj) + повторный warm-solve. "
+        "Парный иммунитет согласованных branch-пар и guard покрытия (node, домен) "
+        "защищают честные меры. Конфигурация валидирована на 4 ОДУ. Default OFF "
+        "(меняет решение и время; включается потребителем).",
+    )
+    bad_data_threshold: float = _param(
+        10.0,
+        group=_G_POST,
+        label="Порог T (на σ_det)",
+        control="number",
+        min=1.0,
+        max=100.0,
+        depends={"bad_data": True},
+        help="Кандидат: |z−h|/σ_det > T. Держатели глубоких ям имеют rn_det 10-15 — "
+        "T>10 их пропускает.",
+    )
+    bad_data_sigma_cap: float = _param(
+        30.0,
+        group=_G_POST,
+        label="Cap детекционной σ (МВт/МВАр)",
+        control="number",
+        min=0.0,
+        max=1000.0,
+        depends={"bad_data": True},
+        help="σ_det = min(σ, cap): снимает маскировку конфликтов гигантской σ≈α·|z| "
+        "больших потоков. Веса солвера не меняются. ≤0 — без капа.",
+    )
+    bad_data_flip_ratio: float = _param(
+        0.33,
+        group=_G_POST,
+        label="γ flip-критерия",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"bad_data": True},
+        help="flip вместо reject, если |z+h| < γ·|z−h| (относительный критерий: "
+        "у ямы h ≠ −z точно).",
+    )
+    bad_data_damp_factor: float = _param(
+        5.0,
+        group=_G_POST,
+        label="Демпф Qinj (σ × k)",
+        control="number",
+        min=1.0,
+        max=100.0,
+        depends={"bad_data": True},
+        help="Qinj-кандидаты не отключаются, а демпфируются: variance × k². "
+        "Снятие Qinj со слепого узла сажает его на мусорный pseudo-приор.",
+    )
     anti_overshoot: bool = _toggle(
         True,
         group=_G_POST,
@@ -621,6 +676,46 @@ def _s_estimate(ctx: _Ctx) -> dict:
         "iterations": int(ctx.result.iterations),
         "objective_value": float(ctx.result.objective_value),
     }
+
+
+def _s_bad_data_repass(ctx: _Ctx) -> dict:
+    assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
+    cfg = ctx.cfg
+    if not ctx.result.success:
+        # Непригодное решение (completed=False) — остатки ненадёжны,
+        # классификация по ним опаснее, чем отсутствие re-pass.
+        return {"skipped": "решение непригодно — нет надёжных остатков"}
+    plan = classify_bad_data(
+        ctx.model.measurements.to_numpy(),
+        ctx.model.branches.to_numpy(),
+        threshold=cfg.bad_data_threshold,
+        sigma_cap=cfg.bad_data_sigma_cap,
+        flip_ratio=cfg.bad_data_flip_ratio,
+    )
+    if plan.empty:
+        return {"candidates": plan.n_candidates, "skipped": "no-op (план пуст)"}
+    stats = apply_bad_data_plan(ctx.model, plan, damp_factor=cfg.bad_data_damp_factor)
+    # Warm re-solve на правленом наборе мер: V/δ прохода 1 уже в working.
+    huber_c = _effective_huber_c(cfg)
+    kw: dict[str, Any] = {
+        "algorithm": cfg.algorithm,
+        "init": "results",
+        "tolerance": cfg.tolerance,
+        "max_iterations": cfg.max_iterations,
+        "huber_c": huber_c,
+        "include_quality_summary": False,
+        "reconcile_balance": cfg.reconcile_balance,
+    }
+    if cfg.algorithm == "ipm":
+        kw.update(_ipm_kwargs(cfg))
+    ctx.result = estimate(ctx.model, **kw)
+    stats.update(
+        {
+            "success": bool(ctx.result.success),
+            "iterations": int(ctx.result.iterations),
+        }
+    )
+    return stats
 
 
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
@@ -875,6 +970,17 @@ STEPS: list[Step] = [
         _G_EST,
         "gridstate.estimate: solve_wls / solve_ipm.",
         _s_estimate,
+    ),
+    # ИНВАРИАНТ ПОРЯДКА: bad_data_repass строго МЕЖДУ estimate и
+    # anti_overshoot — классификация читает остатки первого solve,
+    # anti-overshoot полирует уже правленое решение.
+    Step(
+        "bad_data_repass",
+        "Bad-data re-pass (Линия C)",
+        _G_POST,
+        "classify_bad_data по остаткам solve + warm re-solve на правленых мерах.",
+        _s_bad_data_repass,
+        toggle="bad_data",
     ),
     Step(
         "anti_overshoot",
