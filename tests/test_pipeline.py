@@ -108,7 +108,7 @@ def test_effective_huber_c_auto():
 # ---------------------------------------------------------------------------
 
 
-def _full_derived() -> "P.DerivedInputs":
+def _full_derived() -> P.DerivedInputs:
     from gridstate.contract.derived import DerivedInputs
 
     return DerivedInputs(

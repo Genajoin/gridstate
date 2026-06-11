@@ -10,7 +10,6 @@ from __future__ import annotations
 from gridstate.api import estimate
 from gridstate.post_processing import reconcile_node_balance
 from gridstate.working import Working
-
 from tests.test_ipm_integration import _build_three_bus_with_bounds
 
 
@@ -94,13 +93,19 @@ def test_unit_routing_rules() -> None:
     """Правило слива по разметке узла: gen-only → gen, иначе → load."""
     m = Working.empty()
     # gen-only: residual уходит в генерацию.
-    m.nodes.add(_node_row(1, exist_load=0, exist_gen=1, p_inj=55.0, q_inj=12.0, gen_p=50.0, gen_q=10.0))
+    m.nodes.add(
+        _node_row(1, exist_load=0, exist_gen=1, p_inj=55.0, q_inj=12.0, gen_p=50.0, gen_q=10.0)
+    )
     # load-only: в нагрузку (load = gen − inj).
-    m.nodes.add(_node_row(2, exist_load=1, exist_gen=0, p_inj=-28.0, q_inj=-9.0, load_p=30.0, load_q=10.0))
+    m.nodes.add(
+        _node_row(2, exist_load=1, exist_gen=0, p_inj=-28.0, q_inj=-9.0, load_p=30.0, load_q=10.0)
+    )
     # транзит: псевдонагрузка −inj (аналог материализации по районам).
     m.nodes.add(_node_row(3, exist_load=0, exist_gen=0, p_inj=1.5, q_inj=-0.7))
     # нерешённый узел не трогаем.
-    m.nodes.add(_node_row(4, exist_load=1, exist_gen=0, p_inj=99.0, q_inj=0.0, load_p=5.0, solved=0))
+    m.nodes.add(
+        _node_row(4, exist_load=1, exist_gen=0, p_inj=99.0, q_inj=0.0, load_p=5.0, solved=0)
+    )
 
     stats = reconcile_node_balance(m)
     assert stats["updated"] == 3
