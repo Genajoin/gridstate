@@ -70,6 +70,7 @@ from gridstate.topology import (
     refine_node_types_from_generators,
     refine_slack_to_one,
 )
+from gridstate.v_refine import apply_v_refine_plan, classify_v_refine
 from gridstate.working import Working
 
 
@@ -439,6 +440,39 @@ class PipelineConfig:
         help="Qinj-кандидаты не отключаются, а демпфируются: variance × k². "
         "Снятие Qinj со слепого узла сажает его на мусорный pseudo-приор.",
     )
+    v_refine: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="V-refine (ужесточение согласованных V)",
+        help="Двухпроходный: ужесточить σ (× factor) real V-мер, согласованных "
+        "с решением первого прохода (|z−h|/σ < rn), + warm re-solve. Лечит "
+        "глобальный bias занижения V (оценка провисает ниже собственных V-мер). "
+        "Конфликтные V-меры (битый замер кромки) НЕ трогаются. Значения/статусы "
+        "не меняются — только дисперсии, грубую ошибку внести не может. "
+        "Валидирован на 4 ОДУ. Default OFF (включается потребителем).",
+    )
+    v_refine_rn: float = _param(
+        3.0,
+        group=_G_POST,
+        label="Порог согласованности rn",
+        control="number",
+        min=1.0,
+        max=100.0,
+        depends={"v_refine": True},
+        help="Ужесточаем V-меру, если |z−h|/σ < rn (согласована с решением). "
+        "Выше порога — кандидат в грубую ошибку, оставляем рыхлой.",
+    )
+    v_refine_factor: float = _param(
+        0.7,
+        group=_G_POST,
+        label="Множитель σ (factor)",
+        control="number",
+        min=0.05,
+        max=1.0,
+        depends={"v_refine": True},
+        help="variance := variance · factor² (σ × factor). 0.7 — оптимум 4 ОДУ; "
+        "0.5 точнее для bias, но ломает class-max региона с битой V-кромкой.",
+    )
     anti_overshoot: bool = _toggle(
         True,
         group=_G_POST,
@@ -730,6 +764,44 @@ def _s_bad_data_repass(ctx: _Ctx) -> dict:
     return stats
 
 
+def _s_v_refine(ctx: _Ctx) -> dict:
+    assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
+    cfg = ctx.cfg
+    if not ctx.result.success:
+        # Непригодное решение — остатки V ненадёжны, согласованность
+        # определять не по чему.
+        return {"skipped": "решение непригодно — нет надёжных остатков"}
+    plan = classify_v_refine(
+        ctx.model.measurements.to_numpy(),
+        rn_threshold=cfg.v_refine_rn,
+    )
+    if plan.empty:
+        return {"consistent": plan.n_consistent, "skipped": "no-op (нет real V-мер)"}
+    stats = apply_v_refine_plan(ctx.model, plan, factor=cfg.v_refine_factor)
+    # Warm re-solve на ужесточённых V: V/δ прохода 1 уже в working.
+    huber_c = _effective_huber_c(cfg)
+    kw: dict[str, Any] = {
+        "algorithm": cfg.algorithm,
+        "init": "results",
+        "tolerance": cfg.tolerance,
+        "max_iterations": cfg.max_iterations,
+        "huber_c": huber_c,
+        "kkt_solver": cfg.kkt_solver,
+        "include_quality_summary": False,
+        "reconcile_balance": cfg.reconcile_balance,
+    }
+    if cfg.algorithm == "ipm":
+        kw.update(_ipm_kwargs(cfg))
+    ctx.result = estimate(ctx.model, **kw)
+    stats.update(
+        {
+            "success": bool(ctx.result.success),
+            "iterations": int(ctx.result.iterations),
+        }
+    )
+    return stats
+
+
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
     assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
     cfg = ctx.cfg
@@ -984,9 +1056,10 @@ STEPS: list[Step] = [
         "gridstate.estimate: solve_wls / solve_ipm.",
         _s_estimate,
     ),
-    # ИНВАРИАНТ ПОРЯДКА: bad_data_repass строго МЕЖДУ estimate и
-    # anti_overshoot — классификация читает остатки первого solve,
-    # anti-overshoot полирует уже правленое решение.
+    # ИНВАРИАНТ ПОРЯДКА: bad_data_repass → v_refine → anti_overshoot строго
+    # МЕЖДУ estimate и финалом. bad_data правит грубые ошибки (значения/статусы)
+    # по остаткам первого solve; v_refine ужесточает σ согласованных V по
+    # уже-правленым остаткам (теплейшие); anti-overshoot полирует итог.
     Step(
         "bad_data_repass",
         "Bad-data re-pass (Линия C)",
@@ -994,6 +1067,14 @@ STEPS: list[Step] = [
         "classify_bad_data по остаткам solve + warm re-solve на правленых мерах.",
         _s_bad_data_repass,
         toggle="bad_data",
+    ),
+    Step(
+        "v_refine",
+        "V-refine ужесточение (Линия C)",
+        _G_POST,
+        "classify_v_refine согласованных V по остаткам + warm re-solve на ужесточённых σ.",
+        _s_v_refine,
+        toggle="v_refine",
     ),
     Step(
         "anti_overshoot",
