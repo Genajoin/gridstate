@@ -326,6 +326,42 @@ def _populate_quality_summary(
         logger.warning("quality_summary failed: %s", exc)
 
 
+def populate_quality_summary(result: SEResult, *, top_n: int = 10) -> None:
+    """Посчитать quality summary post-hoc — от финального ``result.model``.
+
+    Делает то же, что ``estimate(..., include_quality_summary=True)``, но на
+    готовом результате: пересобирает p.u.-сеть/Y-bus/z-вектор от текущего
+    состояния ``result.model`` и заполняет ``result.chi2 / worst_residuals /
+    worst_imbalance / observability_warnings``. Нужна пайплайну: промежуточные
+    solve (anti-overshoot, bad-data re-pass) идут без summary, а сводка
+    считается один раз — на финальном решении. Состав measurements и V/δ
+    модели должны соответствовать финальному solve (в пайплайне это так:
+    revert-ветки откатывают и меры, и V/δ).
+    """
+    model = result.model
+    measurements = model.measurements
+    network_pu = model_to_pu(model)
+    layout = StateLayout.from_slack(network_pu.n_bus, network_pu.slack_idx)
+    ybus, yf, yt = build_ybus(network_pu)
+    z, r_matrix, meas_index = build_z_and_r(model, measurements, network_pu)
+    _populate_quality_summary(
+        result,
+        model=model,
+        measurements=measurements,
+        network_pu=network_pu,
+        ybus=ybus,
+        yf=yf,
+        yt=yt,
+        z=z,
+        r_matrix=r_matrix,
+        meas_index=meas_index,
+        layout=layout,
+        v_pu=result.v_pu,
+        delta_rad=result.delta_rad,
+        top_n=top_n,
+    )
+
+
 def _build_initial_state(
     model: Working,
     network_pu: NetworkPU,
