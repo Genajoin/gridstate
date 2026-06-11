@@ -23,6 +23,7 @@ from __future__ import annotations
 import collections
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -33,6 +34,10 @@ from gridstate.z_vector import (
     KIND_POWER_P,
     KIND_POWER_Q,
 )
+
+
+if TYPE_CHECKING:
+    from gridstate.working import Working
 
 
 logger = logging.getLogger(__name__)
@@ -88,12 +93,13 @@ class BadDataPlan:
 
 def _real_detectable(m: np.ndarray) -> np.ndarray:
     """Маска real-мер, пригодных для детекции (активна, не pseudo, есть h)."""
-    return (
+    mask: np.ndarray = (
         m["status"].astype(bool)
         & ~m["is_pseudo"].astype(bool)
         & np.isin(m["measurement_type"], list(DETECTABLE_KINDS))
         & np.isfinite(m["estimated_si"])
     )
+    return mask
 
 
 def classify_bad_data(
@@ -207,7 +213,7 @@ def classify_bad_data(
     )
 
 
-def apply_bad_data_plan(model, plan: BadDataPlan, *, damp_factor: float) -> dict:
+def apply_bad_data_plan(model: Working, plan: BadDataPlan, *, damp_factor: float) -> dict:
     """Применить план к ``model.measurements`` (рабочая копия пайплайна).
 
     flip → ``value := −value``; reject → ``status := False``;
