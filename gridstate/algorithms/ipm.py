@@ -43,7 +43,8 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.sparse import csr_matrix, diags
-from scipy.sparse.linalg import spsolve
+
+from gridstate.algorithms.kkt_solver import KKTSolver
 
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ class IPMResult:
               Сходимость inner без принятых шагов (старт в стационарной
               точке Φ(·; μ)) stall'ом НЕ считается — μ-расписание
               продолжается;
-            * ``"error"`` — терминальная ошибка (spsolve fail,
+            * ``"error"`` — терминальная ошибка (kkt solve fail,
               non-finite step).
         success: ``status in ("kkt", "completed")`` — «решение
           пригодно». Прежняя семантика (только строгий KKT) давала
@@ -229,6 +230,7 @@ def solve_ipm(
     huber_use_mad: bool = False,
     huber_adaptive_k: float = 6.0,
     huber_warmup_iters: int = 5,
+    kkt_solver: KKTSolver | None = None,
 ) -> IPMResult:
     """Primal log-barrier IPM для box-constrained WLS.
 
@@ -275,6 +277,10 @@ def solve_ipm(
             вместо ``σ`` (Hampel 1986); иначе ``r_N = r/σ``.
         huber_adaptive_k, huber_warmup_iters: параметры adaptive c_eff
             и warmup-итераций (как в ``solve_wls``).
+        kkt_solver: решатель Newton-систем ``G·Δx = −g`` с реюзом
+            символьной факторизации между итерациями (см.
+            ``gridstate.algorithms.kkt_solver``). ``None`` — scipy spsolve
+            (прежнее поведение бит-в-бит).
 
     Returns:
         ``IPMResult``.
@@ -298,6 +304,8 @@ def solve_ipm(
             raise ValueError("в box_lo/box_hi есть пары с lo >= hi")
 
     has_box = box_idx.size > 0
+
+    solver = kkt_solver if kkt_solver is not None else KKTSolver("scipy")
 
     m = int(r_inv_diag.shape[0])
     r_inv_diag_base = np.asarray(r_inv_diag, dtype=np.float64).copy()
@@ -394,11 +402,10 @@ def solve_ipm(
                 G = G + diags(hess_b, format="csc")
 
             try:
-                dx = spsolve(G, -grad)
-                dx = np.asarray(dx, dtype=np.float64).ravel()
+                dx = solver.solve(G, -grad)
             except Exception as exc:
-                logger.warning("ipm: spsolve fail outer=%d inner=%d: %s", outer_iter, inner, exc)
-                message = f"spsolve failure (outer {outer_iter}, inner {inner})"
+                logger.warning("ipm: kkt solve fail outer=%d inner=%d: %s", outer_iter, inner, exc)
+                message = f"kkt solve failure (outer {outer_iter}, inner {inner})"
                 return IPMResult(
                     x=x,
                     success=False,

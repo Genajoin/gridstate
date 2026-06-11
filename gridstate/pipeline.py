@@ -323,6 +323,16 @@ class PipelineConfig:
         max=500,
         help="default региональной модели 80.",
     )
+    kkt_solver: str = _param(
+        "auto",
+        group=_G_EST,
+        label="KKT-солвер",
+        control="select",
+        choices=["auto", "cholmod", "scipy"],
+        help="Решатель Newton-систем: cholmod — CHOLMOD через cvxopt с реюзом "
+        "символьной факторизации (×8-11 на крупных моделях); scipy — spsolve "
+        "(прежнее поведение бит-в-бит); auto — cholmod при установленном cvxopt.",
+    )
     huber_c: float | None = _param(
         None,
         group=_G_EST,
@@ -662,6 +672,7 @@ def _s_estimate(ctx: _Ctx) -> dict:
         "tolerance": cfg.tolerance,
         "max_iterations": cfg.max_iterations,
         "huber_c": huber_c,
+        "kkt_solver": cfg.kkt_solver,
         # Summary считается один раз — на финальном решении в run()
         # (см. populate_quality_summary); промежуточные solve без неё.
         "include_quality_summary": False,
@@ -703,6 +714,7 @@ def _s_bad_data_repass(ctx: _Ctx) -> dict:
         "tolerance": cfg.tolerance,
         "max_iterations": cfg.max_iterations,
         "huber_c": huber_c,
+        "kkt_solver": cfg.kkt_solver,
         "include_quality_summary": False,
         "reconcile_balance": cfg.reconcile_balance,
     }
@@ -732,6 +744,7 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
             "max_iterations": 150,
             "tolerance": 1e-4 if cfg.algorithm == "wls" else 1e-3,
             "huber_c": huber_c,
+            "kkt_solver": cfg.kkt_solver,
             "include_quality_summary": False,
             "reconcile_balance": cfg.reconcile_balance,
         }

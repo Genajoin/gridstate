@@ -48,9 +48,9 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from scipy.sparse import csc_matrix, csr_matrix
-from scipy.sparse.linalg import spsolve
 
 from gridstate.algebra.base import BaseAlgebra
+from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.state import unpack
 
 
@@ -68,6 +68,7 @@ def _solve_damped(
     rhs: np.ndarray,
     diag_G: np.ndarray,
     lam: float,
+    solver: KKTSolver,
 ) -> np.ndarray | None:
     """Решить ``(G + λ·diag(G))·d = rhs``. Возвращает ``None`` при сбое."""
     n = G.shape[0]
@@ -80,9 +81,9 @@ def _solve_damped(
     else:
         G_lm = G
     try:
-        d = spsolve(G_lm, rhs)
+        d = solver.solve(G_lm, rhs)
     except Exception as exc:
-        logger.debug("spsolve fail at λ=%.3e: %s", lam, exc)
+        logger.debug("kkt solve fail at λ=%.3e: %s", lam, exc)
         return None
     return np.asarray(d, dtype=np.float64).ravel()
 
@@ -93,6 +94,7 @@ def _solve_in_trust_region(
     diag_G: np.ndarray,
     tr_radius: float,
     lam_floor: float,
+    solver: KKTSolver,
 ) -> tuple[np.ndarray, float, float, bool]:
     """Подобрать шаг ``d`` так, чтобы ``|d|∞ ≤ tr_radius``.
 
@@ -114,7 +116,7 @@ def _solve_in_trust_region(
     """
     if lam_floor <= 0.0:
         # Default mode: pure GN с TR-clamp по длине.
-        d = _solve_damped(G, rhs, diag_G, 0.0)
+        d = _solve_damped(G, rhs, diag_G, 0.0, solver)
         if d is None or not np.all(np.isfinite(d)):
             return np.zeros_like(rhs), 0.0, 0.0, False
         step = float(np.max(np.abs(d)))
@@ -124,7 +126,7 @@ def _solve_in_trust_region(
         return d, step, 0.0, True
 
     # LM-bisection режим (после reject в основном цикле).
-    d_lo = _solve_damped(G, rhs, diag_G, lam_floor)
+    d_lo = _solve_damped(G, rhs, diag_G, lam_floor, solver)
     if d_lo is None or not np.all(np.isfinite(d_lo)):
         return np.zeros_like(rhs), 0.0, lam_floor, False
     step_lo = float(np.max(np.abs(d_lo)))
@@ -139,7 +141,7 @@ def _solve_in_trust_region(
     d_hi: np.ndarray | None = None
     step_hi = float("inf")
     for _ in range(40):
-        d_try = _solve_damped(G, rhs, diag_G, lam_hi)
+        d_try = _solve_damped(G, rhs, diag_G, lam_hi, solver)
         if d_try is not None and np.all(np.isfinite(d_try)):
             step_try = float(np.max(np.abs(d_try)))
             if step_try <= tr_radius:
@@ -156,7 +158,7 @@ def _solve_in_trust_region(
     lam_lo = lam_floor
     for _ in range(20):
         lam_mid = float(np.sqrt(lam_lo * lam_hi))
-        d_mid = _solve_damped(G, rhs, diag_G, lam_mid)
+        d_mid = _solve_damped(G, rhs, diag_G, lam_mid, solver)
         if d_mid is None or not np.all(np.isfinite(d_mid)):
             lam_lo = lam_mid
             continue
@@ -191,6 +193,7 @@ def solve_wls(
     huber_leverage_b_threshold_pu: float = 2.0,
     huber_w_floor: float = 0.05,
     huber_use_mad: bool = False,
+    kkt_solver: KKTSolver | None = None,
 ) -> tuple[np.ndarray, bool, int, float]:
     """Выполнить trust-region Gauss-Newton WLS (опционально SHGM-IRLS).
 
@@ -214,6 +217,9 @@ def solve_wls(
             работают как WLS. Типичные значения: 1.5 (агрессивно),
             2.0 (стандарт Abur & Exposito), 3.0 (консервативно).
             См. Abur & Exposito ch.6, Mili et al. 1991.
+        kkt_solver: решатель систем нормальных уравнений с реюзом
+            символьной факторизации (см. ``gridstate.algorithms.kkt_solver``).
+            ``None`` — scipy spsolve (прежнее поведение бит-в-бит).
 
     Returns:
         ``(E_final, success, iterations, objective_value)``.
@@ -227,6 +233,7 @@ def solve_wls(
         raise ValueError(f"z имеет длину {z.shape[0]}, MeasurementIndex — {len(meas_index)}")
 
     algebra = BaseAlgebra(ybus, yf, yt, meas_index, layout, network_pu)
+    solver = kkt_solver if kkt_solver is not None else KKTSolver("scipy")
 
     # σ² с регуляризацией; затем R⁻¹ как разреженная диагональ.
     sigma2 = r_matrix.diagonal().copy()
@@ -388,6 +395,7 @@ def solve_wls(
                 diag_G,
                 tr_radius,
                 lam,
+                solver,
             )
             if not solve_ok:
                 # Линейная система не решилась (singular G, NaN в результате)

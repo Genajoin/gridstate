@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
+from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.wls import solve_wls
 from gridstate.result import SEResult, extract_output_tables
 from gridstate.state import StateLayout, flat_start, flat_start_with_box, pack, unpack, unpack_full
@@ -47,6 +48,7 @@ def estimate(
     huber_c: float = 1.5,
     huber_use_mad: bool = False,
     reconcile_balance: bool = True,
+    kkt_solver: str = "auto",
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Выполнить оценку состояния по модели и телеметрии.
@@ -75,6 +77,10 @@ def estimate(
             :func:`gridstate.post_processing.reconcile_node_balance`).
             Default ``True`` — выход SE согласован как режим (вход PF,
             промоут). V/δ и сходимость не затрагиваются.
+        kkt_solver: решатель Newton-систем (``"auto"`` | ``"cholmod"`` |
+            ``"scipy"``, см. ``gridstate.algorithms.kkt_solver``). ``auto``
+            использует CHOLMOD при установленном cvxopt (×8-11 на крупных
+            моделях), иначе scipy spsolve (прежнее поведение бит-в-бит).
 
     Returns:
         ``SEResult`` с полями ``success``, ``iterations``, ``objective_value``
@@ -113,6 +119,10 @@ def estimate(
     # 4. Начальное приближение E
     e_init = _build_initial_state(model, network_pu, layout, init)
 
+    # Решатель Newton-систем: один на estimate — реюз символьной
+    # факторизации между итерациями (структура G неизменна).
+    kkt = KKTSolver(kkt_solver)
+
     if algorithm == "ipm":
         # IPM-режим: расширяем layout/state/measurements box-vars и
         # узловыми balance-уравнениями. ipm_kwargs пробрасываются
@@ -133,6 +143,7 @@ def estimate(
             max_iterations=max_iterations,
             huber_c=huber_c,
             huber_use_mad=huber_use_mad,
+            kkt=kkt,
             **ipm_kwargs,
         )
         # _run_ipm уже записал *_estimated в model.nodes; layout
@@ -160,6 +171,7 @@ def estimate(
             max_iterations=max_iterations,
             huber_c=huber_c,
             huber_use_mad=huber_use_mad,
+            kkt_solver=kkt,
         )
 
         # 6. Распаковка состояния и запись обратно в модель
@@ -424,6 +436,7 @@ def _run_ipm(
     huber_skip_transformers: bool = True,
     huber_leverage_b_threshold_pu: float = 2.0,
     huber_w_floor: float = 0.05,
+    kkt: KKTSolver | None = None,
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM-режим: расширяет state-vector box-vars и решает primal log-barrier WLS.
@@ -552,6 +565,7 @@ def _run_ipm(
         # max(c, 2·median(|r/σ|)). В solve_ipm adaptive_applied сбрасывается
         # каждый outer — c_eff пересчитывается по текущим residuals.
         huber_adaptive_k=2.0,
+        kkt_solver=kkt,
     )
 
     # Извлекаем box-vars и пишем в node-таблицу (МВт/МВАр = p.u. * BASE_MVA).
