@@ -294,6 +294,69 @@ class TestConvergenceStatus:
             assert result.success
         assert "μ_final" in result.message
 
+    def test_start_at_solution_is_converged_not_stalled(self) -> None:
+        """Старт в точном решении (после promote результата во вход) →
+        converged, а не ложный «stalled».
+
+        Регресс: первый же Newton-шаг < inner_tol → inner break без
+        принятых шагов → lazy-break до μ_min → status='stalled' при
+        ЛЮБОМ лимите итераций (воспроизведено на СЗ-модели 2026-06-10).
+        Сходимость inner по толерансу — НЕ стагнация: μ-расписание
+        должно дойти до mu_min → kkt/completed.
+        """
+        residual, jac, r_inv = self._problem(3.0)
+        # Шаг 1: решаем с нейтрального старта.
+        first = solve_ipm(
+            x_init=np.array([0.5]),
+            residual_fn=residual,
+            jacobian_fn=jac,
+            r_inv_diag=r_inv,
+            box_idx=np.array([0]),
+            box_lo=np.array([0.0]),
+            box_hi=np.array([10.0]),
+        )
+        assert first.success
+        # Шаг 2: перезапуск из найденного решения («старт в решении»).
+        second = solve_ipm(
+            x_init=first.x.copy(),
+            residual_fn=residual,
+            jacobian_fn=jac,
+            r_inv_diag=r_inv,
+            box_idx=np.array([0]),
+            box_lo=np.array([0.0]),
+            box_hi=np.array([10.0]),
+        )
+        assert second.status in ("kkt", "completed"), second.message
+        assert second.success
+        assert second.mu_final <= 1e-6  # μ-расписание дошло до конца
+        assert second.x[0] == pytest.approx(first.x[0], abs=1e-3)
+
+    def test_real_stall_armijo_fail_stays_stalled(self) -> None:
+        """Настоящая стагнация (Armijo не находит шаг вдали от оптимума)
+        по-прежнему даёт stalled — фикс не ослабляет stall-детекцию."""
+        z = np.array([10.0])
+        r_inv = np.array([1.0])
+
+        def residual(x: np.ndarray) -> np.ndarray:
+            return z - np.array([x[0]])
+
+        def jac_wrong_sign(x: np.ndarray) -> csr_matrix:
+            # Неверный знак якобиана → Newton-«спуск» идёт в подъём:
+            # Armijo не примет ни одного шага, grad большой, μ > μ_min.
+            return csr_matrix(np.array([[-1.0]]))
+
+        result = solve_ipm(
+            x_init=np.array([1.0]),
+            residual_fn=residual,
+            jacobian_fn=jac_wrong_sign,
+            r_inv_diag=r_inv,
+            box_idx=np.array([0]),
+            box_lo=np.array([0.0]),
+            box_hi=np.array([100.0]),
+        )
+        assert result.status == "stalled"
+        assert not result.success
+
     def test_error_status_on_nonfinite(self) -> None:
         z = np.array([3.0])
         r_inv = np.array([1.0])

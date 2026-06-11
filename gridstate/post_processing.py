@@ -434,6 +434,79 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
     }
 
 
+def reconcile_node_balance(model: Working) -> dict[str, float | int]:
+    """Закрыть узловой небаланс оценок: ``gen_est − load_est ≡ *_inj_calc``.
+
+    Мягкий IPM (и WLS-разнос с клипами/СХН-перекрытием) оставляет в узлах
+    остаточный небаланс ``r = inj_calc − (gen_est − load_est)`` — оценки
+    нагрузки/генерации НЕ согласованы по KCL с напряжениями состояния.
+    Для аналитики это допустимо, но выход SE как РЕЖИМ (вход PF, промоут
+    в ИД) обязан быть сбалансирован: классический канон SE — состояние =
+    V/δ, инжекции = Sbus(V), а gen/load — их разнесение. Этот пост-пасс
+    финализирует разнесение, сливая остаток по разметке узла:
+
+    * ``exist_gen=1, exist_load=0`` → в генерацию (``gen += r``);
+    * иначе (load-узлы, смешанные, транзиты) → в нагрузку
+      (``load −= r``; на транзите появляется псевдонагрузка ``−inj`` —
+      аналог материализации нагрузок по районам в эталонной SE).
+
+    Без клипов к границам — точность согласования важнее: после пасса
+    ``gen_est − load_est == inj_calc`` поэлементно, и standalone PF от
+    промоутнутых оценок воспроизводит режим SE.
+
+    Обрабатываются только решённые узлы (``solved=1`` — получили
+    ``*_inj_calc`` в ``write_results_to_model``). Колонки
+    ``imbalance_p/q`` не трогаем — они считаются против ИД gen/load.
+
+    Returns:
+        Счётчики: ``updated``, ``to_gen``/``to_load`` (узлов по ветке
+        правила), ``sum_abs_p_mw``/``max_abs_p_mw`` — масштаб закрытого
+        P-небаланса (диагностика «насколько мягким» был IPM).
+    """
+    nodes_arr = model.nodes.to_numpy()
+    out: dict[str, float | int] = {
+        "updated": 0,
+        "to_gen": 0,
+        "to_load": 0,
+        "sum_abs_p_mw": 0.0,
+        "max_abs_p_mw": 0.0,
+    }
+    if len(nodes_arr) == 0:
+        return out
+
+    eps = 1e-9  # МВт/МВАр: ниже — числовой шум, узел не трогаем
+    for row in nodes_arr:
+        if not bool(row["status"]) or not bool(row["solved"]):
+            continue
+        r_p = float(row["p_inj_calc"]) - (
+            float(row["generation_p_estimated"]) - float(row["load_p_estimated"])
+        )
+        r_q = float(row["q_inj_calc"]) - (
+            float(row["generation_q_estimated"]) - float(row["load_q_estimated"])
+        )
+        if abs(r_p) <= eps and abs(r_q) <= eps:
+            continue
+        update: dict[str, float]
+        if bool(row["exist_gen"]) and not bool(row["exist_load"]):
+            out["to_gen"] = int(out["to_gen"]) + 1
+            update = {
+                "generation_p_estimated": float(row["generation_p_estimated"]) + r_p,
+                "generation_q_estimated": float(row["generation_q_estimated"]) + r_q,
+            }
+        else:
+            out["to_load"] = int(out["to_load"]) + 1
+            update = {
+                "load_p_estimated": float(row["load_p_estimated"]) - r_p,
+                "load_q_estimated": float(row["load_q_estimated"]) - r_q,
+            }
+        model.nodes.update(int(row["id"]), update)
+        out["updated"] = int(out["updated"]) + 1
+        out["sum_abs_p_mw"] = float(out["sum_abs_p_mw"]) + abs(r_p)
+        out["max_abs_p_mw"] = max(float(out["max_abs_p_mw"]), abs(r_p))
+
+    return out
+
+
 def apply_load_characteristic(model: Working) -> dict[str, int]:
     """Пересчитать ``load_*_estimated`` через статические характеристики
     нагрузки (СХН) P(V) / Q(V) после H29-split.

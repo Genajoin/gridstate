@@ -49,6 +49,7 @@ from gridstate.preprocessing import (
 from gridstate.result import SEResult
 from gridstate.telemetry import (
     aggregate_generators_to_node,
+    apply_flow_sigma_floor,
     apply_generator_status_from_node,
     apply_reactors_to_node_shunt,
     apply_voltage_meas_calibration_for_gen_nodes,
@@ -197,6 +198,18 @@ class PipelineConfig:
         group=_G_XML,
         label="Калибровка σ² V ген-узлов",
         help="apply_voltage_meas_calibration_for_gen_nodes.",
+    )
+    flow_sigma_floor_kv_frac: float | None = _param(
+        None,
+        group=_G_XML,
+        label="σ-floor flow-мер (доля шкалы)",
+        control="number",
+        min=0.0,
+        max=1.0,
+        help="σ_min real branch-flow мер P/Q = доля шкалы канала √3·Vn·1кА "
+        "(Vn ветви = max(Vn концов)): variance := max(variance, floor²). "
+        "Лечит пере-доверие мелким потокам (σ≈α·|z| занижена при малых z). "
+        "None = выключено; 0.010 = 1 % шкалы (110 кВ → 1.9 МВт, 500 кВ → 8.7 МВт).",
     )
 
     # --- Режим ---
@@ -378,6 +391,14 @@ class PipelineConfig:
         max=1.5,
         depends={"anti_overshoot": True},
         help="Узлы выше этого порога без real-V-меры зажимаются. default 1.15.",
+    )
+    reconcile_balance: bool = _toggle(
+        True,
+        group=_G_POST,
+        label="Закрыть узловой небаланс оценок",
+        help="reconcile_node_balance: финализировать разнесение gen/load — "
+        "слить остаток inj_calc − (gen−load) по разметке узла. Выход SE "
+        "становится согласованным режимом (вход PF, промоут). V/δ не задеты.",
     )
 
 
@@ -567,6 +588,16 @@ def _s_add_pseudo(ctx: _Ctx) -> dict:
     )
 
 
+def _s_flow_sigma_floor(ctx: _Ctx) -> dict:
+    # σ-floor real-flow мер от шкалы канала. Идёт ПОСЛЕ add_pseudo: селектор
+    # is_pseudo==0 гарантирует, что псевдо-приоры не затрагиваются, а итоговые
+    # variance real-flow мер соответствуют валидированному A/B-прототипу.
+    frac = ctx.cfg.flow_sigma_floor_kv_frac
+    if frac is None or frac <= 0:
+        return {"skipped": "выключено (flow_sigma_floor_kv_frac=None)"}
+    return dict(apply_flow_sigma_floor(ctx.model, kv_frac=float(frac)) or {})
+
+
 def _s_estimate(ctx: _Ctx) -> dict:
     cfg = ctx.cfg
     huber_c = _effective_huber_c(cfg)
@@ -577,6 +608,7 @@ def _s_estimate(ctx: _Ctx) -> dict:
         "max_iterations": cfg.max_iterations,
         "huber_c": huber_c,
         "quality_summary_top_n": cfg.top_residuals_n,
+        "reconcile_balance": cfg.reconcile_balance,
     }
     if cfg.algorithm == "ipm":
         kw.update(_ipm_kwargs(cfg))
@@ -604,6 +636,7 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
             "tolerance": 1e-4 if cfg.algorithm == "wls" else 1e-3,
             "huber_c": huber_c,
             "quality_summary_top_n": cfg.top_residuals_n,
+            "reconcile_balance": cfg.reconcile_balance,
         }
         if cfg.algorithm == "ipm":
             kw.update(_ipm_kwargs(cfg))
@@ -659,6 +692,10 @@ STEPS: list[Step] = [
         "Применить план № отпаек → динамический tap_ratio.",
         _s_rpn,
         toggle="apply_rpn",
+        # needs_derived — наследие: выбор отпайки давно едет через входную
+        # таблицу tap_steps (производитель данных), derived шаг не читает.
+        # Флаг оставлен сознательно (бит-в-бит): derived=None означает
+        # «вход без деривации», и применять РПН на таком входе не нужно.
         needs_derived=True,
         network=True,
     ),
@@ -671,6 +708,8 @@ STEPS: list[Step] = [
         toggle="apply_reactors",
         network=True,
     ),
+    # ИНВАРИАНТ ПОРЯДКА: telemetry строго ПОСЛЕ rpn — применение z-вектора
+    # читает branch.susceptance, который H30-шунт-факторизация РПН меняет.
     Step(
         "telemetry",
         "Телеметрия (z-вектор)",
@@ -759,6 +798,11 @@ STEPS: list[Step] = [
         _s_refine_node_types,
         toggle="refine_node_types",
     ),
+    # ИНВАРИАНТ ПОРЯДКА (цепочка из 4 шагов, перестановка молча меняет числа):
+    # aggregate_generators (перезаписывает node.generation_* суммой активных
+    # генераторов) → materialize (наблюдаемый режим поверх) → add_pseudo
+    # (P/Q-приоры читают итоговые pg−pn) → flow_sigma_floor (селектор
+    # is_pseudo==0 требует, чтобы все псевдо-меры уже были добавлены).
     Step(
         "aggregate_generators",
         "Агрегировать генераторы к узлу",
@@ -817,6 +861,13 @@ STEPS: list[Step] = [
         toggle="add_pseudo",
     ),
     Step(
+        "flow_sigma_floor",
+        "σ-floor flow-мер от шкалы канала",
+        _G_XML,
+        "apply_flow_sigma_floor: variance real branch-flow мер ≥ (frac·√3·Vn·1кА)².",
+        _s_flow_sigma_floor,
+    ),
+    Step(
         "estimate",
         "Оценка состояния (WLS/IPM)",
         _G_EST,
@@ -837,6 +888,48 @@ STEPS: list[Step] = [
 # ---------------------------------------------------------------------------
 # Исполнение
 # ---------------------------------------------------------------------------
+
+# Страж согласованности config ↔ derived («cfg дважды»): производитель планов
+# и исполнитель шагов обязаны гейтиться ОДНИМ конфигом. Если включённый шаг
+# не получил свой план — это рассинхрон конфигов (derive с одним cfg, run с
+# другим), а не легальный вход; падаем рано и понятно, не assert'ом внутри
+# шага. materialize здесь сознательно НЕ перечислен: его план опционален
+# (шаг мягко скипается с reason — легальный вход без наблюдаемого режима).
+_REQUIRED_DERIVED_PLANS: dict[str, tuple[str, ...]] = {
+    "voltage_nominal": ("voltage_nominal",),
+    "topology": ("topology_resolved",),
+    "telemetry": ("telemetry_resolved", "telemetry_arg_keys"),
+}
+
+
+def _check_derived_consistency(
+    cfg: PipelineConfig, derived: DerivedInputs, *, network_only: bool = False
+) -> None:
+    """Проверить, что каждый включённый needs_derived-шаг получил свой план.
+
+    Вызывается только при ``derived is not None`` (вход без деривации легален —
+    needs_derived-шаги тогда пропускаются целиком).
+    """
+    missing: list[str] = []
+    for step in STEPS:
+        plans = _REQUIRED_DERIVED_PLANS.get(step.name)
+        if not plans:
+            continue
+        if network_only and not step.network:
+            continue
+        if step.toggle is not None and not getattr(cfg, step.toggle):
+            continue
+        missing.extend(
+            f"шаг '{step.name}' включён, derived.{attr} отсутствует"
+            for attr in plans
+            if getattr(derived, attr, None) is None
+        )
+    if missing:
+        raise ValueError(
+            "Рассинхрон config ↔ derived: "
+            + "; ".join(missing)
+            + ". Деривация планов и прогон обязаны гейтиться одним и тем же config."
+        )
 
 
 def _emit(on_event: Callable[[dict], None] | None, event: dict) -> None:
@@ -966,6 +1059,7 @@ def run(
     # контрактными ядрами на своих позициях. Если планов нет — needs_derived-шаги
     # пропускаются (модель должна уже нести измерения).
     if derived is not None:
+        _check_derived_consistency(cfg, derived)
         ctx.derived = derived
 
     _emit(
@@ -1059,6 +1153,7 @@ def prepare_network(
     working: Working = _build_working(model)
     ctx = _Ctx(model=working, cfg=cfg)
     if derived is not None:
+        _check_derived_consistency(cfg, derived, network_only=True)
         ctx.derived = derived
 
     for step in STEPS:

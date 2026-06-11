@@ -28,6 +28,7 @@ from gridstate.telemetry.quality import (
     tm_code_histogram,
 )
 from gridstate.telemetry.rpn import apply_rpn_resolved
+from gridstate.telemetry.sigma_floor import apply_flow_sigma_floor
 from gridstate.telemetry.topology import (
     aggregate_generators_to_node,
     apply_generator_status_from_node,
@@ -57,6 +58,7 @@ __all__ = [
     "aggregate_generators_to_node",
     "aggregate_qualities",
     "analyze_branch_loss_consistency",
+    "apply_flow_sigma_floor",
     "apply_generator_status_from_node",
     "apply_materialize_resolved",
     "apply_reactors_to_node_shunt",

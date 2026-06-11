@@ -64,8 +64,11 @@ class IPMResult:
               достигнут (на реальных моделях |grad|∞ ~1–100 из-за шкалы
               весов 1/σ² — НЕ признак разноса);
             * ``"stalled"`` — солвер остановился до завершения
-              расписания (lazy-break без принятых шагов / исчерпан
-              ``outer_max``);
+              расписания (lazy-break: Armijo не нашёл допустимого шага
+              и inner не сошёлся по толерансу / исчерпан ``outer_max``).
+              Сходимость inner без принятых шагов (старт в стационарной
+              точке Φ(·; μ)) stall'ом НЕ считается — μ-расписание
+              продолжается;
             * ``"error"`` — терминальная ошибка (spsolve fail,
               non-finite step).
         success: ``status in ("kkt", "completed")`` — «решение
@@ -332,6 +335,13 @@ def solve_ipm(
     schedule_done = False
     for outer_iter in range(outer_max):
         any_inner_step = False  # Lazy outer: если ни одного шага → break.
+        # inner вышел по толерансу (grad/step < inner_tol) — стационарная
+        # точка Φ(·; μ) достигнута. Это СХОДИМОСТЬ inner для текущего μ,
+        # а не стагнация: μ-расписание должно продолжаться. Без этого
+        # флага старт в/около решения (после promote результата во вход)
+        # давал ложный «stalled»: первый же Newton-шаг < tol → нет
+        # принятых шагов → lazy-break до μ_min.
+        inner_converged = False
         # IPM-специфика: adaptive c_eff пересчитывается **каждый outer** —
         # residuals резко падают между outer (μ уменьшается, barrier
         # ослабевает), поэтому one-shot adaptive (как в WLS) даёт c_eff
@@ -376,6 +386,7 @@ def solve_ipm(
             grad_inf = float(np.max(np.abs(grad))) if grad.size else 0.0
 
             if grad_inf < inner_tol:
+                inner_converged = True
                 break
 
             G = (HtRinv @ H).tocsc()
@@ -422,6 +433,7 @@ def solve_ipm(
                 dx = dx * (tr_radius / step_inf_raw)
             step_inf = float(np.max(np.abs(dx))) if dx.size else 0.0
             if step_inf < inner_tol:
+                inner_converged = True
                 break
 
             # Armijo + fraction-to-boundary
@@ -481,10 +493,13 @@ def solve_ipm(
         if mu <= mu_min:
             schedule_done = True
             break
-        # Lazy outer: если на этой outer ни одного шага не приняли —
-        # solver застрял (плоский min или плохая обусловленность).
+        # Lazy outer: если на этой outer ни одного шага не приняли И inner
+        # НЕ сошёлся по толерансу — solver застрял (Armijo не нашёл
+        # допустимого шага спуска: плоский min или плохая обусловленность).
         # Дальнейшие outer-iter с меньшим μ не помогут.
-        if not any_inner_step:
+        # Если же inner сошёлся (grad/step < tol) без принятых шагов —
+        # это стационарность для текущего μ; μ-расписание продолжается.
+        if not any_inner_step and not inner_converged:
             logger.debug("ipm: no inner step at outer=%d (μ=%.3e) — break outer", outer_iter, mu)
             break
         mu = max(mu * mu_factor, mu_min * 0.5)

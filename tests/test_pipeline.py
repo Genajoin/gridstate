@@ -101,3 +101,51 @@ def test_effective_huber_c_auto():
     assert P._effective_huber_c(P.PipelineConfig(algorithm="wls")) == 1.5
     assert P._effective_huber_c(P.PipelineConfig(algorithm="ipm")) == 2.0
     assert P._effective_huber_c(P.PipelineConfig(huber_c=5.0)) == 5.0
+
+
+# ---------------------------------------------------------------------------
+# Страж согласованности config ↔ derived («cfg дважды»)
+# ---------------------------------------------------------------------------
+
+
+def _full_derived() -> P.DerivedInputs:
+    from gridstate.contract.derived import DerivedInputs
+
+    return DerivedInputs(
+        topology_resolved=[],
+        telemetry_resolved={},
+        telemetry_arg_keys=[],
+        telemetry_total_args=0,
+    )
+
+
+def test_derived_consistency_ok_on_matched_config():
+    P._check_derived_consistency(P.PipelineConfig(), _full_derived())
+
+
+def test_derived_consistency_rejects_missing_topology_plan():
+    import pytest
+
+    d = _full_derived()
+    d.topology_resolved = None
+    with pytest.raises(ValueError, match="topology"):
+        P._check_derived_consistency(P.PipelineConfig(apply_topology=True), d)
+    # выключенный toggle делает отсутствие плана легальным
+    P._check_derived_consistency(P.PipelineConfig(apply_topology=False), d)
+
+
+def test_derived_consistency_rejects_missing_telemetry_plan():
+    import pytest
+
+    d = _full_derived()
+    d.telemetry_resolved = None
+    with pytest.raises(ValueError, match="telemetry"):
+        P._check_derived_consistency(P.PipelineConfig(), d)
+
+
+def test_derived_consistency_network_only_skips_telemetry():
+    # prepare_network исполняет только network=True шаги: telemetry не из них,
+    # её план в этом режиме не обязателен.
+    d = _full_derived()
+    d.telemetry_resolved = None
+    P._check_derived_consistency(P.PipelineConfig(), d, network_only=True)
