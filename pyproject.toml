@@ -43,6 +43,11 @@ dependencies = [
 [project.optional-dependencies]
 numba = ["numba>=0.57"]
 
+# Fast KKT solver: CHOLMOD (SuiteSparse) via cvxopt — symbolic factorization
+# reuse across Newton iterations, x8-11 on large models. Without it the
+# solver falls back to scipy.spsolve (kkt_solver="auto").
+fast = ["cvxopt>=1.3"]
+
 # Генерация тестовых фикстур на стандартных IEEE-моделях (tools/gen_ieee_fixtures.py).
 # pandapower нужен ТОЛЬКО для генерации фикстур; рантайм и сами тесты остаются
 # numpy/scipy-only (tests/test_ieee_cases.py читает готовые .npz, pandapower не тянет).
@@ -118,7 +123,7 @@ strict_equality = true
 # no stubs; pandapower (fixture generation only) and PyInstaller (build hook) are
 # likewise untyped. Suppress import-untyped for these — our own code stays typed.
 [[tool.mypy.overrides]]
-module = ["numba.*", "scipy.*", "pandapower.*", "PyInstaller.*"]
+module = ["numba.*", "scipy.*", "pandapower.*", "PyInstaller.*", "cvxopt.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
