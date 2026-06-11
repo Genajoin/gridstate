@@ -6,7 +6,7 @@ individual function docstrings for usage.
 
 from importlib.metadata import PackageNotFoundError, version
 
-from gridstate.api import estimate
+from gridstate.api import estimate, populate_quality_summary
 from gridstate.contract import (
     SEInput,
     SEOutput,
@@ -81,6 +81,7 @@ __all__ = [
     "load_se_input",
     "load_se_input_npz",
     "pipeline_manifest",
+    "populate_quality_summary",
     "remove_bad_data",
     "run_pipeline",
     "run_se",

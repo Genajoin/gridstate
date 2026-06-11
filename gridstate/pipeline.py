@@ -38,7 +38,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
-from gridstate.api import estimate
+from gridstate.api import estimate, populate_quality_summary
 from gridstate.contract.derived import DerivedInputs
 from gridstate.post_processing import refine_anti_overshoot
 from gridstate.preprocessing import (
@@ -607,7 +607,9 @@ def _s_estimate(ctx: _Ctx) -> dict:
         "tolerance": cfg.tolerance,
         "max_iterations": cfg.max_iterations,
         "huber_c": huber_c,
-        "quality_summary_top_n": cfg.top_residuals_n,
+        # Summary считается один раз — на финальном решении в run()
+        # (см. populate_quality_summary); промежуточные solve без неё.
+        "include_quality_summary": False,
         "reconcile_balance": cfg.reconcile_balance,
     }
     if cfg.algorithm == "ipm":
@@ -635,7 +637,7 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
             "max_iterations": 150,
             "tolerance": 1e-4 if cfg.algorithm == "wls" else 1e-3,
             "huber_c": huber_c,
-            "quality_summary_top_n": cfg.top_residuals_n,
+            "include_quality_summary": False,
             "reconcile_balance": cfg.reconcile_balance,
         }
         if cfg.algorithm == "ipm":
@@ -1108,6 +1110,23 @@ def run(
             },
         )
 
+    assert ctx.result is not None  # _s_estimate (без toggle) всегда заполняет result
+
+    # Quality summary — один раз, на финальном решении: промежуточные solve
+    # (estimate, anti-overshoot re-solve) идут с include_quality_summary=False,
+    # т.к. её расчёт на крупных моделях сопоставим по цене с самим solve.
+    t0 = time.monotonic()
+    populate_quality_summary(ctx.result, top_n=cfg.top_residuals_n)
+    _emit(
+        on_event,
+        {
+            "type": "step_done",
+            "name": "quality_summary",
+            "stats": {},
+            "duration_ms": int((time.monotonic() - t0) * 1000),
+        },
+    )
+
     _emit(
         on_event,
         {
@@ -1116,7 +1135,6 @@ def run(
             "iterations": int(getattr(ctx.result, "iterations", 0)),
         },
     )
-    assert ctx.result is not None  # _s_estimate (без toggle) всегда заполняет result
     return ctx.result
 
 

@@ -675,7 +675,13 @@ def refine_anti_overshoot(
         ``(result, stats)`` — финальный ``SEResult`` (refined или base при откате),
         ``stats = {"tightened": N, "accepted": bool, "max_ratio_before/after": ...}``.
     """
-    nd0 = model.nodes.to_numpy().copy()  # снимок V/δ для отката
+    # Снимки для ПОЛНОГО отката: узлы (V/δ/estimated), ветви (потоки) и меры
+    # (добавленные tight-priors + estimated_si). Иначе revert оставлял бы в
+    # модели меры и branch/measurement-оценки от отвергнутого решения —
+    # несогласованные с базовыми V/δ (это ломало бы и post-hoc quality
+    # summary, и bad-data re-pass, читающие estimated_si).
+    nd0 = model.nodes.to_numpy().copy()
+    br0 = model.branches.to_numpy().copy()
     maxr0 = _max_voltage_ratio(model)
 
     me = model.measurements.to_numpy()
@@ -738,5 +744,9 @@ def refine_anti_overshoot(
     }
     if accepted:
         return refined, stats
-    model.nodes.update_from_array(nd0)  # откат V/δ к базе
+    # Полный откат к базе: V/δ + branch-потоки + меры (удаляются добавленные
+    # tight-priors, estimated_si возвращаются к базовому решению).
+    model.nodes.update_from_array(nd0)
+    model.branches.update_from_array(br0)
+    model.measurements.update_from_array(me)
     return result, stats

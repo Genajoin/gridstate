@@ -66,6 +66,24 @@ def _diag(values: np.ndarray) -> csr_matrix:
     return cast("csr_matrix", csr_matrix((values, (idx, idx)), shape=(n, n)))
 
 
+def _inverse_pos_map(node_pos_arr: np.ndarray) -> np.ndarray:
+    """Обратная карта ``pos → индекс в node_pos_arr`` (нет узла → ``−1``).
+
+    ``inv[node_pos_arr[k]] = k`` для всех ``k``; остальные ячейки ``−1``.
+    Дублей в ``node_pos_arr`` по построению ``StateLayout`` нет (каждый
+    активный узел добавляется один раз, см. ``preprocessing/ipm_setup.py``),
+    поэтому простое прямое присваивание корректно совпадает с прежним
+    ``np.where(node_pos_arr == target)[0][0]`` (первое = единственное).
+    Для пустой секции возвращается массив размера 1 (только ``−1``).
+    """
+    if node_pos_arr.size == 0:
+        return np.full(1, -1, dtype=np.int64)
+    size = int(node_pos_arr.max()) + 1
+    inv = np.full(size, -1, dtype=np.int64)
+    inv[node_pos_arr.astype(np.int64)] = np.arange(node_pos_arr.size, dtype=np.int64)
+    return inv
+
+
 class BaseAlgebra:
     """Объект, фиксирующий топологию (Ybus/Yf/Yt + ``MeasurementIndex`` +
     ``StateLayout``) и умеющий вычислять ``h(V, δ)`` и ``H(V, δ)`` при очередных
@@ -216,10 +234,17 @@ class BaseAlgebra:
                 m = (kind == prior_kind) & (ok == OBJ_NODE)
                 if not m.any() or est_arr is None or est_arr.size == 0:
                     continue
-                for i_meas in np.where(m)[0]:
-                    target = int(op[i_meas])
-                    j = np.where(node_pos_arr == target)[0]
-                    h[i_meas] = float(est_arr[int(j[0])]) if j.size else 0.0
+                # Обратная карта pos → индекс в node_pos_arr; нет узла → −1.
+                inv = _inverse_pos_map(node_pos_arr)
+                idx_meas = np.where(m)[0]
+                pos_meas = op[idx_meas].astype(np.int64)
+                # Защита выхода за границы inv (pos ≥ inv.size → нет в массиве).
+                in_range = pos_meas < inv.size
+                j = np.full(pos_meas.shape, -1, dtype=np.int64)
+                j[in_range] = inv[pos_meas[in_range]]
+                # j < 0 → узла нет в node_pos_arr → 0.0 (как в прежнем цикле).
+                vals = np.where(j >= 0, est_arr[np.where(j >= 0, j, 0)], 0.0)
+                h[idx_meas] = vals
 
         return h
 
@@ -238,24 +263,22 @@ class BaseAlgebra:
         отсутствующие в ``gen/nag_node_pos``, вкладываются как 0.
         """
         out = np.zeros(node_pos.shape, dtype=np.float64)
+        node_pos_i = node_pos.astype(np.int64)
         if gen_estimated is not None and gen_estimated.size and gen_node_pos.size:
+            # lookup[pos] = est, NaN для узлов без box-var; дубли в gen_node_pos
+            # (по построению StateLayout их нет) → последний выигрывает, как в
+            # прежнем цикле присваивания.
             gen_lookup = np.full(int(gen_node_pos.max()) + 1, np.nan)
-            for i_pos, np_pos in enumerate(gen_node_pos):
-                gen_lookup[int(np_pos)] = float(gen_estimated[i_pos])
-            for j, target in enumerate(node_pos):
-                if int(target) < gen_lookup.shape[0]:
-                    val = gen_lookup[int(target)]
-                    if not np.isnan(val):
-                        out[j] += val
+            gen_lookup[gen_node_pos.astype(np.int64)] = gen_estimated.astype(np.float64)
+            mask = node_pos_i < gen_lookup.size
+            vals = gen_lookup[node_pos_i[mask]]
+            out[mask] += np.where(np.isnan(vals), 0.0, vals)
         if nag_estimated is not None and nag_estimated.size and nag_node_pos.size:
             nag_lookup = np.full(int(nag_node_pos.max()) + 1, np.nan)
-            for i_pos, np_pos in enumerate(nag_node_pos):
-                nag_lookup[int(np_pos)] = float(nag_estimated[i_pos])
-            for j, target in enumerate(node_pos):
-                if int(target) < nag_lookup.shape[0]:
-                    val = nag_lookup[int(target)]
-                    if not np.isnan(val):
-                        out[j] -= val
+            nag_lookup[nag_node_pos.astype(np.int64)] = nag_estimated.astype(np.float64)
+            mask = node_pos_i < nag_lookup.size
+            vals = nag_lookup[node_pos_i[mask]]
+            out[mask] -= np.where(np.isnan(vals), 0.0, vals)
         return out
 
     # ----------------------------------------------------------- H = ∂h/∂E
@@ -437,91 +460,79 @@ class BaseAlgebra:
 
         Аналогично для Q-balance.
         """
-        rows: list[int] = []
-        cols: list[int] = []
-        data: list[float] = []
-
         kind = self.meas_index.kind
         ok = self.meas_index.object_kind
         op = self.meas_index.object_pos
 
-        # P-balance: ∂h/∂Pgen=-1, ∂h/∂Pnag=+1
-        mask = (kind == KIND_NODE_BALANCE_P) & (ok == OBJ_NODE)
-        for i_meas in np.where(mask)[0]:
-            node_pos = int(op[i_meas])
-            # Pgen column
-            j = np.where(self.layout.pgen_node_pos == node_pos)[0]
-            if j.size:
-                rows.append(int(i_meas))
-                cols.append(int(j[0]))  # offset 0: pgen начинается с 0 в box-блоке
-                data.append(-1.0)
-            # Pnag column
-            j = np.where(self.layout.pnag_node_pos == node_pos)[0]
-            if j.size:
-                rows.append(int(i_meas))
-                cols.append(
-                    int(self.layout.pgen_node_pos.size)
-                    + int(self.layout.qgen_node_pos.size)
-                    + int(j[0])
-                )
-                data.append(+1.0)
+        pgen_pos = self.layout.pgen_node_pos
+        qgen_pos = self.layout.qgen_node_pos
+        pnag_pos = self.layout.pnag_node_pos
+        qnag_pos = self.layout.qnag_node_pos
+        off_qgen = int(pgen_pos.size)
+        off_pnag = off_qgen + int(qgen_pos.size)
+        off_qnag = off_pnag + int(pnag_pos.size)
 
-        # Q-balance: ∂h/∂Qgen=-1, ∂h/∂Qnag=+1
-        mask = (kind == KIND_NODE_BALANCE_Q) & (ok == OBJ_NODE)
-        for i_meas in np.where(mask)[0]:
-            node_pos = int(op[i_meas])
-            j = np.where(self.layout.qgen_node_pos == node_pos)[0]
-            if j.size:
-                rows.append(int(i_meas))
-                cols.append(int(self.layout.pgen_node_pos.size) + int(j[0]))
-                data.append(-1.0)
-            j = np.where(self.layout.qnag_node_pos == node_pos)[0]
-            if j.size:
-                rows.append(int(i_meas))
-                cols.append(
-                    int(self.layout.pgen_node_pos.size)
-                    + int(self.layout.qgen_node_pos.size)
-                    + int(self.layout.pnag_node_pos.size)
-                    + int(j[0])
-                )
-                data.append(+1.0)
+        # Обратные карты pos → индекс в секции (нет узла → −1). Дублей в
+        # *_node_pos по построению StateLayout нет (см. _inverse_pos_map),
+        # поэтому совпадает с прежним np.where(...)[0][0] (первое = единств.).
+        inv_pgen = _inverse_pos_map(pgen_pos)
+        inv_qgen = _inverse_pos_map(qgen_pos)
+        inv_pnag = _inverse_pos_map(pnag_pos)
+        inv_qnag = _inverse_pos_map(qnag_pos)
+
+        row_blocks: list[np.ndarray] = []
+        col_blocks: list[np.ndarray] = []
+        data_blocks: list[np.ndarray] = []
+
+        def _emit(mask: np.ndarray, inv: np.ndarray, offset: int, sign: float) -> None:
+            """Добавить ``sign`` в столбец ``offset + inv[pos]`` для мер из ``mask``.
+
+            Меры без узла в секции (``inv[pos] < 0`` либо ``pos`` вне ``inv``)
+            пропускаются — как ``if j.size`` в прежних циклах.
+            """
+            idx_meas = np.where(mask)[0]
+            if idx_meas.size == 0:
+                return
+            pos_meas = op[idx_meas].astype(np.int64)
+            in_range = pos_meas < inv.size
+            j = np.full(pos_meas.shape, -1, dtype=np.int64)
+            j[in_range] = inv[pos_meas[in_range]]
+            valid = j >= 0
+            if not valid.any():
+                return
+            row_blocks.append(idx_meas[valid].astype(np.int64))
+            col_blocks.append(offset + j[valid])
+            data_blocks.append(np.full(int(valid.sum()), sign, dtype=np.float64))
+
+        # P-balance: ∂h/∂Pgen=-1 (offset 0), ∂h/∂Pnag=+1 (offset pnag).
+        mask_bp = (kind == KIND_NODE_BALANCE_P) & (ok == OBJ_NODE)
+        _emit(mask_bp, inv_pgen, 0, -1.0)
+        _emit(mask_bp, inv_pnag, off_pnag, +1.0)
+
+        # Q-balance: ∂h/∂Qgen=-1 (offset qgen), ∂h/∂Qnag=+1 (offset qnag).
+        mask_bq = (kind == KIND_NODE_BALANCE_Q) & (ok == OBJ_NODE)
+        _emit(mask_bq, inv_qgen, off_qgen, -1.0)
+        _emit(mask_bq, inv_qnag, off_qnag, +1.0)
 
         # Soft-prior: ∂h/∂{box-var на узле} = +1; иначе 0.
         # offset для каждого kind: pgen=0, qgen=|pgen|, pnag=|pgen|+|qgen|,
         # qnag=|pgen|+|qgen|+|pnag|.
-        for prior_kind, node_pos_arr, offset in (
-            (KIND_BOX_PRIOR_PGEN, self.layout.pgen_node_pos, 0),
-            (KIND_BOX_PRIOR_QGEN, self.layout.qgen_node_pos, int(self.layout.pgen_node_pos.size)),
-            (
-                KIND_BOX_PRIOR_PNAG,
-                self.layout.pnag_node_pos,
-                int(self.layout.pgen_node_pos.size) + int(self.layout.qgen_node_pos.size),
-            ),
-            (
-                KIND_BOX_PRIOR_QNAG,
-                self.layout.qnag_node_pos,
-                int(self.layout.pgen_node_pos.size)
-                + int(self.layout.qgen_node_pos.size)
-                + int(self.layout.pnag_node_pos.size),
-            ),
+        for prior_kind, inv, offset in (
+            (KIND_BOX_PRIOR_PGEN, inv_pgen, 0),
+            (KIND_BOX_PRIOR_QGEN, inv_qgen, off_qgen),
+            (KIND_BOX_PRIOR_PNAG, inv_pnag, off_pnag),
+            (KIND_BOX_PRIOR_QNAG, inv_qnag, off_qnag),
         ):
-            mask_p = (kind == prior_kind) & (ok == OBJ_NODE)
-            for i_meas in np.where(mask_p)[0]:
-                node_pos = int(op[i_meas])
-                j = np.where(node_pos_arr == node_pos)[0]
-                if j.size:
-                    rows.append(int(i_meas))
-                    cols.append(offset + int(j[0]))
-                    data.append(+1.0)
+            _emit((kind == prior_kind) & (ok == OBJ_NODE), inv, offset, +1.0)
 
-        if not rows:
+        if not row_blocks:
             return cast("csr_matrix", csr_matrix((m_total, n_box)))
         return cast(
             "csr_matrix",
             csr_matrix(
                 (
-                    np.asarray(data, dtype=np.float64),
-                    (np.asarray(rows, dtype=np.int64), np.asarray(cols, dtype=np.int64)),
+                    np.concatenate(data_blocks),
+                    (np.concatenate(row_blocks), np.concatenate(col_blocks)),
                 ),
                 shape=(m_total, n_box),
             ),

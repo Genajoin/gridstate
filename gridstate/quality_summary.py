@@ -8,10 +8,13 @@
 * ``observability_warnings`` — ID узлов с нулевыми столбцами ``H``.
 
 Используется ровно один проход по ``H``/``R⁻¹``: ``Ω = R − H G⁻¹ Hᵀ``
-считается через плотную алгебру (``n_state = 2·n_bus − 1`` обычно мало).
-Логика повторяет ``gridstate.validation.bad_data._normalized_residuals`` —
-здесь вынесено локально, чтобы не тянуть зависимость на ``estimate()``
-напрямую и оставить summary дёшевой опцией (можно отключить через
+считается через Cholesky(G) + блочную треугольную подстановку по строкам
+``H`` — прежняя плотная алгебра (``H.toarray()`` + ``solve(G, Hᵀ)``) на
+крупных моделях (десятки тысяч мер) стоила ~40% всего времени SE. Логика
+повторяет
+``gridstate.validation.bad_data._normalized_residuals`` — здесь вынесено
+локально, чтобы не тянуть зависимость на ``estimate()`` напрямую и оставить
+summary дёшевой опцией (можно отключить через
 ``include_quality_summary=False``).
 """
 
@@ -45,22 +48,42 @@ def _normalized_residuals(r: np.ndarray, H: csr_matrix, sigma2: np.ndarray) -> n
     """``r_N = |r| / √diag(Ω)``, где ``Ω = R − H G⁻¹ Hᵀ``.
 
     Если ``Ω_ii`` численно ≤ 0 — non-redundant измерение, возвращаем ``inf``.
-    Используем плотную алгебру: ``n_state`` обычно ≤ десятков тысяч,
-    sparse-инверсия избыточна.
+    ``diag(H G⁻¹ Hᵀ)`` собирается через Cholesky(G) + блочную треугольную
+    подстановку по строкам ``H`` — без материализации плотной ``H`` (m×n)
+    и без полного ``solve(G, Hᵀ)``, которые на крупных моделях доминировали
+    во времени всего SE.
     """
     if r.size == 0:
         return np.array([], dtype=np.float64)
 
-    H_dense = H.toarray()
+    from scipy.linalg import cho_factor, solve_triangular
+    from scipy.sparse import diags
+
+    H_csr = H.tocsr()
     R_inv_diag = 1.0 / sigma2
-    # G = Hᵀ · R⁻¹ · H
-    G = H_dense.T @ (R_inv_diag[:, None] * H_dense)
+    # G = Hᵀ · R⁻¹ · H — sparse-сборка (дёшево), факторизация — плотный
+    # Cholesky: G SPD, и diag(H G⁻¹ Hᵀ) = ‖L⁻¹·hᵢ‖² требует лишь ОДНОЙ
+    # треугольной подстановки (BLAS trsm, многопоточно) вместо полного
+    # solve. Sparse-альтернатива (splu + блочный solve) здесь медленнее:
+    # SuperLU слабо векторизован по множественным правым частям.
+    G = np.asarray((H_csr.T @ diags(R_inv_diag) @ H_csr).todense())
     try:
-        X = np.linalg.solve(G, H_dense.T)  # G⁻¹ · Hᵀ
+        L, lower = cho_factor(G, lower=True, overwrite_a=True, check_finite=False)
     except np.linalg.LinAlgError as exc:
         logger.warning("quality_summary: G не инвертируется — r_N = inf (%s)", exc)
         return np.full_like(r, np.inf, dtype=np.float64)
-    HGH_diag = np.einsum("ij,ji->i", H_dense, X)
+
+    m = H_csr.shape[0]
+    HGH_diag = np.empty(m, dtype=np.float64)
+    # Блоками по строкам H — ограничивает память под dense RHS (n_state × block).
+    block = 4096
+    for s in range(0, m, block):
+        e = min(s + block, m)
+        Y = solve_triangular(
+            L, H_csr[s:e, :].toarray().T, lower=lower, check_finite=False
+        )  # (n_state × b) = L⁻¹ · Hbᵀ
+        HGH_diag[s:e] = np.einsum("ij,ij->j", Y, Y)
+
     omega_diag = sigma2 - HGH_diag
     omega_diag = np.where(omega_diag > 1e-12, omega_diag, np.nan)
     rn = np.abs(r) / np.sqrt(omega_diag)
@@ -204,10 +227,13 @@ def observability_warnings_from_H(
     ``2·n_bus − 1``. Для IPM-расширенного state дополнительные столбцы
     (Pgen/Qgen/Pnag/Qnag) игнорируются — это box-vars, не узлы.
     """
-    H_dense = H.toarray() if hasattr(H, "toarray") else np.asarray(H)
-    if H_dense.size == 0:
+    if H.shape[0] == 0 or H.shape[1] == 0:
         return []
-    col_norms = np.linalg.norm(H_dense, axis=0)
+    if hasattr(H, "multiply"):
+        # sparse: нормы столбцов без материализации плотной (m×n)
+        col_norms = np.sqrt(np.asarray(H.multiply(H).sum(axis=0)).ravel())
+    else:
+        col_norms = np.linalg.norm(np.asarray(H), axis=0)
     n_state_wls = 2 * n_bus - 1
     # Ограничиваем анализ первыми n_state_wls столбцами — остальные
     # (если есть) это IPM box-vars и не имеют 1-к-1 mapping на узел.
