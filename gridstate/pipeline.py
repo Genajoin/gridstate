@@ -70,6 +70,7 @@ from gridstate.topology import (
     refine_node_types_from_generators,
     refine_slack_to_one,
 )
+from gridstate.v_mirror import apply_v_mirror_plan, classify_v_mirror
 from gridstate.v_refine import apply_v_refine_plan, classify_v_refine
 from gridstate.working import Working
 
@@ -473,6 +474,40 @@ class PipelineConfig:
         help="variance := variance · factor² (σ × factor). 0.7 — оптимум 4 ОДУ; "
         "0.5 точнее для bias, но ломает class-max региона с битой V-кромкой.",
     )
+    v_mirror: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="V-mirror (значение pseudo-V слепых кластеров)",
+        help="Двухпроходный: pseudo-V-плейсхолдеры (value=Vnom) слепых кластеров "
+        "без real-TM переставить в median pu границы ТОГО ЖЕ класса × Vnom (лишь "
+        "узлы систематически ниже границы — lift-гейт), + warm re-solve. Лечит "
+        "провисание слепых хвостов к номиналу (OC держит их на уровне границы). "
+        "Меняется только значение приора, σ не трогается. Валидирован на 4 ОДУ "
+        "(Восток p50 −13%/p95 −16%). Default OFF (включается потребителем).",
+    )
+    v_mirror_max_pu_dev: float = _param(
+        0.25,
+        group=_G_POST,
+        label="Гейт границы |pu−1|",
+        control="number",
+        min=0.01,
+        max=1.0,
+        depends={"v_mirror": True},
+        help="Кластер перетираем, только если median(V/Vnom) границы в пределах "
+        "[1−d, 1+d]. Отбрасывает мусорную границу с диким уровнем.",
+    )
+    v_mirror_min_lift: float = _param(
+        0.01,
+        group=_G_POST,
+        label="Lift-гейт (pu граница − pu узел)",
+        control="number",
+        min=0.0,
+        max=0.5,
+        depends={"v_mirror": True},
+        help="Трогаем узел, только если его решение ниже границы своего класса "
+        "более чем на min_lift (в pu). Узлы уже-на-уровне не двигаем — иначе их "
+        "подъём пушит наблюдаемую сеть вверх (реальный-vm регион регрессирует).",
+    )
     anti_overshoot: bool = _toggle(
         True,
         group=_G_POST,
@@ -802,6 +837,47 @@ def _s_v_refine(ctx: _Ctx) -> dict:
     return stats
 
 
+def _s_v_mirror(ctx: _Ctx) -> dict:
+    assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
+    cfg = ctx.cfg
+    if not ctx.result.success:
+        # Непригодное решение — V первого прохода ненадёжны, уровень границы
+        # слепого кластера определять не по чему.
+        return {"skipped": "решение непригодно — нет надёжного уровня границы"}
+    plan = classify_v_mirror(
+        ctx.model.measurements.to_numpy(),
+        ctx.model.branches.to_numpy(),
+        ctx.model.nodes.to_numpy(),
+        max_pu_dev=cfg.v_mirror_max_pu_dev,
+        min_lift=cfg.v_mirror_min_lift,
+    )
+    if plan.empty:
+        return {"clusters": 0, "skipped": "no-op (нет слепых кластеров с границей)"}
+    stats = apply_v_mirror_plan(ctx.model, plan)
+    # Warm re-solve на переставленных pseudo-V: V/δ прохода 1 уже в working.
+    huber_c = _effective_huber_c(cfg)
+    kw: dict[str, Any] = {
+        "algorithm": cfg.algorithm,
+        "init": "results",
+        "tolerance": cfg.tolerance,
+        "max_iterations": cfg.max_iterations,
+        "huber_c": huber_c,
+        "kkt_solver": cfg.kkt_solver,
+        "include_quality_summary": False,
+        "reconcile_balance": cfg.reconcile_balance,
+    }
+    if cfg.algorithm == "ipm":
+        kw.update(_ipm_kwargs(cfg))
+    ctx.result = estimate(ctx.model, **kw)
+    stats.update(
+        {
+            "success": bool(ctx.result.success),
+            "iterations": int(ctx.result.iterations),
+        }
+    )
+    return stats
+
+
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
     assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
     cfg = ctx.cfg
@@ -1056,10 +1132,11 @@ STEPS: list[Step] = [
         "gridstate.estimate: solve_wls / solve_ipm.",
         _s_estimate,
     ),
-    # ИНВАРИАНТ ПОРЯДКА: bad_data_repass → v_refine → anti_overshoot строго
-    # МЕЖДУ estimate и финалом. bad_data правит грубые ошибки (значения/статусы)
-    # по остаткам первого solve; v_refine ужесточает σ согласованных V по
-    # уже-правленым остаткам (теплейшие); anti-overshoot полирует итог.
+    # ИНВАРИАНТ ПОРЯДКА: bad_data_repass → v_refine → v_mirror → anti_overshoot
+    # строго МЕЖДУ estimate и финалом. bad_data правит грубые ошибки (значения/
+    # статусы) по остаткам первого solve; v_refine ужесточает σ согласованных V
+    # по уже-правленым остаткам; v_mirror переставляет значение pseudo-V слепых
+    # кластеров по уровню (теплейшей) границы; anti-overshoot полирует итог.
     Step(
         "bad_data_repass",
         "Bad-data re-pass (Линия C)",
@@ -1075,6 +1152,14 @@ STEPS: list[Step] = [
         "classify_v_refine согласованных V по остаткам + warm re-solve на ужесточённых σ.",
         _s_v_refine,
         toggle="v_refine",
+    ),
+    Step(
+        "v_mirror",
+        "V-mirror значение слепых pseudo-V (Линия C)",
+        _G_POST,
+        "classify_v_mirror: pseudo-V слепых кластеров → median pu границы × Vnom + warm re-solve.",
+        _s_v_mirror,
+        toggle="v_mirror",
     ),
     Step(
         "anti_overshoot",
