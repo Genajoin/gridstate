@@ -87,16 +87,32 @@ def classify_v_refine(measurements: np.ndarray, *, rn_threshold: float) -> VRefi
     )
 
 
-def apply_v_refine_plan(model: Working, plan: VRefinePlan, *, factor: float) -> dict:
+def apply_v_refine_plan(
+    model: Working,
+    plan: VRefinePlan,
+    *,
+    factor: float,
+    sigma_floor_by_id: dict[int, float] | None = None,
+) -> dict:
     """Применить план к ``model.measurements`` (рабочая копия пайплайна).
 
     tighten → ``variance := variance · factor²`` (σ × factor). Веса солвер
     строит из variance (см. ``z_vector.build_z_and_r``).
+
+    ``sigma_floor_by_id`` (id меры → σ_floor): при задании variance клипуется
+    снизу — ``variance := max(variance·factor², σ_floor²)``. Гасит circular
+    runaway при многопроходном V-refine. ``None`` (default) → ровно прежняя
+    математика (бит-в-бит).
     """
     if not plan.tighten_ids:
         return {"tightened": 0, "conflicting": plan.n_conflicting}
     m = model.measurements.to_numpy()
     sel = np.isin(m["id"], list(plan.tighten_ids))
     m["variance"][sel] *= float(factor) ** 2
+    if sigma_floor_by_id:
+        floors2 = (
+            np.array([float(sigma_floor_by_id.get(int(i), 0.0)) for i in m["id"][sel]]) ** 2
+        )
+        m["variance"][sel] = np.maximum(m["variance"][sel], floors2)
     model.measurements.update_from_array(m)
     return {"tightened": len(plan.tighten_ids), "conflicting": plan.n_conflicting}

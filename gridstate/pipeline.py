@@ -474,6 +474,30 @@ class PipelineConfig:
         help="variance := variance · factor² (σ × factor). 0.7 — оптимум 4 ОДУ; "
         "0.5 точнее для bias, но ломает class-max региона с битой V-кромкой.",
     )
+    v_refine_passes: int = _param(
+        1,
+        group=_G_POST,
+        label="Число проходов V-refine",
+        control="number",
+        min=1,
+        max=5,
+        depends={"v_refine": True},
+        help="N итераций classify→tighten→warm re-solve. 1 = бит-в-бит (текущее). "
+        "passes>1 — доп. срез mean-bias; множество согласованных V мигрирует "
+        "немонотонно, σ-floor страхует runaway. Включать только после A/B 4 ОДУ.",
+    )
+    v_refine_sigma_floor_frac: float = _param(
+        0.003,
+        group=_G_POST,
+        label="σ-floor V-refine (доля Vnom)",
+        control="number",
+        min=0.0,
+        max=0.1,
+        depends={"v_refine": True},
+        help="Нижняя граница σ ужесточаемой V-меры = frac·Vnom узла: "
+        "variance := max(variance·factor², (frac·Vn)²). Гасит circular runaway. "
+        "Применяется ТОЛЬКО при passes>1 (при passes=1 неактивен → бит-в-бит).",
+    )
     v_mirror: bool = _toggle(
         False,
         group=_G_POST,
@@ -806,35 +830,69 @@ def _s_v_refine(ctx: _Ctx) -> dict:
         # Непригодное решение — остатки V ненадёжны, согласованность
         # определять не по чему.
         return {"skipped": "решение непригодно — нет надёжных остатков"}
-    plan = classify_v_refine(
-        ctx.model.measurements.to_numpy(),
-        rn_threshold=cfg.v_refine_rn,
-    )
-    if plan.empty:
-        return {"consistent": plan.n_consistent, "skipped": "no-op (нет real V-мер)"}
-    stats = apply_v_refine_plan(ctx.model, plan, factor=cfg.v_refine_factor)
-    # Warm re-solve на ужесточённых V: V/δ прохода 1 уже в working.
+
+    passes = max(1, int(cfg.v_refine_passes))
+    # σ-floor применяется ТОЛЬКО при многопроходном refine (passes>1) — гасит
+    # circular runaway от повторного ужесточения долго-согласованных V-мер.
+    # При passes=1 floor_by_id=None → математика идентична прежней (бит-в-бит).
+    floor_by_id: dict[int, float] | None = None
+    if passes > 1 and float(cfg.v_refine_sigma_floor_frac) > 0.0:
+        from gridstate.constants import MeasurementObjectType, MeasurementType
+
+        nd = ctx.model.nodes.to_numpy()
+        vn_by_node = {int(n["id"]): float(n["voltage_nominal"]) for n in nd}
+        ot_node = int(MeasurementObjectType.NODE)
+        mt_v = int(MeasurementType.VOLTAGE)
+        frac = float(cfg.v_refine_sigma_floor_frac)
+        floor_by_id = {}
+        for mr in ctx.model.measurements.to_numpy():
+            if int(mr["object_type"]) == ot_node and int(mr["measurement_type"]) == mt_v:
+                vn = vn_by_node.get(int(mr["object_id"]), 0.0)
+                if vn > 0:
+                    floor_by_id[int(mr["id"])] = frac * vn
+
     huber_c = _effective_huber_c(cfg)
-    kw: dict[str, Any] = {
-        "algorithm": cfg.algorithm,
-        "init": "results",
-        "tolerance": cfg.tolerance,
-        "max_iterations": cfg.max_iterations,
-        "huber_c": huber_c,
-        "kkt_solver": cfg.kkt_solver,
-        "include_quality_summary": False,
-        "reconcile_balance": cfg.reconcile_balance,
-    }
-    if cfg.algorithm == "ipm":
-        kw.update(_ipm_kwargs(cfg))
-    ctx.result = estimate(ctx.model, **kw)
-    stats.update(
-        {
-            "success": bool(ctx.result.success),
-            "iterations": int(ctx.result.iterations),
+    total: dict[str, Any] = {"tightened": 0, "conflicting": 0, "passes_run": 0}
+    prev_ids: frozenset[int] | None = None
+    for _p in range(passes):
+        plan = classify_v_refine(
+            ctx.model.measurements.to_numpy(),
+            rn_threshold=cfg.v_refine_rn,
+        )
+        if plan.empty:
+            if total["passes_run"] == 0:
+                return {"consistent": plan.n_consistent, "skipped": "no-op (нет real V-мер)"}
+            break
+        # Множество ужесточаемых стабилизировалось → дальнейшие проходы лишь
+        # пере-ужесточают тот же набор (runaway). Останавливаемся.
+        if prev_ids is not None and plan.tighten_ids == prev_ids:
+            break
+        prev_ids = plan.tighten_ids
+        stats = apply_v_refine_plan(
+            ctx.model, plan, factor=cfg.v_refine_factor, sigma_floor_by_id=floor_by_id
+        )
+        total["tightened"] += int(stats["tightened"])
+        total["conflicting"] = int(stats["conflicting"])
+        # Warm re-solve на ужесточённых V: V/δ предыдущего прохода уже в working.
+        kw: dict[str, Any] = {
+            "algorithm": cfg.algorithm,
+            "init": "results",
+            "tolerance": cfg.tolerance,
+            "max_iterations": cfg.max_iterations,
+            "huber_c": huber_c,
+            "kkt_solver": cfg.kkt_solver,
+            "include_quality_summary": False,
+            "reconcile_balance": cfg.reconcile_balance,
         }
-    )
-    return stats
+        if cfg.algorithm == "ipm":
+            kw.update(_ipm_kwargs(cfg))
+        ctx.result = estimate(ctx.model, **kw)
+        total["passes_run"] += 1
+        if not ctx.result.success:
+            break
+    total["success"] = bool(ctx.result.success)
+    total["iterations"] = int(ctx.result.iterations)
+    return total
 
 
 def _s_v_mirror(ctx: _Ctx) -> dict:
