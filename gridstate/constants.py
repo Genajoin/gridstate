@@ -17,6 +17,13 @@ from __future__ import annotations
 from enum import IntEnum
 
 
+# Численный guard от переполнения R⁻¹ = 1/σ² на per-measurement диагонали R.
+# Значение 1e-10 (исторический WLS-floor, algorithms/wls.py): устраняет молчаливую
+# wls(1e-10)/ipm(1e-12) дивергенцию. На проде (4 ОДУ) min σ²≈1.8e-7 ≫ floor —
+# выбор bit-neutral (ни одна мера не попадает в зазор [1e-12, 1e-10)).
+SIGMA2_FLOOR: float = 1e-10
+
+
 class NodeType(IntEnum):
     """Тип узла (``node_type``-колонка контракта)."""
 

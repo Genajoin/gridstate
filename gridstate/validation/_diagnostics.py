@@ -13,6 +13,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from gridstate.algebra.base import BaseAlgebra
+from gridstate.constants import SIGMA2_FLOOR
 from gridstate.state import StateLayout
 from gridstate.units import model_to_pu
 from gridstate.ybus import build_ybus
@@ -80,7 +81,7 @@ def compute_diagnostics(
     r = z - h
 
     sigma2 = R_matrix.diagonal().astype(np.float64).copy()
-    sigma2[sigma2 < 1e-10] = 1e-10
+    sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
     n_meas = sigma2.shape[0]
     R_inv = cast(
         "csr_matrix",
