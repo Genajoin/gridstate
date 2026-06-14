@@ -508,6 +508,16 @@ class PipelineConfig:
         "более чем на min_lift (в pu). Узлы уже-на-уровне не двигаем — иначе их "
         "подъём пушит наблюдаемую сеть вверх (реальный-vm регион регрессирует).",
     )
+    v_mirror_cross_at: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="V-mirror через АТ (cross-class)",
+        help="Когда у слепого кластера НЕТ границы того же класса, но есть граница "
+        "через active trafo (branch_type=1, tap>0) — взять median(pu решённой "
+        "trafo-границы)·Vnom (pu-инвариант к идеальному tap). lift/max_pu_dev-гейты "
+        "сохраняются. Default OFF: pu-инвариант через tap≈2 даёт 2-4% остаточную "
+        "ошибку, Юг-регрессия не исключена. Включать после A/B 4 ОДУ.",
+    )
     anti_overshoot: bool = _toggle(
         True,
         group=_G_POST,
@@ -850,6 +860,7 @@ def _s_v_mirror(ctx: _Ctx) -> dict:
         ctx.model.nodes.to_numpy(),
         max_pu_dev=cfg.v_mirror_max_pu_dev,
         min_lift=cfg.v_mirror_min_lift,
+        cross_at=cfg.v_mirror_cross_at,
     )
     if plan.empty:
         return {"clusters": 0, "skipped": "no-op (нет слепых кластеров с границей)"}
