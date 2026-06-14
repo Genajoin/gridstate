@@ -146,31 +146,33 @@ def write_measurement_estimates(
     h_si = _pu_to_si(h_pu, meas_index, network_pu)
 
     meas_id_arr = meas_index.meas_id
-    # Быстрый доступ по id.
-    by_id = {int(me.id): me for me in measurements}
 
-    # Сначала помечаем ВСЕ меры как «не оценено» (NaN), затем перекрываем
-    # оценёнными. Без этого меры вне meas_index несли бы 0 из zero-fill
-    # коллекции, неотличимый от настоящей нулевой оценки.
-    for me_init in measurements:
-        me_init.estimated_si = float("nan")
-        me_init.residual = float("nan")
+    # Векторная запись через backing structured-массив (бит-в-бит замена
+    # by_id-словарю + двум per-row proxy-циклам; устраняет 2.2M __getattr__
+    # на крупных моделях). Сначала помечаем ВСЕ меры как «не оценено» (NaN),
+    # затем перекрываем оценёнными по id — без NaN-fill меры вне meas_index
+    # несли бы 0 из zero-fill коллекции, неотличимый от нулевой оценки.
+    arr = measurements.to_numpy()
+    arr["estimated_si"] = np.nan
+    arr["residual"] = np.nan
+    id_to_row = {int(v): i for i, v in enumerate(arr["id"].tolist())}  # last-wins
+    rows = np.fromiter(
+        (id_to_row.get(int(m), -1) for m in meas_id_arr.tolist()),
+        dtype=np.int64,
+        count=len(meas_id_arr),
+    )
+    valid = rows >= 0
+    vr = rows[valid]
+    # Дубль-id → last-write-wins (как dict by_id ранее): fancy-assign с
+    # повторяющимися индексами берёт последнюю запись в порядке meas_index.
+    est = arr["estimated_si"]
+    res = arr["residual"]
+    est[vr] = h_si[valid]
+    # residual в исходных единицах: value (в исходных) − estimated; f8−f8.
+    res[vr] = arr["value"][vr] - h_si[valid]
+    measurements.update_from_array(arr)
 
-    updated = 0
-    missing = 0
-    for i in range(len(meas_id_arr)):
-        mid = int(meas_id_arr[i])
-        me = by_id.get(mid)
-        if me is None:
-            missing += 1
-            continue
-        h_val = float(h_si[i])
-        me.estimated_si = h_val
-        # residual в исходных единицах: value (в исходных) − estimated.
-        me.residual = float(me.value) - h_val
-        updated += 1
-
-    return {"updated": updated, "missing": missing}
+    return {"updated": int(valid.sum()), "missing": int((~valid).sum())}
 
 
 def write_node_estimates(

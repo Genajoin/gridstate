@@ -315,6 +315,7 @@ def solve_ipm(
         return csr_matrix((diag, (rows_R, rows_R)), shape=(m, m))
 
     R_inv = _build_r_inv(r_inv_diag_base)
+    r_inv_diag = r_inv_diag_base  # текущая диагональ R⁻¹ (для column-scaling HtRinv)
 
     # SHGM-IRLS: подготовка
     use_huber = (
@@ -383,9 +384,14 @@ def solve_ipm(
                 w_huber = np.ones(m, dtype=np.float64)
                 sel = huber_mask_arr & (r_n > huber_c_eff)
                 w_huber[sel] = np.maximum(huber_c_eff / np.maximum(r_n[sel], 1e-30), huber_w_floor)
-                R_inv = _build_r_inv(r_inv_diag_base * w_huber)
+                r_inv_diag = r_inv_diag_base * w_huber
+                R_inv = _build_r_inv(r_inv_diag)
             H = jacobian_fn(x)
-            HtRinv = H.T @ R_inv
+            # H.T @ R_inv с диагональной R⁻¹ = row-scaling H по r_inv_diag, затем
+            # transpose: O(nnz) вместо полного sparse-matmul диагонали (тождество).
+            _row = np.repeat(np.arange(H.shape[0]), np.diff(H.indptr))
+            H_w = csr_matrix((H.data * r_inv_diag[_row], H.indices, H.indptr), shape=H.shape)
+            HtRinv = H_w.T
 
             grad_data = -np.asarray(HtRinv @ r, dtype=np.float64).ravel()
 

@@ -14,6 +14,7 @@ import numpy as np
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.wls import solve_wls
+from gridstate.constants import SIGMA2_FLOOR
 from gridstate.result import SEResult, extract_output_tables
 from gridstate.state import StateLayout, flat_start, flat_start_with_box, pack, unpack, unpack_full
 from gridstate.units import BASE_MVA, model_to_pu, write_results_to_model
@@ -302,7 +303,7 @@ def _populate_quality_summary(
         H = algebra.evaluate_jacobian(v_pu, delta_rad)
 
         sigma2 = r_matrix.diagonal().astype(np.float64).copy()
-        sigma2[sigma2 < 1e-12] = 1e-12
+        sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
 
         # Пометка псевдо-приоров в z-порядке: meas_id → is_pseudo из коллекции.
         is_pseudo_z: np.ndarray | None = None
@@ -479,7 +480,7 @@ def _run_ipm(
     algebra = BaseAlgebra(ybus, yf, yt, setup.meas_index, layout_ipm, network_pu)
 
     sigma2 = setup.r_matrix.diagonal().copy()
-    sigma2[sigma2 < 1e-12] = 1e-12
+    sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
     r_inv_diag = 1.0 / sigma2
 
     # SHGM-IRLS mask: branch P/Q (object_kind=1), исключая трансформаторы
