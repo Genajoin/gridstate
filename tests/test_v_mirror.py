@@ -43,6 +43,8 @@ def _build(
     blind_vn: float = 110.0,
     blind_vmag: float = 110.9,  # слепой решён на pu 1.008 → lift 0.092
     blind_pseudo_value: float = 110.0,  # flat-плейсхолдер == Vnom
+    branch_type: int = int(BranchType.LINE),
+    tap_ratio: float = 1.0,
 ) -> Working:
     m = Working.empty()
     m.nodes.add(
@@ -72,9 +74,9 @@ def _build(
             "to_node": 2,
             "resistance": 1.0,
             "reactance": 10.0,
-            "tap_ratio": 1.0,
+            "tap_ratio": tap_ratio,
             "status": True,
-            "branch_type": int(BranchType.LINE),
+            "branch_type": branch_type,
         }
     )
     # real V-мера на границе (узел 1) → узел 1 measured, узел 2 слепой
@@ -135,6 +137,61 @@ def test_boundary_other_class_ignored():
     """Граница другого класса (слепой 110 за АТ от 220) → не трогаем."""
     plan = _classify(_build(boundary_vn=220.0, boundary_vmag=242.0))
     assert plan.empty
+
+
+def test_cross_at_mirrors_via_transformer():
+    """Q2: слепой 110 за АТ (branch_type=1) от 220-границы → cross_at=True
+    переносит pu решённой trafo-границы (pu-инвариант к идеальному tap)."""
+    m = _build(
+        boundary_vn=220.0,
+        boundary_vmag=242.0,  # pu 1.10
+        branch_type=int(BranchType.TRANSFORMER),
+        tap_ratio=2.0,
+    )
+    # cross_at=False (default) → same-class границы нет → пусто.
+    assert classify_v_mirror(
+        m.measurements.to_numpy(),
+        m.branches.to_numpy(),
+        m.nodes.to_numpy(),
+        max_pu_dev=0.25,
+        min_lift=0.01,
+    ).empty
+    # cross_at=True → pu(220-границы)=1.10 → value = 1.10·110 = 121.
+    plan = classify_v_mirror(
+        m.measurements.to_numpy(),
+        m.branches.to_numpy(),
+        m.nodes.to_numpy(),
+        max_pu_dev=0.25,
+        min_lift=0.01,
+        cross_at=True,
+    )
+    assert plan.n_clusters == 1
+    nid, val = plan.new_values[0]
+    assert nid == 2
+    assert abs(val - 121.0) < 1e-6
+
+
+def test_cross_at_skips_below_110kv():
+    """Q2: на LV-стороне (слепой 10 кВ за АТ от 110) cross_at НЕ срабатывает —
+    pu-инвариант через gen-step-up грубо нарушается (порог ≥110 кВ)."""
+    m = _build(
+        boundary_vn=110.0,
+        boundary_vmag=121.0,
+        blind_vn=10.0,
+        blind_vmag=10.05,
+        blind_pseudo_value=10.0,
+        branch_type=int(BranchType.TRANSFORMER),
+        tap_ratio=11.0,
+    )
+    plan = classify_v_mirror(
+        m.measurements.to_numpy(),
+        m.branches.to_numpy(),
+        m.nodes.to_numpy(),
+        max_pu_dev=0.25,
+        min_lift=0.01,
+        cross_at=True,
+    )
+    assert plan.empty  # blind_vn=10 < 110 → cross-AT фолбэк не активируется
 
 
 def test_node_at_level_ignored():

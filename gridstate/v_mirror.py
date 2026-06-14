@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _FLAT_REL_TOL = 1e-6  # |value − Vnom| < tol · Vnom → приор-плейсхолдер
+_CROSS_AT_MIN_VNOM = 110.0  # cross-AT фолбэк только для EHV/HV (≥110 кВ) обе стороны
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ def classify_v_mirror(
     *,
     max_pu_dev: float,
     min_lift: float,
+    cross_at: bool = False,
 ) -> VMirrorPlan:
     """Отобрать слепые кластеры и вычислить новое значение их pseudo-V.
 
@@ -123,6 +125,24 @@ def classify_v_mirror(
             fi, ti = int(f), int(t)
             adj[fi].add(ti)
             adj[ti].add(fi)
+
+    # Cross-AT (Q2, gated): adjacency только по активным трансформаторам
+    # (branch_type==1, tap>0) — для фолбэка слепых кластеров без границы того
+    # же класса (граница лишь за АТ). pu-инвариант к идеальному tap.
+    trafo_adj: dict[int, set[int]] = defaultdict(set)
+    if cross_at:
+        for f, t, st, bt, tap in zip(
+            branches["from_node"],
+            branches["to_node"],
+            branches["status"],
+            branches["branch_type"],
+            branches["tap_ratio"],
+            strict=True,
+        ):
+            if st and int(bt) == 1 and float(tap) > 0:
+                fi, ti = int(f), int(t)
+                trafo_adj[fi].add(ti)
+                trafo_adj[ti].add(fi)
 
     # pseudo-V-плейсхолдеры (value == Vnom) по узлам
     psv_flat: dict[int, float] = {}
@@ -158,6 +178,10 @@ def classify_v_mirror(
             stack.extend(adj[x] - seen)
         # граница = измеренные соседи компоненты
         boundary = set().union(*(adj[n] for n in comp)) - comp if comp else set()
+        # Cross-AT (Q2): trafo-граница кластера (узлы за активным АТ, другой класс).
+        trafo_boundary = (
+            (set().union(*(trafo_adj[n] for n in comp)) - comp) if (cross_at and comp) else set()
+        )
         hit = False
         for n in sorted(comp):
             vn = psv_flat.get(n)
@@ -169,6 +193,16 @@ def classify_v_mirror(
                 for b in boundary
                 if abs(vn_map.get(b, 0.0) - vn) < _FLAT_REL_TOL * vn and vse_map.get(b, 0.0) > 0
             ]
+            if not pus and cross_at and vn >= _CROSS_AT_MIN_VNOM:
+                # Фолбэк: pu решённой trafo-границы (другой класс), pu-инвариант
+                # к идеальному tap. Только EHV/HV (≥110 кВ) обе стороны — на
+                # gen-step-up (10-35 кВ) pu-инвариант через АТ грубо нарушается
+                # (большая обмоточная просадка). max_pu_dev/lift-гейты сохраняются.
+                pus = [
+                    vse_map[b] / vn_map[b]
+                    for b in trafo_boundary
+                    if vn_map.get(b, 0.0) >= _CROSS_AT_MIN_VNOM and vse_map.get(b, 0.0) > 0
+                ]
             if not pus:
                 continue
             pu = float(np.median(pus))
