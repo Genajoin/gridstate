@@ -90,13 +90,13 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from gridstate.units import BASE_MVA, model_to_pu
+from gridstate.utils import id_to_pos_map
 from gridstate.ybus import build_ybus
 
 
@@ -179,23 +179,6 @@ class SystemLosses:
         }
 
 
-def _branch_is_trafo_pu(
-    g: float,
-    b: float,
-    g_from: float,
-    b_from: float,
-    tap: float,
-) -> bool:
-    """Признак трансформатора по p.u.-параметрам ветви.
-
-    Эвристика: tap != 1 (off-nominal) ИЛИ шунт сосредоточен в одной стороне
-    (g_from/b_from != 0 при g==b==0).
-    """
-    if not math.isclose(tap, 1.0, rel_tol=0.0, abs_tol=1e-6):
-        return True
-    return (abs(g) < 1e-12 and abs(b) < 1e-12) and (abs(g_from) > 1e-12 or abs(b_from) > 1e-12)
-
-
 def compute_system_losses(
     model: Working,
     v_pu: np.ndarray | None = None,
@@ -226,12 +209,18 @@ def compute_system_losses(
 
     if v_pu is None:
         # Из model.nodes.voltage_magnitude (после write_results_to_model).
-        v_kv = np.empty(n_bus, dtype=np.float64)
-        delta_arr = np.empty(n_bus, dtype=np.float64)
-        for pos, nid in enumerate(network_pu.bus_ids.tolist()):
-            node = model.nodes.get_by_id(int(nid))
-            v_kv[pos] = float(node.voltage_magnitude) if node is not None else 0.0
-            delta_arr[pos] = float(node.voltage_angle) if node is not None else 0.0
+        # Vectorized read: resolve bus_ids -> rows once (missing id -> 0.0,
+        # matching the former per-node get_by_id fallback).
+        nodes_arr = model.nodes.to_numpy()
+        rows_map = id_to_pos_map(nodes_arr["id"])
+        rows = np.fromiter(
+            (rows_map.get(int(nid), -1) for nid in network_pu.bus_ids.tolist()),
+            dtype=np.int64,
+            count=n_bus,
+        )
+        valid = rows >= 0
+        v_kv = np.where(valid, nodes_arr["voltage_magnitude"][rows], 0.0).astype(np.float64)
+        delta_arr = np.where(valid, nodes_arr["voltage_angle"][rows], 0.0).astype(np.float64)
         v_pu_arr = np.where(network_pu.bus_vn_kv > 0, v_kv / network_pu.bus_vn_kv, 1.0)
         delta = delta_arr
     else:
@@ -297,20 +286,14 @@ def compute_system_losses(
     # Шунтовая часть — по разности (s_loss_total = s_series + s_shunt).
     s_shunt = s_loss_total - s_series
 
-    # Признак трафо per-branch
-    is_trafo = np.array(
-        [
-            _branch_is_trafo_pu(
-                float(network_pu.branch_g[i]),
-                float(network_pu.branch_b[i]),
-                float(network_pu.branch_g_from[i]),
-                float(network_pu.branch_b_from[i]),
-                float(network_pu.tap_ratio[i]),
-            )
-            for i in range(n_branch)
-        ],
-        dtype=bool,
+    # Признак трафо per-branch (vectorized _branch_is_trafo_pu)
+    off_nominal_tap = np.abs(network_pu.tap_ratio - 1.0) > 1e-6
+    shunt_one_sided = (
+        (np.abs(network_pu.branch_g) < 1e-12)
+        & (np.abs(network_pu.branch_b) < 1e-12)
+        & ((np.abs(network_pu.branch_g_from) > 1e-12) | (np.abs(network_pu.branch_b_from) > 1e-12))
     )
+    is_trafo = off_nominal_tap | shunt_one_sided
 
     p_ser_mw = s_series.real * BASE_MVA
     q_ser_mvar = s_series.imag * BASE_MVA

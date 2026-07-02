@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -405,26 +405,44 @@ def write_results_to_model(
         v_pu, delta_rad, network_pu, ybus=ybus
     )
 
-    for pos, node_id in enumerate(network_pu.bus_ids.tolist()):
-        update: dict[str, Any] = {
-            "voltage_magnitude": float(voltage_kv[pos]),
-            "voltage_angle": float(delta_rad[pos]),
-            # Маркер «узел решён»: только узлы network_pu получают 1;
-            # отсечённые препроцессингом остаются solved=0 — их нули в
-            # OUTPUT нельзя принимать за оценку (promote/PF фильтруют).
-            "solved": 1,
-        }
-        if p_inj_mw is not None and q_inj_mvar is not None:
-            node = model.nodes.get_by_id(int(node_id))
-            net_p_meas = float(node.generation_p) - float(node.load_p) if node is not None else 0.0
-            net_q_meas = float(node.generation_q) - float(node.load_q) if node is not None else 0.0
-            p_calc = float(p_inj_mw[pos])
-            q_calc = float(q_inj_mvar[pos])
-            update["p_inj_calc"] = p_calc
-            update["q_inj_calc"] = q_calc
-            update["imbalance_p"] = p_calc - net_p_meas
-            update["imbalance_q"] = q_calc - net_q_meas
-        model.nodes.update(int(node_id), update)
+    # Vectorized write-back through the backing structured array (same
+    # technique as write_measurement_estimates): rows are resolved once via
+    # an id map instead of a per-node .update() call. Columns absent from
+    # the carrier dtype are skipped — matching the silent-ignore semantics
+    # of _ArrayCollection.update().
+    nodes_arr = model.nodes.to_numpy()
+    node_names = set(nodes_arr.dtype.names or ())
+    node_rows_map = id_to_pos_map(nodes_arr["id"])
+    node_rows = np.fromiter(
+        (node_rows_map.get(int(nid), -1) for nid in network_pu.bus_ids.tolist()),
+        dtype=np.int64,
+        count=network_pu.n_bus,
+    )
+    nv = node_rows >= 0
+    nr = node_rows[nv]
+
+    def _set_node(col: str, values: np.ndarray) -> None:
+        if col in node_names:
+            nodes_arr[col][nr] = values[nv]
+
+    _set_node("voltage_magnitude", voltage_kv)
+    _set_node("voltage_angle", delta_rad)
+    # Маркер «узел решён»: только узлы network_pu получают 1;
+    # отсечённые препроцессингом остаются solved=0 — их нули в
+    # OUTPUT нельзя принимать за оценку (promote/PF фильтруют).
+    _set_node("solved", np.ones(network_pu.n_bus, dtype=np.int64))
+    if p_inj_mw is not None and q_inj_mvar is not None:
+        net_p_meas = (nodes_arr["generation_p"][node_rows] - nodes_arr["load_p"][node_rows]).astype(
+            np.float64
+        )
+        net_q_meas = (nodes_arr["generation_q"][node_rows] - nodes_arr["load_q"][node_rows]).astype(
+            np.float64
+        )
+        _set_node("p_inj_calc", p_inj_mw)
+        _set_node("q_inj_calc", q_inj_mvar)
+        _set_node("imbalance_p", p_inj_mw - net_p_meas)
+        _set_node("imbalance_q", q_inj_mvar - net_q_meas)
+    model.nodes.update_from_array(nodes_arr)
 
     if yf is None or yt is None or network_pu.n_branch == 0:
         return
@@ -441,22 +459,39 @@ def write_results_to_model(
         loss_q,
     ) = compute_branch_results_pu(v_pu, delta_rad, network_pu, yf, yt)
 
-    for i, branch_id in enumerate(network_pu.branch_ids.tolist()):
-        update_b: dict[str, Any] = {
-            "power_from_p": float(p_from_mw[i]),
-            "power_from_q": float(q_from_mvar[i]),
-            "power_to_p": float(p_to_mw[i]),
-            "power_to_q": float(q_to_mvar[i]),
-            "current_from": float(i_from_a[i]),
-            "current_to": float(i_to_a[i]),
-            "loss_p": float(loss_p[i]),
-            "loss_q": float(loss_q[i]),
-        }
-        # loading_pct: при наличии current_limit_normal
-        branch = model.branches.get_by_id(int(branch_id))
-        if branch is not None:
-            i_max = float(branch.current_limit_normal)
-            if i_max > 0:
-                i_max_used = max(float(i_from_a[i]), float(i_to_a[i]))
-                update_b["loading_pct"] = float(i_max_used / i_max * 100.0)
-        model.branches.update(int(branch_id), update_b)
+    # Vectorized write-back, same scheme as the nodes above.
+    branches_arr = model.branches.to_numpy()
+    branch_names = set(branches_arr.dtype.names or ())
+    branch_rows_map = id_to_pos_map(branches_arr["id"])
+    branch_rows = np.fromiter(
+        (branch_rows_map.get(int(bid), -1) for bid in network_pu.branch_ids.tolist()),
+        dtype=np.int64,
+        count=network_pu.n_branch,
+    )
+    bv = branch_rows >= 0
+    br = branch_rows[bv]
+
+    def _set_branch(col: str, values: np.ndarray) -> None:
+        if col in branch_names:
+            branches_arr[col][br] = values[bv]
+
+    _set_branch("power_from_p", p_from_mw)
+    _set_branch("power_from_q", q_from_mvar)
+    _set_branch("power_to_p", p_to_mw)
+    _set_branch("power_to_q", q_to_mvar)
+    _set_branch("current_from", i_from_a)
+    _set_branch("current_to", i_to_a)
+    _set_branch("loss_p", loss_p)
+    _set_branch("loss_q", loss_q)
+    # loading_pct: только при заданном current_limit_normal (> 0); прочие
+    # строки остаются нетронутыми (как в прежнем построчном варианте).
+    if "loading_pct" in branch_names and "current_limit_normal" in branch_names:
+        i_limit = branches_arr["current_limit_normal"][br].astype(np.float64)
+        has_limit = i_limit > 0
+        if np.any(has_limit):
+            i_max_used = np.maximum(i_from_a[bv], i_to_a[bv])
+            rows_lim = br[has_limit]
+            branches_arr["loading_pct"][rows_lim] = (
+                i_max_used[has_limit] / i_limit[has_limit] * 100.0
+            )
+    model.branches.update_from_array(branches_arr)
