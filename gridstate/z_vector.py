@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 from scipy.sparse import csr_matrix, diags
 
+from gridstate.constants import MeasurementQuality
 from gridstate.utils import id_to_pos_map
 
 
@@ -144,8 +145,7 @@ def build_z_and_r(
     for meas in measurements:
         if not meas.status:
             continue
-        # quality 2 == BAD (см. MeasurementQuality enum)
-        if int(meas.quality) == 2:
+        if int(meas.quality) == MeasurementQuality.BAD:
             continue
         if meas.variance <= 0:
             logger.warning(

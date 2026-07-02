@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.constants import BranchType
 from gridstate.utils import branch_endpoints_map
 from gridstate.z_vector import KIND_VOLTAGE, OBJ_BRANCH, OBJ_NODE
 
@@ -137,7 +138,7 @@ def classify_v_mirror(
             branches["tap_ratio"],
             strict=True,
         ):
-            if st and int(bt) == 1 and float(tap) > 0:
+            if st and int(bt) == BranchType.TRANSFORMER and float(tap) > 0:
                 fi, ti = int(f), int(t)
                 trafo_adj[fi].add(ti)
                 trafo_adj[ti].add(fi)

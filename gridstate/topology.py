@@ -44,10 +44,13 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+from gridstate.constants import NodeType
 
-_SLACK_NODE_TYPE = 2  # NodeType.SLACK (литерал, чтобы не импортировать constants).
-_PQ_NODE_TYPE = 0  # NodeType.PQ
-_PV_NODE_TYPE = 1  # NodeType.PV
+
+# Plain ints for hot comparison loops; values come from the canonical enum.
+_SLACK_NODE_TYPE = int(NodeType.SLACK)
+_PQ_NODE_TYPE = int(NodeType.PQ)
+_PV_NODE_TYPE = int(NodeType.PV)
 
 
 # ---------------------------------------------------------------------------
