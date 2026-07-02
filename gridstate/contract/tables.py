@@ -31,7 +31,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import Enum
 
 import numpy as np
@@ -116,6 +116,26 @@ class TableSchema:
     def output_dtype(self) -> np.dtype:
         """``np.dtype`` выходного слоя таблицы (роли KEY/OUTPUT)."""
         return self.numpy_dtype(*_OUTPUT_ROLES)
+
+
+def io_dtype(in_schema: TableSchema, out_schema: TableSchema) -> np.dtype:
+    """Combined INPUT+OUTPUT dtype of a contract table (single source of truth).
+
+    Input-layer columns (KEY/INPUT/WORKING) first, followed by any OUTPUT columns
+    not already present. This is the dtype the live working collections carry:
+    the pipeline writes OUTPUT columns (``estimated_si``/``p_inj_calc``/flows)
+    into the very same backing array, so it must hold both layers. Used by
+    :meth:`gridstate.working.Working.empty`, the ``.npz`` loader
+    (:mod:`gridstate.contract.serialize`) and the pandapower adapter.
+    """
+    in_dt = in_schema.input_dtype()
+    io_fields = list(in_dt.descr)
+    have = set(in_dt.names or ())
+    out_dt = out_schema.output_dtype()
+    for name in out_dt.names or ():
+        if name not in have:
+            io_fields.append((name, out_dt[name].str))
+    return np.dtype(io_fields)
 
 
 # ===========================================================================
@@ -638,15 +658,8 @@ class SEInputSchema:
     shunts: TableSchema
 
     def tables(self) -> tuple[TableSchema, ...]:
-        return (
-            self.nodes,
-            self.branches,
-            self.measurements,
-            self.generators,
-            self.tap_steps,
-            self.load_characteristics,
-            self.shunts,
-        )
+        """Все таблицы в порядке объявления полей (единый источник — dataclass)."""
+        return tuple(getattr(self, f.name) for f in fields(self))
 
 
 @dataclass(frozen=True)
@@ -658,7 +671,8 @@ class SEOutputSchema:
     measurements: TableSchema
 
     def tables(self) -> tuple[TableSchema, ...]:
-        return (self.nodes, self.branches, self.measurements)
+        """Все таблицы в порядке объявления полей (единый источник — dataclass)."""
+        return tuple(getattr(self, f.name) for f in fields(self))
 
 
 SE_INPUT = SEInputSchema(

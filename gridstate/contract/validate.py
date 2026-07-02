@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gridstate.contract.tables import SE_INPUT, Role, SEInputSchema
-from gridstate.contract.version import CONTRACT_VERSION_KEY, ContractVersion, current_version
+from gridstate.contract.version import CONTRACT_VERSION_KEY, check_compatibility
 
 
 @dataclass(frozen=True)
@@ -113,22 +113,16 @@ def validate_input(
     report = ValidationReport()
 
     # --- версия контракта ---
+    # Единая проверка совместимости — check_compatibility (contract.version):
+    # возвращает причину-строку либо None; парс-ошибка транслируется в issue.
     dv = _data_version(source, data_version)
     if dv is not None:
         try:
-            parsed = ContractVersion.parse(dv)
+            reason = check_compatibility(dv)
         except ValueError as exc:
-            report.add(ValidationIssue("<meta>", "version_incompatible", str(exc)))
-        else:
-            schema_v = current_version()
-            if not parsed.is_compatible_with(schema_v):
-                report.add(
-                    ValidationIssue(
-                        "<meta>",
-                        "version_incompatible",
-                        f"данные версии {parsed} несовместимы с контрактом {schema_v}",
-                    )
-                )
+            reason = str(exc)
+        if reason is not None:
+            report.add(ValidationIssue("<meta>", "version_incompatible", reason))
 
     # --- обязательные колонки основных таблиц ---
     for table in schema.tables():
