@@ -51,8 +51,8 @@ from scipy.sparse import csc_matrix, csr_matrix
 
 from gridstate.algebra.base import BaseAlgebra
 from gridstate.algorithms.kkt_solver import KKTSolver
-from gridstate.constants import SIGMA2_FLOOR
 from gridstate.state import unpack
+from gridstate.utils import floored_sigma2
 
 
 if TYPE_CHECKING:
@@ -237,8 +237,7 @@ def solve_wls(
     solver = kkt_solver if kkt_solver is not None else KKTSolver("scipy")
 
     # σ² с регуляризацией; затем R⁻¹ как разреженная диагональ.
-    sigma2 = r_matrix.diagonal().copy()
-    sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
+    sigma2 = floored_sigma2(r_matrix.diagonal())
     r_inv_diag_base = 1.0 / sigma2
     sigma_arr = np.sqrt(sigma2)
     n_meas = sigma2.shape[0]

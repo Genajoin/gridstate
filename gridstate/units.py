@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from gridstate.utils import id_to_pos_map
+
 
 if TYPE_CHECKING:
     from scipy.sparse import csr_matrix
@@ -141,7 +143,7 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
         slack_idx = int(slack_positions[0])
 
     # Карта id → позиционный индекс
-    id_to_pos: dict[int, int] = {int(nid): pos for pos, nid in enumerate(bus_ids)}
+    id_to_pos = id_to_pos_map(bus_ids)
 
     # Базы (поэлементно для каждой шины)
     z_base = vn_kv**2 / BASE_MVA  # Ом

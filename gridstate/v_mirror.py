@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.utils import branch_endpoints_map
 from gridstate.z_vector import KIND_VOLTAGE, OBJ_BRANCH, OBJ_NODE
 
 
@@ -70,10 +71,7 @@ class VMirrorPlan:
 
 def _measured_nodes(measurements: np.ndarray, branches: np.ndarray) -> set[int]:
     """Узлы, накрытые real-TM (узловой мерой или стороной branch-меры)."""
-    b2n = {
-        int(i): (int(f), int(t))
-        for i, f, t in zip(branches["id"], branches["from_node"], branches["to_node"], strict=True)
-    }
+    b2n = branch_endpoints_map(branches)
     sel_real = measurements["status"].astype(bool) & ~measurements["is_pseudo"].astype(bool)
     measured: set[int] = set()
     for j in np.where(sel_real)[0]:

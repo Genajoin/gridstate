@@ -13,9 +13,9 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from gridstate.algebra.base import BaseAlgebra
-from gridstate.constants import SIGMA2_FLOOR
 from gridstate.state import StateLayout
 from gridstate.units import model_to_pu
+from gridstate.utils import floored_sigma2, id_to_pos_map, sparse_diag
 from gridstate.ybus import build_ybus
 from gridstate.z_vector import build_z_and_r
 
@@ -45,9 +45,7 @@ def state_from_model(model: Working, network_pu: NetworkPU) -> tuple[np.ndarray,
     углы по умолчанию 0.
     """
     nodes_arr = model.nodes.to_numpy()
-    id_to_pos: dict[int, int] = {
-        int(nid): pos for pos, nid in enumerate(network_pu.bus_ids.tolist())
-    }
+    id_to_pos = id_to_pos_map(network_pu.bus_ids)
     v_pu = np.ones(network_pu.n_bus, dtype=np.float64)
     delta_rad = np.zeros(network_pu.n_bus, dtype=np.float64)
     for row in nodes_arr:
@@ -80,16 +78,8 @@ def compute_diagnostics(
     H = algebra.evaluate_jacobian(v_pu, delta_rad)
     r = z - h
 
-    sigma2 = R_matrix.diagonal().astype(np.float64).copy()
-    sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
-    n_meas = sigma2.shape[0]
-    R_inv = cast(
-        "csr_matrix",
-        csr_matrix(
-            (1.0 / sigma2, (np.arange(n_meas), np.arange(n_meas))),
-            shape=(n_meas, n_meas),
-        ),
-    )
+    sigma2 = floored_sigma2(R_matrix.diagonal())
+    R_inv = cast("csr_matrix", sparse_diag(1.0 / sigma2))
 
     return Diagnostics(
         r=r,

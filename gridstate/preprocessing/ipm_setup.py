@@ -24,6 +24,7 @@ from scipy.sparse import csr_matrix
 from gridstate.bounds import resolve_bounds
 from gridstate.state import StateLayout
 from gridstate.units import BASE_MVA
+from gridstate.utils import id_to_pos_map
 from gridstate.z_vector import (
     KIND_BOX_PRIOR_PGEN,
     KIND_BOX_PRIOR_PNAG,
@@ -140,7 +141,7 @@ def build_ipm_setup(
     """
     nodes_arr = model.nodes.to_numpy()
     bus_ids = network_pu.bus_ids
-    bus_id_to_pos: dict[int, int] = {int(bid): pos for pos, bid in enumerate(bus_ids.tolist())}
+    bus_id_to_pos = id_to_pos_map(bus_ids)
 
     # ---- Сбор box-vars: для каждого активного узла с exist_load/exist_gen ----
     pgen_pos_list: list[int] = []

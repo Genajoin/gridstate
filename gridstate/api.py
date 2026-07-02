@@ -14,10 +14,10 @@ import numpy as np
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.wls import solve_wls
-from gridstate.constants import SIGMA2_FLOOR
 from gridstate.result import SEResult, extract_output_tables
 from gridstate.state import StateLayout, flat_start, flat_start_with_box, pack, unpack, unpack_full
 from gridstate.units import BASE_MVA, model_to_pu, write_results_to_model
+from gridstate.utils import floored_sigma2, id_to_pos_map
 from gridstate.ybus import build_ybus
 from gridstate.z_vector import build_z_and_r
 
@@ -302,8 +302,7 @@ def _populate_quality_summary(
         r_vec = z - h_pu
         H = algebra.evaluate_jacobian(v_pu, delta_rad)
 
-        sigma2 = r_matrix.diagonal().astype(np.float64).copy()
-        sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
+        sigma2 = floored_sigma2(r_matrix.diagonal())
 
         # Пометка псевдо-приоров в z-порядке: meas_id → is_pseudo из коллекции.
         is_pseudo_z: np.ndarray | None = None
@@ -389,9 +388,7 @@ def _build_initial_state(
         nodes_arr = model.nodes.to_numpy()
         active = nodes_arr[nodes_arr["status"]]
         # Перенумеруем под порядок network_pu.bus_ids.
-        id_to_pos: dict[int, int] = {
-            int(nid): pos for pos, nid in enumerate(network_pu.bus_ids.tolist())
-        }
+        id_to_pos = id_to_pos_map(network_pu.bus_ids)
         v_pu = np.ones(network_pu.n_bus, dtype=np.float64)
         delta = np.zeros(network_pu.n_bus, dtype=np.float64)
         for row in active:
@@ -479,9 +476,7 @@ def _run_ipm(
 
     algebra = BaseAlgebra(ybus, yf, yt, setup.meas_index, layout_ipm, network_pu)
 
-    sigma2 = setup.r_matrix.diagonal().copy()
-    sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
-    r_inv_diag = 1.0 / sigma2
+    r_inv_diag = 1.0 / floored_sigma2(setup.r_matrix.diagonal())
 
     # SHGM-IRLS mask: branch P/Q (object_kind=1), исключая трансформаторы
     # и leverage-Q (B≥threshold). Параллель с ``solve_wls``: на блочных
