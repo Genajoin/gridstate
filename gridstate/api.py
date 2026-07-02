@@ -11,10 +11,25 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from gridstate.algebra.base import BaseAlgebra
 from gridstate.algebra.estimators import build_branch_pq_huber_mask
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.wls import solve_wls
+from gridstate.post_processing import (
+    apply_load_characteristic,
+    reconcile_node_balance,
+    write_measurement_estimates,
+    write_node_estimates,
+    write_node_estimates_from_inj,
+)
+from gridstate.preprocessing.ipm_setup import build_ipm_setup
+from gridstate.quality_summary import (
+    compute_chi2,
+    observability_warnings_from_H,
+    top_worst_imbalance,
+    top_worst_residuals,
+)
 from gridstate.result import SEResult, extract_output_tables
 from gridstate.state import StateLayout, flat_start, flat_start_with_box, pack, unpack, unpack_full
 from gridstate.units import BASE_MVA, model_to_pu, write_results_to_model
@@ -193,8 +208,6 @@ def estimate(
         convergence_status = "converged" if success else "not_converged"
     write_results_to_model(model, v_pu, delta, network_pu, yf=yf, yt=yt, ybus=ybus)
     # 7. Постпроцессинг measurements: estimated_si/value/residual.
-    from gridstate.post_processing import write_measurement_estimates
-
     write_measurement_estimates(
         model=model,
         measurements=measurements,
@@ -211,11 +224,6 @@ def estimate(
     # generation_*_estimated. У IPM это уже сделано через box-vars в
     # _run_ipm (write_node_estimates), повторять не нужно.
     if algorithm == "wls":
-        from gridstate.post_processing import (
-            apply_load_characteristic,
-            write_node_estimates_from_inj,
-        )
-
         write_node_estimates_from_inj(model)
         # Если модель содержит СХН (``load_characteristics``) и узел на неё
         # ссылается, перекрыть load_*_estimated полиномом P(V)/Q(V).
@@ -226,8 +234,6 @@ def estimate(
     # согласованным режимом: gen_est − load_est ≡ p/q_inj_calc. Последним —
     # после всех правок *_estimated, до extract_output_tables.
     if reconcile_balance:
-        from gridstate.post_processing import reconcile_node_balance
-
         reconcile_stats = reconcile_node_balance(model)
         logger.debug("reconcile_node_balance: %s", reconcile_stats)
 
@@ -295,14 +301,6 @@ def _populate_quality_summary(
     Все ошибки в summary глушатся в логи: качество отчёта — не показатель
     успешности SE, и падение здесь не должно ломать ``estimate()``.
     """
-    from gridstate.algebra.base import BaseAlgebra
-    from gridstate.quality_summary import (
-        compute_chi2,
-        observability_warnings_from_H,
-        top_worst_imbalance,
-        top_worst_residuals,
-    )
-
     try:
         if z.shape[0] == 0:
             # Нет измерений — оставляем default empty.
@@ -456,10 +454,6 @@ def _run_ipm(
     Значения box-vars из результата записывает в ``model.nodes`` через
     ``write_node_estimates``.
     """
-    from gridstate.algebra.base import BaseAlgebra
-    from gridstate.post_processing import write_node_estimates
-    from gridstate.preprocessing.ipm_setup import build_ipm_setup
-
     setup = build_ipm_setup(
         model,
         network_pu,
