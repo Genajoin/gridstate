@@ -33,6 +33,7 @@ from gridstate.algebra.base import (
     BaseAlgebra,
 )
 from gridstate.bounds import resolve_bounds
+from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.units import BASE_MVA, NetworkPU
 from gridstate.utils import id_to_pos_map
 
@@ -720,19 +721,7 @@ def refine_anti_overshoot(
                 (KIND_POWER_INJECTION_P, pinj),
                 (KIND_POWER_INJECTION_Q, qinj),
             ):
-                model.measurements.add(
-                    {
-                        "id": mid,
-                        "object_type": OBJ_NODE,
-                        "object_id": nid,
-                        "measurement_type": kind,
-                        "value": val,
-                        "variance": var,
-                        "status": True,
-                        "quality": 0,
-                        "is_pseudo": True,
-                    }
-                )
+                model.measurements.add(pseudo_node_measurement(mid, nid, kind, val, var))
                 mid += 1
             tightened.add(nid)
         refined = resolve()

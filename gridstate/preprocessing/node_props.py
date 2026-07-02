@@ -39,22 +39,55 @@ def extract_node_load_props_from_model(model: Working) -> dict[int, dict]:
     из астровской терминологии для ``add_pseudo_measurements``.
     """
     arr = model.nodes.to_numpy()
+    # Extract each column once (vectorized) instead of per-row structured-scalar
+    # lookups, then zip into the per-node dicts.
     out: dict[int, dict] = {}
-    for row in arr:
-        out[int(row["id"])] = {
-            "exist_load": int(row["exist_load"]),
-            "exist_gen": int(row["exist_gen"]),
-            "pn_min": float(row["load_p_min"]),
-            "pn_max": float(row["load_p_max"]),
-            "qn_min": float(row["load_q_min"]),
-            "qn_max": float(row["load_q_max"]),
-            "pg_min": float(row["generation_p_min"]),
-            "pg_max": float(row["generation_p_max"]),
-            "vzd": float(row["voltage_setpoint"]),
-            "umin": float(row["voltage_min"]),
-            "umax": float(row["voltage_max"]),
-            "na": int(row["area_id"]),
-            "tip": int(row["node_type"]),
+    for (
+        nid,
+        el,
+        eg,
+        pn_min,
+        pn_max,
+        qn_min,
+        qn_max,
+        pg_min,
+        pg_max,
+        vzd,
+        umin,
+        umax,
+        na,
+        tip,
+    ) in zip(
+        arr["id"].tolist(),
+        arr["exist_load"].tolist(),
+        arr["exist_gen"].tolist(),
+        arr["load_p_min"].tolist(),
+        arr["load_p_max"].tolist(),
+        arr["load_q_min"].tolist(),
+        arr["load_q_max"].tolist(),
+        arr["generation_p_min"].tolist(),
+        arr["generation_p_max"].tolist(),
+        arr["voltage_setpoint"].tolist(),
+        arr["voltage_min"].tolist(),
+        arr["voltage_max"].tolist(),
+        arr["area_id"].tolist(),
+        arr["node_type"].tolist(),
+        strict=True,
+    ):
+        out[int(nid)] = {
+            "exist_load": int(el),
+            "exist_gen": int(eg),
+            "pn_min": float(pn_min),
+            "pn_max": float(pn_max),
+            "qn_min": float(qn_min),
+            "qn_max": float(qn_max),
+            "pg_min": float(pg_min),
+            "pg_max": float(pg_max),
+            "vzd": float(vzd),
+            "umin": float(umin),
+            "umax": float(umax),
+            "na": int(na),
+            "tip": int(tip),
         }
     return out
 

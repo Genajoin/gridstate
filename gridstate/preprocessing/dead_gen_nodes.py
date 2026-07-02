@@ -18,9 +18,14 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from gridstate.preprocessing._scan import node_degree_map
+
 
 if TYPE_CHECKING:
     from gridstate.working import Working
+
+
+__all__ = ["disable_dead_generator_nodes"]
 
 _SLACK_NODE_TYPE = 2
 
@@ -67,15 +72,7 @@ def disable_dead_generator_nodes(
 
     # степень по активным ветвям (оба конца активных узлов)
     active_node = {int(n["id"]): bool(n["status"]) for n in nodes}
-    deg: dict[int, int] = defaultdict(int)
-    for b in branches:
-        if not bool(b["status"]):
-            continue
-        f, t = int(b["from_node"]), int(b["to_node"])
-        if active_node.get(f):
-            deg[f] += 1
-        if active_node.get(t):
-            deg[t] += 1
+    deg = node_degree_map(branches, active_nodes=active_node)
 
     disabled: list[int] = []
     for n in nodes:

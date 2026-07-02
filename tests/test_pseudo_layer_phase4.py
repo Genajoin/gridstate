@@ -20,7 +20,10 @@ from gridstate.preprocessing.mirror_voltage import (
     _mirror_voltage_on_arrays,
     mirror_voltage_through_unit_tap_links,
 )
-from gridstate.preprocessing.pseudo_measurements import _add_pseudo_measurements_on_arrays
+from gridstate.preprocessing.pseudo_measurements import (
+    PseudoMeasConfig,
+    _add_pseudo_measurements_on_arrays,
+)
 from gridstate.preprocessing.synth_injection import _synthesize_node_injection_on_arrays
 from gridstate.z_vector import (
     KIND_POWER_INJECTION_P,
@@ -521,7 +524,7 @@ def test_add_pseudo_core_v_and_injection_priors():
     branches = _branches([])
     meas = _meas([])
     rows, stats = _add_pseudo_measurements_on_arrays(
-        nodes, branches, meas, None, mid_start=300_000_000
+        nodes, branches, meas, None, PseudoMeasConfig(mid_start=300_000_000)
     )
     assert stats["v_priors_added"] == 1
     assert stats["zero_inj_added"] == 1
