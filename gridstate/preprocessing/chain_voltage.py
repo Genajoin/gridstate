@@ -50,7 +50,7 @@ def chain_pseudo_voltage_through_tap_links(
     min_sigma_frac: float = 0.01,
     block_bus_only: bool = True,
     mid_start: int = 210_000_000,
-) -> int:
+) -> dict[str, int]:
     """Распространить V через trafo-ветви, скейлуя по tap_ratio.
 
     Для каждой active trafo-ветви (``branch_type=1``): если у одного
@@ -74,7 +74,7 @@ def chain_pseudo_voltage_through_tap_links(
         mid_start: начальный ID для добавляемых measurements.
 
     Returns:
-        Общее число добавленных pseudo V-meas.
+        Статистика шага ``{"added": <общее число добавленных pseudo V-meas>}``.
     """
     nodes_arr = model.nodes.to_numpy()
     node_by_id = {int(r["id"]): r for r in nodes_arr}
@@ -181,4 +181,4 @@ def chain_pseudo_voltage_through_tap_links(
             break
 
     logger.info("chain_pseudo_voltage_through_tap_links: добавлено %d pseudo V-meas", cnt)
-    return cnt
+    return {"added": cnt}

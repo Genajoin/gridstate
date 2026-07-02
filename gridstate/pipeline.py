@@ -670,8 +670,7 @@ def _refine_two_pass(
 
 
 def _s_normalize_breakers(ctx: _Ctx) -> dict:
-    normalize_breaker_reactance(ctx.model)
-    return {}
+    return dict(normalize_breaker_reactance(ctx.model) or {})
 
 
 def _s_voltage_nominal(ctx: _Ctx) -> dict:
@@ -692,8 +691,7 @@ def _s_rpn(ctx: _Ctx) -> dict:
 
 
 def _s_reactors(ctx: _Ctx) -> dict:
-    apply_reactors_to_node_shunt(ctx.model)
-    return {}
+    return dict(apply_reactors_to_node_shunt(ctx.model) or {})
 
 
 def _s_telemetry(ctx: _Ctx) -> dict:
@@ -714,72 +712,61 @@ def _s_telemetry(ctx: _Ctx) -> dict:
 
 
 def _s_voltage_range_filter(ctx: _Ctx) -> dict:
-    apply_voltage_range_filter(ctx.model)
-    return {}
+    return dict(apply_voltage_range_filter(ctx.model) or {})
 
 
 def _s_resolve_merged(ctx: _Ctx) -> dict:
-    resolve_merged_measurement_conflicts(ctx.model)
-    return {}
+    return dict(resolve_merged_measurement_conflicts(ctx.model) or {})
 
 
 def _s_refine_slack(ctx: _Ctx) -> dict:
-    refine_slack_to_one(ctx.model)
-    return {}
+    return dict(refine_slack_to_one(ctx.model) or {})
 
 
 def _s_refine_node_types(ctx: _Ctx) -> dict:
-    refine_node_types_from_generators(ctx.model)
-    return {}
+    return dict(refine_node_types_from_generators(ctx.model) or {})
 
 
 def _s_disable_orphan_branches(ctx: _Ctx) -> dict:
     # H46: повтор после disconnected_components ниже выполняется тем же шагом-парой.
-    disable_orphan_branches(ctx.model)
-    return {}
+    return dict(disable_orphan_branches(ctx.model) or {})
 
 
 def _s_disable_disconnected(ctx: _Ctx) -> dict:
-    disable_disconnected_components(ctx.model)
+    stats = dict(disable_disconnected_components(ctx.model) or {})
     # H46: пере-отключить ветви, инцидентные только что выключенным узлам.
     if ctx.cfg.disable_orphan_branches:
-        disable_orphan_branches(ctx.model)
-    return {}
+        recheck = dict(disable_orphan_branches(ctx.model) or {})
+        stats["orphan_recheck_disabled"] = recheck.get("disabled", 0)
+    return stats
 
 
 def _s_disable_isolated(ctx: _Ctx) -> dict:
-    disable_isolated_nodes(ctx.model)
-    return {}
+    return dict(disable_isolated_nodes(ctx.model) or {})
 
 
 def _s_generator_status(ctx: _Ctx) -> dict:
-    apply_generator_status_from_node(ctx.model)
-    return {}
+    return dict(apply_generator_status_from_node(ctx.model) or {})
 
 
 def _s_aggregate_generators(ctx: _Ctx) -> dict:
-    aggregate_generators_to_node(ctx.model)
-    return {}
+    return dict(aggregate_generators_to_node(ctx.model) or {})
 
 
 def _s_gen_v_calibration(ctx: _Ctx) -> dict:
-    apply_voltage_meas_calibration_for_gen_nodes(ctx.model)
-    return {}
+    return dict(apply_voltage_meas_calibration_for_gen_nodes(ctx.model) or {})
 
 
 def _s_deactivate_orphan_measurements(ctx: _Ctx) -> dict:
-    deactivate_orphan_measurements(ctx.model)
-    return {}
+    return dict(deactivate_orphan_measurements(ctx.model) or {})
 
 
 def _s_synthesize_injections(ctx: _Ctx) -> dict:
-    synthesize_node_injection_from_branch_flows(ctx.model)
-    return {}
+    return dict(synthesize_node_injection_from_branch_flows(ctx.model) or {})
 
 
 def _s_mirror_voltage(ctx: _Ctx) -> dict:
-    mirror_voltage_through_unit_tap_links(ctx.model)
-    return {}
+    return dict(mirror_voltage_through_unit_tap_links(ctx.model) or {})
 
 
 def _s_materialize(ctx: _Ctx) -> dict:

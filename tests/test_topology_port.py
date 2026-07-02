@@ -89,7 +89,8 @@ def test_topology_sequence_runs_clean():
     ]
     for name in steps:
         ra = getattr(cs, name)(a)
-        assert isinstance(ra, int), f"{name}: возврат не int ({ra!r})"
+        assert isinstance(ra, dict), f"{name}: возврат не dict ({ra!r})"
+        assert all(isinstance(v, int) for v in ra.values()), f"{name}: значения не int ({ra!r})"
 
     node_state = _node_state(a)
     branch_state = _branch_state(a)
@@ -117,7 +118,7 @@ def test_refine_node_types_with_props_vzd_gate():
     cs.refine_slack_to_one(a)
     props = {4: {"vzd": 0.0, "exist_gen": True}, 8: {"vzd": 1.0, "exist_gen": True}}
     ra = cs.refine_node_types_from_generators(a, node_load_props=props)
-    assert ra == 0  # узел 4 имеет ген, но vzd=0 → не PV; 8 без гена
+    assert ra == {"promoted": 0}  # узел 4 имеет ген, но vzd=0 → не PV; 8 без гена
     node_state = _node_state(a)
     assert node_state[4][1] != int(NodeType.PV)
 
@@ -144,7 +145,7 @@ def test_no_slack_disconnected_noop():
         return m
 
     a = _no_slack()
-    assert cs.disable_disconnected_components(a) == 0
+    assert cs.disable_disconnected_components(a) == {"disabled": 0}
     node_state = _node_state(a)
     assert node_state[1][0] is True
     assert node_state[2][0] is True

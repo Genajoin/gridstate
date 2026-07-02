@@ -135,7 +135,7 @@ def mirror_voltage_through_unit_tap_links(
     *,
     tap_tolerance: float = 1e-3,
     mid_start: int = 200_000_000,
-) -> int:
+) -> dict[str, int]:
     """Скопировать real V-измерения через ktr=1.0 trafo-связи.
 
     Для каждой активной ветви ``branch_type=1`` с ``|tap_ratio - 1| <
@@ -146,7 +146,7 @@ def mirror_voltage_through_unit_tap_links(
     variance)``.
 
     Returns:
-        Количество добавленных mirror-V измерений.
+        Статистика шага ``{"added": <число добавленных mirror-V измерений>}``.
     """
     new_rows = _mirror_voltage_on_arrays(
         model.nodes.to_numpy(),
@@ -159,4 +159,4 @@ def mirror_voltage_through_unit_tap_links(
     model.measurements.add_many(new_rows)
 
     logger.info("mirror_voltage_through_unit_tap_links: добавлено %d pseudo V-meas", len(new_rows))
-    return len(new_rows)
+    return {"added": len(new_rows)}

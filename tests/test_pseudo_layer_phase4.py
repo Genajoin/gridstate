@@ -360,7 +360,7 @@ def test_adapter_effect_matches_core_plan():
     before = {int(me.id) for me in m.measurements}
 
     cnt = mirror_voltage_through_unit_tap_links(m, mid_start=_MID)
-    assert cnt == len(plan)
+    assert cnt == {"added": len(plan)}
 
     added = {int(me.id) for me in m.measurements} - before
     assert added == {int(r["id"]) for r in plan}
