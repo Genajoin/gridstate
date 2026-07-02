@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -59,8 +60,6 @@ def _resolve_merged_on_arrays(meas_arr: np.ndarray) -> dict[str, int]:
     ``me._weight``). Мутирует ``meas_arr`` in place. БЕЗ внешних зависимостей и XML. Порядок строк =
     порядок объектов.
     """
-    from collections import defaultdict
-
     keys: dict[tuple[int, int, int, int], list[int]] = defaultdict(list)
     for i in range(len(meas_arr)):
         if not bool(meas_arr[i]["status"]):

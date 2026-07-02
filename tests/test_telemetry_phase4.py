@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from gridstate.contract import SE_INPUT
-from gridstate.telemetry.apply_resolved import _apply_telemetry_on_arrays
+from gridstate.telemetry.apply_resolved import TelemetryApplyConfig, _apply_telemetry_on_arrays
 from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_GOOD, QUALITY_QUESTIONABLE
 from gridstate.telemetry.units import (
     variance_branch_q,
@@ -81,9 +81,9 @@ CORE_KW = {
 
 def _run(meas, nodes, branches, resolved, **overrides):
     arg_keys = list(resolved.keys())
-    kw = {**CORE_KW, **overrides}
+    config = TelemetryApplyConfig(**{**CORE_KW, **overrides})
     return _apply_telemetry_on_arrays(
-        meas, nodes, branches, arg_keys, resolved, total_args=len(resolved), **kw
+        meas, nodes, branches, arg_keys, resolved, total_args=len(resolved), config=config
     )
 
 

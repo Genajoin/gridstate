@@ -11,6 +11,8 @@ from typing import Any
 
 import numpy as np
 
+from gridstate.utils import id_to_pos_map
+
 
 # Элемент плана статусов ON_LINE: ``(tag, parent_id, status|None, eval_skip|None)``.
 ResolvedItem = tuple[str, int, bool | None, str | None]
@@ -46,11 +48,9 @@ def _apply_topology_on_arrays(
     массив (nodes/branches/generators), пишет ``status``-колонку. Мутирует массивы
     in place. Без внешних зависимостей, без float-арифметики.
     """
-    by_id_nodes: dict[int, int] = {int(arr_nodes[i]["id"]): i for i in range(len(arr_nodes))}
-    by_id_branches: dict[int, int] = {
-        int(arr_branches[i]["id"]): i for i in range(len(arr_branches))
-    }
-    by_id_gens: dict[int, int] = {int(arr_gens[i]["id"]): i for i in range(len(arr_gens))}
+    by_id_nodes = id_to_pos_map(arr_nodes["id"])
+    by_id_branches = id_to_pos_map(arr_branches["id"])
+    by_id_gens = id_to_pos_map(arr_gens["id"])
 
     stats = {
         "applied_on": 0,

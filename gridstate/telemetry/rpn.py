@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.utils import id_to_pos_map
+
 
 if TYPE_CHECKING:
     from gridstate.working import Working
@@ -25,7 +27,7 @@ def _apply_tap_steps_on_arrays(
     Ядро лишь применяет: пишет tap/phase и H30-факторит шунт (поля ``!=0.0``).
     Это формат-агностичная физика трансформатора.
     """
-    by_id: dict[int, int] = {int(branches_arr[i]["id"]): i for i in range(len(branches_arr))}
+    by_id = id_to_pos_map(branches_arr["id"])
     stats: dict[str, int | float] = {"applied": 0, "shunt_recalc": 0}
     for ts in tap_steps_arr:
         idx = by_id.get(int(ts["branch_id"]))
