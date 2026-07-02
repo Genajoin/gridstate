@@ -44,7 +44,9 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.sparse import csr_matrix, diags
 
+from gridstate.algebra.estimators import HuberReweighter
 from gridstate.algorithms.kkt_solver import KKTSolver
+from gridstate.utils import scale_csr_rows, sparse_diag
 
 
 logger = logging.getLogger(__name__)
@@ -203,6 +205,31 @@ def _max_step_to_boundary(
     return fraction * alpha
 
 
+def _error_result(
+    message: str,
+    *,
+    x: np.ndarray,
+    r: np.ndarray,
+    R_inv: csr_matrix,
+    outer_iter: int,
+    iter_inner_total: int,
+    mu: float,
+    grad_inf: float,
+) -> IPMResult:
+    """Assemble the terminal-failure result (shared by both solver-error exits)."""
+    return IPMResult(
+        x=x,
+        success=False,
+        objective_data=0.5 * float(r @ (R_inv @ r)),
+        iterations_outer=outer_iter,
+        iterations_inner_total=iter_inner_total,
+        mu_final=mu,
+        grad_inf_final=grad_inf,
+        message=message,
+        status="error",
+    )
+
+
 def solve_ipm(
     x_init: np.ndarray,
     residual_fn: Callable[[np.ndarray], np.ndarray],
@@ -309,26 +336,29 @@ def solve_ipm(
 
     m = int(r_inv_diag.shape[0])
     r_inv_diag_base = np.asarray(r_inv_diag, dtype=np.float64).copy()
-    rows_R = np.arange(m)
 
-    def _build_r_inv(diag: np.ndarray) -> csr_matrix:
-        return csr_matrix((diag, (rows_R, rows_R)), shape=(m, m))
-
-    R_inv = _build_r_inv(r_inv_diag_base)
+    R_inv = sparse_diag(r_inv_diag_base)
     r_inv_diag = r_inv_diag_base  # текущая диагональ R⁻¹ (для column-scaling HtRinv)
 
-    # SHGM-IRLS: подготовка
-    use_huber = (
-        huber_c > 0.0 and huber_mask is not None and np.asarray(huber_mask, dtype=bool).any()
+    # SHGM-IRLS mask/weight policy shared with solve_wls; see
+    # gridstate.algebra.estimators for the mechanics.
+    huber_mask_arr = (
+        np.asarray(huber_mask, dtype=bool) if huber_mask is not None else np.zeros(m, dtype=bool)
     )
-    if use_huber:
-        huber_mask_arr = np.asarray(huber_mask, dtype=bool)
-        sigma_arr = 1.0 / np.sqrt(np.maximum(r_inv_diag_base, 1e-30))
-    else:
-        huber_mask_arr = np.zeros(m, dtype=bool)
-        sigma_arr = np.ones(m, dtype=np.float64)
-    huber_c_eff = float(huber_c)
-    huber_adaptive_applied = False
+    use_huber = huber_c > 0.0 and huber_mask_arr.any()
+    sigma_arr = (
+        1.0 / np.sqrt(np.maximum(r_inv_diag_base, 1e-30))
+        if use_huber
+        else np.ones(m, dtype=np.float64)
+    )
+    reweighter = HuberReweighter(
+        c=huber_c,
+        mask=huber_mask_arr,
+        sigma=sigma_arr,
+        w_floor=huber_w_floor,
+        adaptive_k=huber_adaptive_k,
+        use_mad=huber_use_mad,
+    )
 
     x = _project_to_interior(x_init, box_idx, box_lo, box_hi, box_eps)
     mu = float(mu_init)
@@ -356,7 +386,7 @@ def solve_ipm(
         # ослабевает), поэтому one-shot adaptive (как в WLS) даёт c_eff
         # завышенный по ранним residuals. Сброс позволяет downweight
         # активироваться к концу IPM-сходимости.
-        huber_adaptive_applied = False
+        reweighter.reset_adaptive()
         # Inner Newton сходится к min Φ(·; μ).
         for inner in range(inner_max):
             r = residual_fn(x)
@@ -364,34 +394,11 @@ def solve_ipm(
             # текущему residual. Применяется до построения G/grad, влияет
             # на R_inv. См. ``solve_wls`` для деталей механики.
             if use_huber and iter_inner_total > huber_warmup_iters:
-                if huber_use_mad:
-                    ar = np.abs(r[huber_mask_arr])
-                    mad_scale = float(np.median(ar)) * 1.4826 + 1e-12
-                    r_n = np.abs(r) / mad_scale
-                else:
-                    r_n = np.abs(r) / sigma_arr
-                if not huber_adaptive_applied:
-                    med = float(np.median(r_n[huber_mask_arr]))
-                    huber_c_eff = max(huber_c, huber_adaptive_k * med)
-                    huber_adaptive_applied = True
-                    logger.debug(
-                        "IPM SHGM adaptive c (outer=%d inner=%d): median(|r/σ|)=%.3f → c_eff=%.2f",
-                        outer_iter,
-                        inner,
-                        med,
-                        huber_c_eff,
-                    )
-                w_huber = np.ones(m, dtype=np.float64)
-                sel = huber_mask_arr & (r_n > huber_c_eff)
-                w_huber[sel] = np.maximum(huber_c_eff / np.maximum(r_n[sel], 1e-30), huber_w_floor)
-                r_inv_diag = r_inv_diag_base * w_huber
-                R_inv = _build_r_inv(r_inv_diag)
+                r_inv_diag = r_inv_diag_base * reweighter.weights(r)
+                R_inv = sparse_diag(r_inv_diag)
             H = jacobian_fn(x)
-            # H.T @ R_inv с диагональной R⁻¹ = row-scaling H по r_inv_diag, затем
-            # transpose: O(nnz) вместо полного sparse-matmul диагонали (тождество).
-            _row = np.repeat(np.arange(H.shape[0]), np.diff(H.indptr))
-            H_w = csr_matrix((H.data * r_inv_diag[_row], H.indices, H.indptr), shape=H.shape)
-            HtRinv = H_w.T
+            # H.T @ R^-1 with diagonal R^-1 == row-scaling H then transpose.
+            HtRinv = scale_csr_rows(H, r_inv_diag).T
 
             grad_data = -np.asarray(HtRinv @ r, dtype=np.float64).ravel()
 
@@ -411,31 +418,27 @@ def solve_ipm(
                 dx = solver.solve(G, -grad)
             except Exception as exc:
                 logger.warning("ipm: kkt solve fail outer=%d inner=%d: %s", outer_iter, inner, exc)
-                message = f"kkt solve failure (outer {outer_iter}, inner {inner})"
-                return IPMResult(
+                return _error_result(
+                    f"kkt solve failure (outer {outer_iter}, inner {inner})",
                     x=x,
-                    success=False,
-                    objective_data=0.5 * float(r @ (R_inv @ r)),
-                    iterations_outer=outer_iter,
-                    iterations_inner_total=iter_inner_total,
-                    mu_final=mu,
-                    grad_inf_final=grad_inf,
-                    message=message,
-                    status="error",
+                    r=r,
+                    R_inv=R_inv,
+                    outer_iter=outer_iter,
+                    iter_inner_total=iter_inner_total,
+                    mu=mu,
+                    grad_inf=grad_inf,
                 )
 
             if not np.all(np.isfinite(dx)):
-                message = f"non-finite step (outer {outer_iter}, inner {inner})"
-                return IPMResult(
+                return _error_result(
+                    f"non-finite step (outer {outer_iter}, inner {inner})",
                     x=x,
-                    success=False,
-                    objective_data=0.5 * float(r @ (R_inv @ r)),
-                    iterations_outer=outer_iter,
-                    iterations_inner_total=iter_inner_total,
-                    mu_final=mu,
-                    grad_inf_final=grad_inf,
-                    message=message,
-                    status="error",
+                    r=r,
+                    R_inv=R_inv,
+                    outer_iter=outer_iter,
+                    iter_inner_total=iter_inner_total,
+                    mu=mu,
+                    grad_inf=grad_inf,
                 )
 
             # Trust-region clip: |Δx|∞ ≤ tr_radius. Сохраняем направление,

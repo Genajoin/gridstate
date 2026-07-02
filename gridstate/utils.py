@@ -19,7 +19,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-__all__ = ["branch_endpoints_map", "floored_sigma2", "id_to_pos_map", "sparse_diag"]
+__all__ = [
+    "branch_endpoints_map",
+    "floored_sigma2",
+    "id_to_pos_map",
+    "scale_csr_rows",
+    "sparse_diag",
+]
 
 
 def id_to_pos_map(ids: Iterable[int] | np.ndarray) -> dict[int, int]:
@@ -60,3 +66,13 @@ def sparse_diag(diag: np.ndarray) -> csr_matrix:
     n = diag.shape[0]
     idx = np.arange(n)
     return csr_matrix((diag, (idx, idx)), shape=(n, n))
+
+
+def scale_csr_rows(matrix: csr_matrix, diag: np.ndarray) -> csr_matrix:
+    """Row-scale a CSR matrix by ``diag`` in O(nnz).
+
+    Identity ``diag(d) @ M`` without materializing the diagonal matrix; used
+    by the solvers to form ``H^T R^-1`` as ``scale_csr_rows(H, r_inv_diag).T``.
+    """
+    row = np.repeat(np.arange(matrix.shape[0]), np.diff(matrix.indptr))
+    return csr_matrix((matrix.data * diag[row], matrix.indices, matrix.indptr), shape=matrix.shape)

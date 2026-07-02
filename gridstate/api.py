@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from gridstate.algebra.estimators import build_branch_pq_huber_mask
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.wls import solve_wls
@@ -478,43 +479,17 @@ def _run_ipm(
 
     r_inv_diag = 1.0 / floored_sigma2(setup.r_matrix.diagonal())
 
-    # SHGM-IRLS mask: branch P/Q (object_kind=1), исключая трансформаторы
-    # и leverage-Q (B≥threshold). Параллель с ``solve_wls``: на блочных
-    # АТ ГЭС/ТЭЦ residual часто большой из-за RPN — downweight срывает
-    # связь LV/HV. На длинных 750 кВ ВЛ Q_charging≈BV² легитимна,
-    # downweight срывает V на терминалах.
+    # SHGM-IRLS mask shared with solve_wls; balance/prior rows appended by
+    # build_ipm_setup are never reweighted (padding inside the helper).
     huber_mask = None
     if huber_c > 0.0:
-        m_total = int(setup.z.shape[0])
-        ok_branch = np.asarray(setup.meas_index.object_kind == 1, dtype=bool)
-        if ok_branch.size != m_total:
-            # build_ipm_setup мог добавить balance-rows; они не branch.
-            ok_branch = np.concatenate([ok_branch, np.zeros(m_total - ok_branch.size, dtype=bool)])
-        mask = ok_branch.copy()
-        if mask.any():
-            branch_pos_all = np.asarray(setup.meas_index.object_pos, dtype=np.int64)
-            if branch_pos_all.size < m_total:
-                branch_pos_all = np.concatenate(
-                    [branch_pos_all, np.zeros(m_total - branch_pos_all.size, dtype=np.int64)]
-                )
-            kinds_all = np.asarray(setup.meas_index.kind, dtype=np.int64)
-            if kinds_all.size < m_total:
-                kinds_all = np.concatenate(
-                    [kinds_all, -np.ones(m_total - kinds_all.size, dtype=np.int64)]
-                )
-            n_br = network_pu.n_branch
-            if huber_skip_transformers and n_br > 0:
-                is_xfmr_br = np.abs(network_pu.tap_ratio - 1.0) > 1e-3
-                is_xfmr_meas = np.zeros(m_total, dtype=bool)
-                is_xfmr_meas[mask] = is_xfmr_br[branch_pos_all[mask]]
-                mask = mask & (~is_xfmr_meas)
-            if huber_leverage_b_threshold_pu > 0 and n_br > 0:
-                b_pu = network_pu.branch_b
-                is_lev_br = np.abs(b_pu) >= huber_leverage_b_threshold_pu
-                is_lev_q = np.zeros(m_total, dtype=bool)
-                q_mask = mask & (kinds_all == 1)  # POWER_Q = 1
-                is_lev_q[q_mask] = is_lev_br[branch_pos_all[q_mask]]
-                mask = mask & (~is_lev_q)
+        mask = build_branch_pq_huber_mask(
+            setup.meas_index,
+            network_pu,
+            m_total=int(setup.z.shape[0]),
+            skip_transformers=huber_skip_transformers,
+            leverage_b_threshold_pu=huber_leverage_b_threshold_pu,
+        )
         huber_mask = mask if mask.any() else None
 
     def residual_fn(x: np.ndarray) -> np.ndarray:
