@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from gridstate.units import BASE_MVA
+from gridstate.utils import id_to_pos_map
 
 
 if TYPE_CHECKING:
@@ -56,14 +57,12 @@ def _aggregate_shunts_on_arrays(nodes_arr: Any, shunts_arr: Any) -> dict[str, in
 
     ``shunts`` уже в См с применённым знаком и ON_LINE-статусом. Фильтрует по
     ``shunts.status`` И активности узла, суммирует в порядке строк. Мутирует
-    ``nodes_arr``.
+    ``nodes_arr``. Ранний возврат при пустых ``shunts`` — в адаптере
+    :func:`apply_reactors_to_node_shunt` (без ``to_numpy`` при отсутствии данных).
     """
-    if shunts_arr is None or len(shunts_arr) == 0:
-        return {"applied": 0, "sum_b_added_S": 0.0, "sum_g_added_S": 0.0}
-
-    by_id: dict[int, int] = {int(nodes_arr[i]["id"]): i for i in range(len(nodes_arr))}
+    by_id = id_to_pos_map(nodes_arr["id"])
     node_status: dict[int, bool] = {
-        int(nodes_arr[i]["id"]): bool(nodes_arr[i]["status"]) for i in range(len(nodes_arr))
+        int(i): bool(s) for i, s in zip(nodes_arr["id"], nodes_arr["status"], strict=True)
     }
 
     applied = 0
@@ -139,8 +138,7 @@ def _normalize_breaker_reactance_on_arrays(
     число нормализованных ветвей.
     """
     vn_by_id: dict[int, float] = {
-        int(nodes_arr[i]["id"]): float(nodes_arr[i]["voltage_nominal"])
-        for i in range(len(nodes_arr))
+        int(i): float(v) for i, v in zip(nodes_arr["id"], nodes_arr["voltage_nominal"], strict=True)
     }
 
     n = 0

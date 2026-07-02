@@ -15,7 +15,7 @@ Helper-функции для:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -24,6 +24,7 @@ from scipy.sparse import csr_matrix
 from gridstate.bounds import resolve_bounds
 from gridstate.state import StateLayout
 from gridstate.units import BASE_MVA
+from gridstate.utils import id_to_pos_map
 from gridstate.z_vector import (
     KIND_BOX_PRIOR_PGEN,
     KIND_BOX_PRIOR_PNAG,
@@ -49,121 +50,45 @@ __all__ = [
 
 
 @dataclass
-class IPMSetup:
-    """Расширенный layout + box-bounds + augmented (z, R, meas_index)."""
+class _BoxSection:
+    """Accumulator + column spec for one box-var family (pgen/qgen/pnag/qnag).
 
-    layout: StateLayout
-    # Box-bounds в p.u. (P/Q в МВт делятся на BASE_MVA для согласованности с z).
-    box_idx_in_state: np.ndarray  # позиции в state-vector (длины n_box)
-    box_lo: np.ndarray  # нижние границы
-    box_hi: np.ndarray  # верхние границы
-    # Стартовые значения box-vars в p.u. (берутся из текущих generation_p/load_p).
-    pgen_init: np.ndarray
-    qgen_init: np.ndarray
-    pnag_init: np.ndarray
-    qnag_init: np.ndarray
-    # Augmented z/R/meas_index с добавленными balance-meas.
-    z: np.ndarray
-    r_matrix: csr_matrix
-    meas_index: MeasurementIndex
-
-
-def build_ipm_setup(
-    model: Working,
-    network_pu: NetworkPU,
-    z: np.ndarray,
-    r_matrix: csr_matrix,
-    meas_index: MeasurementIndex,
-    *,
-    layout_base: StateLayout,
-    balance_sigma2: float | None = None,
-    balance_weight_factor: float = 0.1,
-    bound_relax: float = 0.0,
-    default_box_halfwidth_pu: float = 50.0,
-    prior_sigma2_normal_pu: float = 0.0,
-    prior_sigma2_bus_equiv_pu: float = 0.01,
-    prior_sigma2_inj_pu: float = 0.0,
-    bus_equiv_width_threshold_pu: float = 100.0,
-) -> IPMSetup:
-    """Собрать IPM-инфраструктуру поверх готовых WLS-данных.
-
-    Args:
-        model: ``Working`` (для чтения NODE_DTYPE).
-        network_pu: внутреннее p.u.-представление.
-        z, r_matrix, meas_index: WLS-данные (из ``build_z_and_r``).
-        layout_base: WLS-layout (без box-vars). Возвращаемый ``layout``
-            наследует ``n_bus, slack_idx, non_slack_idx`` и добавляет
-            box-секции.
-        balance_sigma2: дисперсия (p.u.²) для balance-pseudo-meas. Если
-            ``None`` (default) — вычисляется адаптивно:
-            ``σ²_balance = median(σ²_data) / balance_weight_factor``
-            (median, а не min: минимум часто аутлаер и порождает
-            balance-вес, перебивающий данные на порядки).
-        balance_weight_factor: отношение веса (1/σ²) баланса к весу
-            медианной data-меры. Используется при ``balance_sigma2=None``.
-            Default 0.1 — баланс в 10 раз МЯГЧЕ медианной TI по σ²:
-            калибровка в пользу data-fit; узловой баланс достигается
-            солвером как стационарная точка, а не вбивается весом.
-            Значения >1 делают баланс жёстче медианной меры.
-        bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
-            (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
-        default_box_halfwidth_pu: полуширина (p.u.) дефолтной коробки
-            ``[-hw, +hw]`` для exist_*-узла с незаданными границами.
-            Default 50 p.u. (±5 ГВт/ГВАр) — заведомо шире любого
-            реального узла, барьер фактически не действует, значением
-            управляют balance + TI. Дефолтные коробки не получают
-            BUS-эквивалент-prior (широки не из-за фиктивного
-            эквивалента, а из-за отсутствия данных).
-        prior_sigma2_normal_pu: σ² (p.u.²) prior-меры для box-var
-            узла с обычной коробкой (ширина ≤ ``bus_equiv_width_threshold_pu``).
-            Default ``0`` — prior не создаётся, data-меры через TI на
-            ветвях управляют значениями. Transit-узлы (``exist_=0``)
-            не имеют box-var; их `Pgen-Pnag = 0` обеспечивается
-            через balance-meas Sbus=0.
-        prior_sigma2_bus_equiv_pu: σ² (p.u.²) prior-меры для BUS-
-            эквивалентов: узлы с шириной коробки больше
-            ``bus_equiv_width_threshold_pu`` (типичные внешние эквиваленты
-            с фиктивной широкой коробкой порядка десятков ГВт).
-            Default ``0.01`` (≈ σ=10 МВт) — tight чтобы не раскидать
-            невязку, но достаточно мягкий чтобы TI на ветвях могли
-            подтянуть значения.
-        prior_sigma2_inj_pu: kept as kwarg для будущих калибровок,
-            не используется при ``init_from_inj_measurements`` отсутствующем
-            (init берётся из ``node.generation_p/load_p``).
-        bus_equiv_width_threshold_pu: порог ширины коробки (p.u.,
-            BASE_MVA=100 → 100 p.u. = 10 ГВт МВт-эквивалента).
-            Default ``100`` p.u. — покрывает крупные BUS-эквиваленты
-            и не задевает обычные узлы (типичная width 5–50 p.u.).
-
-    Returns:
-        ``IPMSetup`` с расширенным layout и augmented z/R/meas_index.
+    ``exist_col`` gates which nodes contribute (``exist_gen`` for the gen families,
+    ``exist_load`` for the load families); ``reactive`` selects the Q-side ``has_inj``
+    flag. ``prior_kind`` is the ``KIND_BOX_PRIOR_*`` used when emitting prior-meas.
+    The list fields accumulate one entry per contributing node, in node order.
     """
-    nodes_arr = model.nodes.to_numpy()
-    bus_ids = network_pu.bus_ids
-    bus_id_to_pos: dict[int, int] = {int(bid): pos for pos, bid in enumerate(bus_ids.tolist())}
 
-    # ---- Сбор box-vars: для каждого активного узла с exist_load/exist_gen ----
-    pgen_pos_list: list[int] = []
-    qgen_pos_list: list[int] = []
-    pnag_pos_list: list[int] = []
-    qnag_pos_list: list[int] = []
-    pgen_lo: list[float] = []
-    pgen_hi: list[float] = []
-    qgen_lo: list[float] = []
-    qgen_hi: list[float] = []
-    pnag_lo: list[float] = []
-    pnag_hi: list[float] = []
-    qnag_lo: list[float] = []
-    qnag_hi: list[float] = []
-    pgen_init_l: list[float] = []
-    qgen_init_l: list[float] = []
-    pnag_init_l: list[float] = []
-    qnag_init_l: list[float] = []
-    # Для каждой box-var собираем σ²_prior с учётом exist_ + ширины коробки.
-    pgen_prior_s2: list[float] = []
-    qgen_prior_s2: list[float] = []
-    pnag_prior_s2: list[float] = []
-    qnag_prior_s2: list[float] = []
+    exist_col: str
+    min_col: str
+    max_col: str
+    init_col: str
+    prior_kind: int
+    reactive: bool
+    pos: list[int] = field(default_factory=list)
+    lo: list[float] = field(default_factory=list)
+    hi: list[float] = field(default_factory=list)
+    init: list[float] = field(default_factory=list)
+    prior_s2: list[float] = field(default_factory=list)
+
+
+def _collect_box_sections(
+    nodes_arr: np.ndarray,
+    bus_id_to_pos: dict[int, int],
+    *,
+    bound_relax: float,
+    default_box_halfwidth_pu: float,
+    prior_sigma2_normal_pu: float,
+    prior_sigma2_bus_equiv_pu: float,
+    prior_sigma2_inj_pu: float,
+    bus_equiv_width_threshold_pu: float,
+) -> list[_BoxSection]:
+    """Collect box-var bounds/init/prior per section for exist_load/exist_gen nodes.
+
+    Returns the four sections in canonical order ``[pgen, qgen, pnag, qnag]``. Each
+    section's lists are filled in ``nodes_arr`` order, which is the ordering every
+    downstream concatenation depends on.
+    """
 
     def _resolve_prior_sigma2(
         bounds: tuple[float, float],
@@ -252,6 +177,41 @@ def build_ipm_setup(
             return hi - margin
         return value_pu
 
+    sections = [
+        _BoxSection(
+            "exist_gen",
+            "generation_p_min",
+            "generation_p_max",
+            "generation_p",
+            KIND_BOX_PRIOR_PGEN,
+            reactive=False,
+        ),
+        _BoxSection(
+            "exist_gen",
+            "generation_q_min",
+            "generation_q_max",
+            "generation_q",
+            KIND_BOX_PRIOR_QGEN,
+            reactive=True,
+        ),
+        _BoxSection(
+            "exist_load",
+            "load_p_min",
+            "load_p_max",
+            "load_p",
+            KIND_BOX_PRIOR_PNAG,
+            reactive=False,
+        ),
+        _BoxSection(
+            "exist_load",
+            "load_q_min",
+            "load_q_max",
+            "load_q",
+            KIND_BOX_PRIOR_QNAG,
+            reactive=True,
+        ),
+    ]
+
     for row in nodes_arr:
         if not bool(row["status"]):
             continue
@@ -259,18 +219,16 @@ def build_ipm_setup(
         if nid not in bus_id_to_pos:
             continue
         pos = bus_id_to_pos[nid]
-        exist_load = bool(row["exist_load"])
-        exist_gen = bool(row["exist_gen"])
+        exist_flags = {
+            "exist_gen": bool(row["exist_gen"]),
+            "exist_load": bool(row["exist_load"]),
+        }
 
         # Init box-vars берём из node-row (load_p/q, generation_p/q).
         # has_p_inj/has_q_inj оставлены False: tight inj-prior удалён
         # (см. memory ipm_init_from_inj_no_effect.md).
         has_p_inj = False
         has_q_inj = False
-        pgen_init_mw = float(row["generation_p"])
-        pnag_init_mw = float(row["load_p"])
-        qgen_init_mvar = float(row["generation_q"])
-        qnag_init_mvar = float(row["load_q"])
 
         # КАЖДЫЙ exist_*-узел получает box-var (незаданные границы →
         # широкий дефолт): balance-уравнение пишется для всех активных
@@ -278,56 +236,134 @@ def build_ipm_setup(
         # него нулём — его P/Q-инжекция прижималась бы к нулю как у
         # transit. Полное покрытие также гарантирует, что
         # ``write_node_estimates`` заполнит все 4 ``*_estimated`` поля.
-        if exist_gen:
+        for sec in sections:
+            if not exist_flags[sec.exist_col]:
+                continue
             lo, hi, dflt = _bound_pair(
-                float(row["generation_p_min"]),
-                float(row["generation_p_max"]),
+                float(row[sec.min_col]),
+                float(row[sec.max_col]),
                 default_box_halfwidth_pu,
             )
-            pgen_pos_list.append(pos)
-            pgen_lo.append(lo)
-            pgen_hi.append(hi)
-            pgen_init_l.append(_init_in_box(pgen_init_mw / BASE_MVA, (lo, hi)))
-            pgen_prior_s2.append(_resolve_prior_sigma2((lo, hi), has_p_inj, is_default_box=dflt))
+            has_inj = has_q_inj if sec.reactive else has_p_inj
+            sec.pos.append(pos)
+            sec.lo.append(lo)
+            sec.hi.append(hi)
+            sec.init.append(_init_in_box(float(row[sec.init_col]) / BASE_MVA, (lo, hi)))
+            sec.prior_s2.append(_resolve_prior_sigma2((lo, hi), has_inj, is_default_box=dflt))
 
-            lo, hi, dflt = _bound_pair(
-                float(row["generation_q_min"]),
-                float(row["generation_q_max"]),
-                default_box_halfwidth_pu,
-            )
-            qgen_pos_list.append(pos)
-            qgen_lo.append(lo)
-            qgen_hi.append(hi)
-            qgen_init_l.append(_init_in_box(qgen_init_mvar / BASE_MVA, (lo, hi)))
-            qgen_prior_s2.append(_resolve_prior_sigma2((lo, hi), has_q_inj, is_default_box=dflt))
+    return sections
 
-        if exist_load:
-            lo, hi, dflt = _bound_pair(
-                float(row["load_p_min"]),
-                float(row["load_p_max"]),
-                default_box_halfwidth_pu,
-            )
-            pnag_pos_list.append(pos)
-            pnag_lo.append(lo)
-            pnag_hi.append(hi)
-            pnag_init_l.append(_init_in_box(pnag_init_mw / BASE_MVA, (lo, hi)))
-            pnag_prior_s2.append(_resolve_prior_sigma2((lo, hi), has_p_inj, is_default_box=dflt))
 
-            lo, hi, dflt = _bound_pair(
-                float(row["load_q_min"]),
-                float(row["load_q_max"]),
-                default_box_halfwidth_pu,
-            )
-            qnag_pos_list.append(pos)
-            qnag_lo.append(lo)
-            qnag_hi.append(hi)
-            qnag_init_l.append(_init_in_box(qnag_init_mvar / BASE_MVA, (lo, hi)))
-            qnag_prior_s2.append(_resolve_prior_sigma2((lo, hi), has_q_inj, is_default_box=dflt))
+@dataclass
+class IPMSetup:
+    """Расширенный layout + box-bounds + augmented (z, R, meas_index)."""
 
-    pgen_node_pos = np.asarray(pgen_pos_list, dtype=np.int64)
-    qgen_node_pos = np.asarray(qgen_pos_list, dtype=np.int64)
-    pnag_node_pos = np.asarray(pnag_pos_list, dtype=np.int64)
-    qnag_node_pos = np.asarray(qnag_pos_list, dtype=np.int64)
+    layout: StateLayout
+    # Box-bounds в p.u. (P/Q в МВт делятся на BASE_MVA для согласованности с z).
+    box_idx_in_state: np.ndarray  # позиции в state-vector (длины n_box)
+    box_lo: np.ndarray  # нижние границы
+    box_hi: np.ndarray  # верхние границы
+    # Стартовые значения box-vars в p.u. (берутся из текущих generation_p/load_p).
+    pgen_init: np.ndarray
+    qgen_init: np.ndarray
+    pnag_init: np.ndarray
+    qnag_init: np.ndarray
+    # Augmented z/R/meas_index с добавленными balance-meas.
+    z: np.ndarray
+    r_matrix: csr_matrix
+    meas_index: MeasurementIndex
+
+
+def build_ipm_setup(
+    model: Working,
+    network_pu: NetworkPU,
+    z: np.ndarray,
+    r_matrix: csr_matrix,
+    meas_index: MeasurementIndex,
+    *,
+    layout_base: StateLayout,
+    balance_sigma2: float | None = None,
+    balance_weight_factor: float = 0.1,
+    bound_relax: float = 0.0,
+    default_box_halfwidth_pu: float = 50.0,
+    prior_sigma2_normal_pu: float = 0.0,
+    prior_sigma2_bus_equiv_pu: float = 0.01,
+    prior_sigma2_inj_pu: float = 0.0,
+    bus_equiv_width_threshold_pu: float = 100.0,
+) -> IPMSetup:
+    """Собрать IPM-инфраструктуру поверх готовых WLS-данных.
+
+    Args:
+        model: ``Working`` (для чтения NODE_DTYPE).
+        network_pu: внутреннее p.u.-представление.
+        z, r_matrix, meas_index: WLS-данные (из ``build_z_and_r``).
+        layout_base: WLS-layout (без box-vars). Возвращаемый ``layout``
+            наследует ``n_bus, slack_idx, non_slack_idx`` и добавляет
+            box-секции.
+        balance_sigma2: дисперсия (p.u.²) для balance-pseudo-meas. Если
+            ``None`` (default) — вычисляется адаптивно:
+            ``σ²_balance = median(σ²_data) / balance_weight_factor``
+            (median, а не min: минимум часто аутлаер и порождает
+            balance-вес, перебивающий данные на порядки).
+        balance_weight_factor: отношение веса (1/σ²) баланса к весу
+            медианной data-меры. Используется при ``balance_sigma2=None``.
+            Default 0.1 — баланс в 10 раз МЯГЧЕ медианной TI по σ²:
+            калибровка в пользу data-fit; узловой баланс достигается
+            солвером как стационарная точка, а не вбивается весом.
+            Значения >1 делают баланс жёстче медианной меры.
+        bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
+            (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
+        default_box_halfwidth_pu: полуширина (p.u.) дефолтной коробки
+            ``[-hw, +hw]`` для exist_*-узла с незаданными границами.
+            Default 50 p.u. (±5 ГВт/ГВАр) — заведомо шире любого
+            реального узла, барьер фактически не действует, значением
+            управляют balance + TI. Дефолтные коробки не получают
+            BUS-эквивалент-prior (широки не из-за фиктивного
+            эквивалента, а из-за отсутствия данных).
+        prior_sigma2_normal_pu: σ² (p.u.²) prior-меры для box-var
+            узла с обычной коробкой (ширина ≤ ``bus_equiv_width_threshold_pu``).
+            Default ``0`` — prior не создаётся, data-меры через TI на
+            ветвях управляют значениями. Transit-узлы (``exist_=0``)
+            не имеют box-var; их `Pgen-Pnag = 0` обеспечивается
+            через balance-meas Sbus=0.
+        prior_sigma2_bus_equiv_pu: σ² (p.u.²) prior-меры для BUS-
+            эквивалентов: узлы с шириной коробки больше
+            ``bus_equiv_width_threshold_pu`` (типичные внешние эквиваленты
+            с фиктивной широкой коробкой порядка десятков ГВт).
+            Default ``0.01`` (≈ σ=10 МВт) — tight чтобы не раскидать
+            невязку, но достаточно мягкий чтобы TI на ветвях могли
+            подтянуть значения.
+        prior_sigma2_inj_pu: DEPRECATED (dead parameter, kept only for the public
+            signature). Not used while ``init_from_inj_measurements`` is absent
+            (init берётся из ``node.generation_p/load_p``); has_inj is always False,
+            so this value is never selected.
+        bus_equiv_width_threshold_pu: порог ширины коробки (p.u.,
+            BASE_MVA=100 → 100 p.u. = 10 ГВт МВт-эквивалента).
+            Default ``100`` p.u. — покрывает крупные BUS-эквиваленты
+            и не задевает обычные узлы (типичная width 5–50 p.u.).
+
+    Returns:
+        ``IPMSetup`` с расширенным layout и augmented z/R/meas_index.
+    """
+    nodes_arr = model.nodes.to_numpy()
+    bus_ids = network_pu.bus_ids
+    bus_id_to_pos = id_to_pos_map(bus_ids)
+
+    # ---- Сбор box-vars: для каждого активного узла с exist_load/exist_gen ----
+    pgen_sec, qgen_sec, pnag_sec, qnag_sec = _collect_box_sections(
+        nodes_arr,
+        bus_id_to_pos,
+        bound_relax=bound_relax,
+        default_box_halfwidth_pu=default_box_halfwidth_pu,
+        prior_sigma2_normal_pu=prior_sigma2_normal_pu,
+        prior_sigma2_bus_equiv_pu=prior_sigma2_bus_equiv_pu,
+        prior_sigma2_inj_pu=prior_sigma2_inj_pu,
+        bus_equiv_width_threshold_pu=bus_equiv_width_threshold_pu,
+    )
+    pgen_node_pos = np.asarray(pgen_sec.pos, dtype=np.int64)
+    qgen_node_pos = np.asarray(qgen_sec.pos, dtype=np.int64)
+    pnag_node_pos = np.asarray(pnag_sec.pos, dtype=np.int64)
+    qnag_node_pos = np.asarray(qnag_sec.pos, dtype=np.int64)
 
     layout = StateLayout(
         n_bus=layout_base.n_bus,
@@ -343,17 +379,17 @@ def build_ipm_setup(
     box_idx: list[int] = []
     box_lo: list[float] = []
     box_hi: list[float] = []
-    sections = (
-        (layout.offset_pgen, pgen_node_pos.size, pgen_lo, pgen_hi),
-        (layout.offset_qgen, qgen_node_pos.size, qgen_lo, qgen_hi),
-        (layout.offset_pnag, pnag_node_pos.size, pnag_lo, pnag_hi),
-        (layout.offset_qnag, qnag_node_pos.size, qnag_lo, qnag_hi),
+    box_layout = (
+        (layout.offset_pgen, pgen_sec),
+        (layout.offset_qgen, qgen_sec),
+        (layout.offset_pnag, pnag_sec),
+        (layout.offset_qnag, qnag_sec),
     )
-    for offset, sz, lo_arr, hi_arr in sections:
-        for k in range(sz):
+    for offset, sec in box_layout:
+        for k in range(len(sec.lo)):
             box_idx.append(offset + k)
-            box_lo.append(lo_arr[k])
-            box_hi.append(hi_arr[k])
+            box_lo.append(sec.lo[k])
+            box_hi.append(sec.hi[k])
 
     box_idx_arr = np.asarray(box_idx, dtype=np.int64)
     box_lo_arr = np.asarray(box_lo, dtype=np.float64)
@@ -362,7 +398,7 @@ def build_ipm_setup(
     # ---- Balance-meas: для каждого активного узла (P + Q) ----
     # z=0, σ²=balance_sigma2. Узлы без exist_load/gen — это transit
     # (Sbus = 0 в скобках). Узлы с exist — связь Sbus = Pgen-Pnag.
-    active_mask = np.array([bool(row["status"]) for row in nodes_arr], dtype=bool)
+    active_mask = nodes_arr["status"].astype(bool)
     active_nids = nodes_arr["id"][active_mask].astype(np.int64)
     active_positions: list[int] = []
     for nid in active_nids.tolist():
@@ -372,10 +408,10 @@ def build_ipm_setup(
     n_balance = len(active_positions)
 
     # ---- Prior-meas: z=0, σ² индивидуальные. Только для box-var с σ²>0 ----
-    pgen_prior_arr = np.asarray(pgen_prior_s2, dtype=np.float64)
-    qgen_prior_arr = np.asarray(qgen_prior_s2, dtype=np.float64)
-    pnag_prior_arr = np.asarray(pnag_prior_s2, dtype=np.float64)
-    qnag_prior_arr = np.asarray(qnag_prior_s2, dtype=np.float64)
+    pgen_prior_arr = np.asarray(pgen_sec.prior_s2, dtype=np.float64)
+    qgen_prior_arr = np.asarray(qgen_sec.prior_s2, dtype=np.float64)
+    pnag_prior_arr = np.asarray(pnag_sec.prior_s2, dtype=np.float64)
+    qnag_prior_arr = np.asarray(qnag_sec.prior_s2, dtype=np.float64)
     pgen_prior_mask = pgen_prior_arr > 0
     qgen_prior_mask = qgen_prior_arr > 0
     pnag_prior_mask = pnag_prior_arr > 0
@@ -401,10 +437,10 @@ def build_ipm_setup(
     if n_prior > 0:
         prior_z = np.concatenate(
             [
-                np.asarray(pgen_init_l, dtype=np.float64)[pgen_prior_mask],
-                np.asarray(qgen_init_l, dtype=np.float64)[qgen_prior_mask],
-                np.asarray(pnag_init_l, dtype=np.float64)[pnag_prior_mask],
-                np.asarray(qnag_init_l, dtype=np.float64)[qnag_prior_mask],
+                np.asarray(pgen_sec.init, dtype=np.float64)[pgen_prior_mask],
+                np.asarray(qgen_sec.init, dtype=np.float64)[qgen_prior_mask],
+                np.asarray(pnag_sec.init, dtype=np.float64)[pnag_prior_mask],
+                np.asarray(qnag_sec.init, dtype=np.float64)[qnag_prior_mask],
             ]
         )
         z_aug[n_old + 2 * n_balance :] = prior_z
@@ -447,7 +483,7 @@ def build_ipm_setup(
     )
 
     # MeasurementIndex: добавляем строки (balance + prior)
-    pos_arr = np.asarray(active_positions, dtype=np.int64)
+    balance_pos_arr = np.asarray(active_positions, dtype=np.int64)
     kind_blocks = [
         meas_index.kind,
         np.full(n_balance, KIND_NODE_BALANCE_P, dtype=meas_index.kind.dtype),
@@ -457,7 +493,7 @@ def build_ipm_setup(
         meas_index.object_kind,
         np.full(2 * n_balance, OBJ_NODE, dtype=meas_index.object_kind.dtype),
     ]
-    obj_pos_blocks = [meas_index.object_pos, pos_arr, pos_arr]
+    obj_pos_blocks = [meas_index.object_pos, balance_pos_arr, balance_pos_arr]
     side_blocks = [
         meas_index.branch_side,
         np.full(2 * n_balance, SIDE_NONE, dtype=meas_index.branch_side.dtype),
@@ -467,7 +503,7 @@ def build_ipm_setup(
         # Prior-meas: 1 на каждую box-var с σ²>0. Kind по типу секции, pos=node_pos.
         prior_kind_list: list[int] = []
         prior_pos_list: list[int] = []
-        for prior_kind, mask, pos_arr in (
+        for prior_kind, mask, sec_pos_arr in (
             (KIND_BOX_PRIOR_PGEN, pgen_prior_mask, pgen_node_pos),
             (KIND_BOX_PRIOR_QGEN, qgen_prior_mask, qgen_node_pos),
             (KIND_BOX_PRIOR_PNAG, pnag_prior_mask, pnag_node_pos),
@@ -475,7 +511,7 @@ def build_ipm_setup(
         ):
             for i in np.where(mask)[0]:
                 prior_kind_list.append(prior_kind)
-                prior_pos_list.append(int(pos_arr[i]))
+                prior_pos_list.append(int(sec_pos_arr[i]))
         kind_blocks.append(np.asarray(prior_kind_list, dtype=meas_index.kind.dtype))
         obj_kind_blocks.append(np.full(n_prior, OBJ_NODE, dtype=meas_index.object_kind.dtype))
         obj_pos_blocks.append(np.asarray(prior_pos_list, dtype=meas_index.object_pos.dtype))
@@ -502,10 +538,10 @@ def build_ipm_setup(
         box_idx_in_state=box_idx_arr,
         box_lo=box_lo_arr,
         box_hi=box_hi_arr,
-        pgen_init=np.asarray(pgen_init_l, dtype=np.float64),
-        qgen_init=np.asarray(qgen_init_l, dtype=np.float64),
-        pnag_init=np.asarray(pnag_init_l, dtype=np.float64),
-        qnag_init=np.asarray(qnag_init_l, dtype=np.float64),
+        pgen_init=np.asarray(pgen_sec.init, dtype=np.float64),
+        qgen_init=np.asarray(qgen_sec.init, dtype=np.float64),
+        pnag_init=np.asarray(pnag_sec.init, dtype=np.float64),
+        qnag_init=np.asarray(qnag_sec.init, dtype=np.float64),
         z=z_aug,
         r_matrix=r_aug,
         meas_index=meas_index_aug,

@@ -596,12 +596,81 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
     }
 
 
+def _estimate_kwargs(cfg: PipelineConfig, *, init: str, **overrides: Any) -> dict[str, Any]:
+    """Solver kwargs shared by every estimate/re-solve call in the pipeline.
+
+    Single assembly point for the solver call: the first pass and every warm
+    re-solve (bad-data, v-refine, v-mirror, anti-overshoot) differ only in
+    ``init`` and the ``overrides`` they pass (anti-overshoot uses a larger
+    iteration budget and its own tolerance).
+    """
+    kw: dict[str, Any] = {
+        "algorithm": cfg.algorithm,
+        "init": init,
+        "tolerance": cfg.tolerance,
+        "max_iterations": cfg.max_iterations,
+        "huber_c": _effective_huber_c(cfg),
+        "kkt_solver": cfg.kkt_solver,
+        # Quality summary is computed once, on the final solution in run()
+        # (see populate_quality_summary); intermediate solves skip it.
+        "include_quality_summary": False,
+        "reconcile_balance": cfg.reconcile_balance,
+    }
+    kw.update(overrides)
+    if cfg.algorithm == "ipm":
+        kw.update(_ipm_kwargs(cfg))
+    return kw
+
+
+def _warm_resolve(ctx: _Ctx, **overrides: Any) -> SEResult:
+    """Warm re-solve on the (edited) working model and store it in ``ctx``.
+
+    V/δ of the previous pass are already in the working layer, hence
+    ``init="results"``.
+    """
+    ctx.result = estimate(ctx.model, **_estimate_kwargs(ctx.cfg, init="results", **overrides))
+    return ctx.result
+
+
+def _refine_two_pass(
+    ctx: _Ctx,
+    *,
+    classify: Callable[[_Ctx], Any],
+    apply: Callable[[_Ctx, Any], dict],
+    empty_stats: Callable[[Any], dict],
+    unusable_reason: str,
+) -> dict:
+    """Shared skeleton of the two-pass post-solve steps (Line C).
+
+    Guard on a usable first-pass solution, classify residuals into a plan,
+    apply the plan to the working model and warm re-solve. The steps differ
+    only in their classifier/applier and skip wording; the plan object must
+    expose an ``empty`` property.
+    """
+    assert ctx.result is not None  # steps run after estimate → result exists
+    if not ctx.result.success:
+        # An unusable solution (completed=False) has unreliable residuals —
+        # classifying on them is worse than skipping the re-pass.
+        return {"skipped": unusable_reason}
+    plan = classify(ctx)
+    if plan.empty:
+        return empty_stats(plan)
+    stats = apply(ctx, plan)
+    result = _warm_resolve(ctx)
+    stats.update(
+        {
+            "success": bool(result.success),
+            "iterations": int(result.iterations),
+        }
+    )
+    return stats
+
+
 # --- реализации шагов (каждая принимает ctx, возвращает stats-dict) ---
 
 
 def _s_normalize_breakers(ctx: _Ctx) -> dict:
-    normalize_breaker_reactance(ctx.model)
-    return {}
+    return dict(normalize_breaker_reactance(ctx.model) or {})
 
 
 def _s_voltage_nominal(ctx: _Ctx) -> dict:
@@ -622,8 +691,7 @@ def _s_rpn(ctx: _Ctx) -> dict:
 
 
 def _s_reactors(ctx: _Ctx) -> dict:
-    apply_reactors_to_node_shunt(ctx.model)
-    return {}
+    return dict(apply_reactors_to_node_shunt(ctx.model) or {})
 
 
 def _s_telemetry(ctx: _Ctx) -> dict:
@@ -644,72 +712,61 @@ def _s_telemetry(ctx: _Ctx) -> dict:
 
 
 def _s_voltage_range_filter(ctx: _Ctx) -> dict:
-    apply_voltage_range_filter(ctx.model)
-    return {}
+    return dict(apply_voltage_range_filter(ctx.model) or {})
 
 
 def _s_resolve_merged(ctx: _Ctx) -> dict:
-    resolve_merged_measurement_conflicts(ctx.model)
-    return {}
+    return dict(resolve_merged_measurement_conflicts(ctx.model) or {})
 
 
 def _s_refine_slack(ctx: _Ctx) -> dict:
-    refine_slack_to_one(ctx.model)
-    return {}
+    return dict(refine_slack_to_one(ctx.model) or {})
 
 
 def _s_refine_node_types(ctx: _Ctx) -> dict:
-    refine_node_types_from_generators(ctx.model)
-    return {}
+    return dict(refine_node_types_from_generators(ctx.model) or {})
 
 
 def _s_disable_orphan_branches(ctx: _Ctx) -> dict:
     # H46: повтор после disconnected_components ниже выполняется тем же шагом-парой.
-    disable_orphan_branches(ctx.model)
-    return {}
+    return dict(disable_orphan_branches(ctx.model) or {})
 
 
 def _s_disable_disconnected(ctx: _Ctx) -> dict:
-    disable_disconnected_components(ctx.model)
+    stats = dict(disable_disconnected_components(ctx.model) or {})
     # H46: пере-отключить ветви, инцидентные только что выключенным узлам.
     if ctx.cfg.disable_orphan_branches:
-        disable_orphan_branches(ctx.model)
-    return {}
+        recheck = dict(disable_orphan_branches(ctx.model) or {})
+        stats["orphan_recheck_disabled"] = recheck.get("disabled", 0)
+    return stats
 
 
 def _s_disable_isolated(ctx: _Ctx) -> dict:
-    disable_isolated_nodes(ctx.model)
-    return {}
+    return dict(disable_isolated_nodes(ctx.model) or {})
 
 
 def _s_generator_status(ctx: _Ctx) -> dict:
-    apply_generator_status_from_node(ctx.model)
-    return {}
+    return dict(apply_generator_status_from_node(ctx.model) or {})
 
 
 def _s_aggregate_generators(ctx: _Ctx) -> dict:
-    aggregate_generators_to_node(ctx.model)
-    return {}
+    return dict(aggregate_generators_to_node(ctx.model) or {})
 
 
 def _s_gen_v_calibration(ctx: _Ctx) -> dict:
-    apply_voltage_meas_calibration_for_gen_nodes(ctx.model)
-    return {}
+    return dict(apply_voltage_meas_calibration_for_gen_nodes(ctx.model) or {})
 
 
 def _s_deactivate_orphan_measurements(ctx: _Ctx) -> dict:
-    deactivate_orphan_measurements(ctx.model)
-    return {}
+    return dict(deactivate_orphan_measurements(ctx.model) or {})
 
 
 def _s_synthesize_injections(ctx: _Ctx) -> dict:
-    synthesize_node_injection_from_branch_flows(ctx.model)
-    return {}
+    return dict(synthesize_node_injection_from_branch_flows(ctx.model) or {})
 
 
 def _s_mirror_voltage(ctx: _Ctx) -> dict:
-    mirror_voltage_through_unit_tap_links(ctx.model)
-    return {}
+    return dict(mirror_voltage_through_unit_tap_links(ctx.model) or {})
 
 
 def _s_materialize(ctx: _Ctx) -> dict:
@@ -744,22 +801,7 @@ def _s_flow_sigma_floor(ctx: _Ctx) -> dict:
 
 def _s_estimate(ctx: _Ctx) -> dict:
     cfg = ctx.cfg
-    huber_c = _effective_huber_c(cfg)
-    kw: dict[str, Any] = {
-        "algorithm": cfg.algorithm,
-        "init": cfg.init,
-        "tolerance": cfg.tolerance,
-        "max_iterations": cfg.max_iterations,
-        "huber_c": huber_c,
-        "kkt_solver": cfg.kkt_solver,
-        # Summary считается один раз — на финальном решении в run()
-        # (см. populate_quality_summary); промежуточные solve без неё.
-        "include_quality_summary": False,
-        "reconcile_balance": cfg.reconcile_balance,
-    }
-    if cfg.algorithm == "ipm":
-        kw.update(_ipm_kwargs(cfg))
-    ctx.result = estimate(ctx.model, **kw)
+    ctx.result = estimate(ctx.model, **_estimate_kwargs(cfg, init=cfg.init))
     return {
         "algorithm": cfg.algorithm,
         "success": bool(ctx.result.success),
@@ -769,147 +811,74 @@ def _s_estimate(ctx: _Ctx) -> dict:
 
 
 def _s_bad_data_repass(ctx: _Ctx) -> dict:
-    assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
     cfg = ctx.cfg
-    if not ctx.result.success:
-        # Непригодное решение (completed=False) — остатки ненадёжны,
-        # классификация по ним опаснее, чем отсутствие re-pass.
-        return {"skipped": "решение непригодно — нет надёжных остатков"}
-    plan = classify_bad_data(
-        ctx.model.measurements.to_numpy(),
-        ctx.model.branches.to_numpy(),
-        threshold=cfg.bad_data_threshold,
-        sigma_cap=cfg.bad_data_sigma_cap,
-        flip_ratio=cfg.bad_data_flip_ratio,
+    return _refine_two_pass(
+        ctx,
+        classify=lambda c: classify_bad_data(
+            c.model.measurements.to_numpy(),
+            c.model.branches.to_numpy(),
+            threshold=cfg.bad_data_threshold,
+            sigma_cap=cfg.bad_data_sigma_cap,
+            flip_ratio=cfg.bad_data_flip_ratio,
+        ),
+        apply=lambda c, plan: apply_bad_data_plan(
+            c.model, plan, damp_factor=cfg.bad_data_damp_factor
+        ),
+        empty_stats=lambda plan: {"candidates": plan.n_candidates, "skipped": "no-op (план пуст)"},
+        unusable_reason="решение непригодно — нет надёжных остатков",
     )
-    if plan.empty:
-        return {"candidates": plan.n_candidates, "skipped": "no-op (план пуст)"}
-    stats = apply_bad_data_plan(ctx.model, plan, damp_factor=cfg.bad_data_damp_factor)
-    # Warm re-solve на правленом наборе мер: V/δ прохода 1 уже в working.
-    huber_c = _effective_huber_c(cfg)
-    kw: dict[str, Any] = {
-        "algorithm": cfg.algorithm,
-        "init": "results",
-        "tolerance": cfg.tolerance,
-        "max_iterations": cfg.max_iterations,
-        "huber_c": huber_c,
-        "kkt_solver": cfg.kkt_solver,
-        "include_quality_summary": False,
-        "reconcile_balance": cfg.reconcile_balance,
-    }
-    if cfg.algorithm == "ipm":
-        kw.update(_ipm_kwargs(cfg))
-    ctx.result = estimate(ctx.model, **kw)
-    stats.update(
-        {
-            "success": bool(ctx.result.success),
-            "iterations": int(ctx.result.iterations),
-        }
-    )
-    return stats
 
 
 def _s_v_refine(ctx: _Ctx) -> dict:
-    assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
     cfg = ctx.cfg
-    if not ctx.result.success:
-        # Непригодное решение — остатки V ненадёжны, согласованность
-        # определять не по чему.
-        return {"skipped": "решение непригодно — нет надёжных остатков"}
-    plan = classify_v_refine(
-        ctx.model.measurements.to_numpy(),
-        rn_threshold=cfg.v_refine_rn,
+    return _refine_two_pass(
+        ctx,
+        classify=lambda c: classify_v_refine(
+            c.model.measurements.to_numpy(),
+            rn_threshold=cfg.v_refine_rn,
+        ),
+        apply=lambda c, plan: apply_v_refine_plan(c.model, plan, factor=cfg.v_refine_factor),
+        empty_stats=lambda plan: {
+            "consistent": plan.n_consistent,
+            "skipped": "no-op (нет real V-мер)",
+        },
+        unusable_reason="решение непригодно — нет надёжных остатков",
     )
-    if plan.empty:
-        return {"consistent": plan.n_consistent, "skipped": "no-op (нет real V-мер)"}
-    stats = apply_v_refine_plan(ctx.model, plan, factor=cfg.v_refine_factor)
-    # Warm re-solve на ужесточённых V: V/δ прохода 1 уже в working.
-    huber_c = _effective_huber_c(cfg)
-    kw: dict[str, Any] = {
-        "algorithm": cfg.algorithm,
-        "init": "results",
-        "tolerance": cfg.tolerance,
-        "max_iterations": cfg.max_iterations,
-        "huber_c": huber_c,
-        "kkt_solver": cfg.kkt_solver,
-        "include_quality_summary": False,
-        "reconcile_balance": cfg.reconcile_balance,
-    }
-    if cfg.algorithm == "ipm":
-        kw.update(_ipm_kwargs(cfg))
-    ctx.result = estimate(ctx.model, **kw)
-    stats.update(
-        {
-            "success": bool(ctx.result.success),
-            "iterations": int(ctx.result.iterations),
-        }
-    )
-    return stats
 
 
 def _s_v_mirror(ctx: _Ctx) -> dict:
-    assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
     cfg = ctx.cfg
-    if not ctx.result.success:
-        # Непригодное решение — V первого прохода ненадёжны, уровень границы
-        # слепого кластера определять не по чему.
-        return {"skipped": "решение непригодно — нет надёжного уровня границы"}
-    plan = classify_v_mirror(
-        ctx.model.measurements.to_numpy(),
-        ctx.model.branches.to_numpy(),
-        ctx.model.nodes.to_numpy(),
-        max_pu_dev=cfg.v_mirror_max_pu_dev,
-        min_lift=cfg.v_mirror_min_lift,
-        cross_at=cfg.v_mirror_cross_at,
+    return _refine_two_pass(
+        ctx,
+        classify=lambda c: classify_v_mirror(
+            c.model.measurements.to_numpy(),
+            c.model.branches.to_numpy(),
+            c.model.nodes.to_numpy(),
+            max_pu_dev=cfg.v_mirror_max_pu_dev,
+            min_lift=cfg.v_mirror_min_lift,
+            cross_at=cfg.v_mirror_cross_at,
+        ),
+        apply=lambda c, plan: apply_v_mirror_plan(c.model, plan),
+        empty_stats=lambda _plan: {
+            "clusters": 0,
+            "skipped": "no-op (нет слепых кластеров с границей)",
+        },
+        unusable_reason="решение непригодно — нет надёжного уровня границы",
     )
-    if plan.empty:
-        return {"clusters": 0, "skipped": "no-op (нет слепых кластеров с границей)"}
-    stats = apply_v_mirror_plan(ctx.model, plan)
-    # Warm re-solve на переставленных pseudo-V: V/δ прохода 1 уже в working.
-    huber_c = _effective_huber_c(cfg)
-    kw: dict[str, Any] = {
-        "algorithm": cfg.algorithm,
-        "init": "results",
-        "tolerance": cfg.tolerance,
-        "max_iterations": cfg.max_iterations,
-        "huber_c": huber_c,
-        "kkt_solver": cfg.kkt_solver,
-        "include_quality_summary": False,
-        "reconcile_balance": cfg.reconcile_balance,
-    }
-    if cfg.algorithm == "ipm":
-        kw.update(_ipm_kwargs(cfg))
-    ctx.result = estimate(ctx.model, **kw)
-    stats.update(
-        {
-            "success": bool(ctx.result.success),
-            "iterations": int(ctx.result.iterations),
-        }
-    )
-    return stats
 
 
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
     assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
     cfg = ctx.cfg
-    huber_c = _effective_huber_c(cfg)
 
     def _resolve() -> SEResult:
-        # warm re-solve: init="results" + запас итераций (на 80 обрывается → мнимая
-        # несходимость). WLS tol=1e-4, IPM tol=1e-3 — как в stage_c_after_oc.
-        kw: dict[str, Any] = {
-            "algorithm": cfg.algorithm,
-            "init": "results",
-            "max_iterations": 150,
-            "tolerance": 1e-4 if cfg.algorithm == "wls" else 1e-3,
-            "huber_c": huber_c,
-            "kkt_solver": cfg.kkt_solver,
-            "include_quality_summary": False,
-            "reconcile_balance": cfg.reconcile_balance,
-        }
-        if cfg.algorithm == "ipm":
-            kw.update(_ipm_kwargs(cfg))
-        return estimate(ctx.model, **kw)
+        # Warm re-solve with extra iteration headroom (80 truncates → phantom
+        # non-convergence). WLS tol=1e-4, IPM tol=1e-3 — as in stage_c_after_oc.
+        return _warm_resolve(
+            ctx,
+            max_iterations=150,
+            tolerance=1e-4 if cfg.algorithm == "wls" else 1e-3,
+        )
 
     ctx.result, stats = refine_anti_overshoot(
         ctx.model,
@@ -1235,6 +1204,55 @@ def _emit(on_event: Callable[[dict], None] | None, event: dict) -> None:
         on_event(event)
 
 
+def _execute_step(step: Step, ctx: _Ctx, on_event: Callable[[dict], None] | None) -> None:
+    """Run one step with the shared skip/timing/error event protocol.
+
+    Both ``run()`` and ``prepare_network()`` go through here, so toggle/derived
+    skips, duration accounting and ``step_error`` emission behave identically
+    in the full pipeline and in the network-only subset.
+    """
+    if step.toggle is not None and not getattr(ctx.cfg, step.toggle):
+        _emit(
+            on_event,
+            {
+                "type": "step_skipped",
+                "name": step.name,
+                "reason": f"отключено ({step.toggle}=False)",
+            },
+        )
+        return
+    if step.needs_derived and ctx.derived is None:
+        _emit(
+            on_event,
+            {"type": "step_skipped", "name": step.name, "reason": "нет XML-деривации"},
+        )
+        return
+    _emit(on_event, {"type": "step_start", "name": step.name})
+    t0 = time.monotonic()
+    try:
+        stats = step.fn(ctx) or {}
+    except Exception as exc:
+        _emit(
+            on_event,
+            {
+                "type": "step_error",
+                "name": step.name,
+                "error": repr(exc),
+                "duration_ms": int((time.monotonic() - t0) * 1000),
+            },
+        )
+        raise
+    _emit(
+        on_event,
+        {
+            "type": "step_done",
+            "name": step.name,
+            "stats": stats,
+            "duration_ms": int((time.monotonic() - t0) * 1000),
+        },
+    )
+
+
 def _build_working(model: Any) -> Any:
     """Рабочий слой = gridstate-native ``Working``-контейнер.
 
@@ -1365,46 +1383,7 @@ def run(
     )
 
     for step in STEPS:
-        if step.toggle is not None and not getattr(cfg, step.toggle):
-            _emit(
-                on_event,
-                {
-                    "type": "step_skipped",
-                    "name": step.name,
-                    "reason": f"отключено ({step.toggle}=False)",
-                },
-            )
-            continue
-        if step.needs_derived and ctx.derived is None:
-            _emit(
-                on_event,
-                {"type": "step_skipped", "name": step.name, "reason": "нет XML-деривации"},
-            )
-            continue
-        _emit(on_event, {"type": "step_start", "name": step.name})
-        t0 = time.monotonic()
-        try:
-            stats = step.fn(ctx) or {}
-        except Exception as exc:
-            _emit(
-                on_event,
-                {
-                    "type": "step_error",
-                    "name": step.name,
-                    "error": repr(exc),
-                    "duration_ms": int((time.monotonic() - t0) * 1000),
-                },
-            )
-            raise
-        _emit(
-            on_event,
-            {
-                "type": "step_done",
-                "name": step.name,
-                "stats": stats,
-                "duration_ms": int((time.monotonic() - t0) * 1000),
-            },
-        )
+        _execute_step(step, ctx, on_event)
 
     assert ctx.result is not None  # _s_estimate (без toggle) всегда заполняет result
 
@@ -1473,34 +1452,7 @@ def prepare_network(
     for step in STEPS:
         if not step.network:
             continue
-        if step.toggle is not None and not getattr(cfg, step.toggle):
-            _emit(
-                on_event,
-                {
-                    "type": "step_skipped",
-                    "name": step.name,
-                    "reason": f"отключено ({step.toggle}=False)",
-                },
-            )
-            continue
-        if step.needs_derived and ctx.derived is None:
-            _emit(
-                on_event,
-                {"type": "step_skipped", "name": step.name, "reason": "нет XML-деривации"},
-            )
-            continue
-        _emit(on_event, {"type": "step_start", "name": step.name})
-        t0 = time.monotonic()
-        stats = step.fn(ctx) or {}
-        _emit(
-            on_event,
-            {
-                "type": "step_done",
-                "name": step.name,
-                "stats": stats,
-                "duration_ms": int((time.monotonic() - t0) * 1000),
-            },
-        )
+        _execute_step(step, ctx, on_event)
     return working
 
 

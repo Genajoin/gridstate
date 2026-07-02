@@ -18,13 +18,15 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from gridstate.preprocessing._scan import scan_node_meas_by_kind
+from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.z_vector import (
     KIND_POWER_INJECTION_P,
     KIND_POWER_INJECTION_Q,
     KIND_POWER_P,
     KIND_POWER_Q,
+    KIND_VOLTAGE,
     OBJ_BRANCH,
-    OBJ_NODE,
 )
 
 
@@ -36,6 +38,21 @@ __all__ = [
     "synthesize_block_bus_injection_from_branch_xml",
     "synthesize_node_injection_from_branch_flows",
 ]
+
+
+def _incident_branches(branches_arr: Any) -> dict[int, list[tuple[int, str]]]:
+    """Map node id -> list of ``(branch_index, side)`` over active branches.
+
+    ``side`` is ``"from"`` / ``"to"``. Iteration follows ``branches_arr`` order via
+    ``enumerate`` so the accumulated per-node lists stay deterministic.
+    """
+    incident: dict[int, list[tuple[int, str]]] = {}
+    for bi, b in enumerate(branches_arr):
+        if not bool(b["status"]):
+            continue
+        incident.setdefault(int(b["from_node"]), []).append((bi, "from"))
+        incident.setdefault(int(b["to_node"]), []).append((bi, "to"))
+    return incident
 
 
 def _synthesize_node_injection_on_arrays(
@@ -61,40 +78,37 @@ def _synthesize_node_injection_on_arrays(
     Без collision-skip (id монотонно с ``mid_start``).
     """
     # 1) Карты id → измерение (только real, не pseudo).
+    # Branch P/Q real-meas keyed by measurement id (branch-keyed, not node-keyed).
     p_branch_by_id: dict[int, dict] = {}
     q_branch_by_id: dict[int, dict] = {}
-    have_pinj_real: set[int] = set()
+    names = meas_arr.dtype.names
+    has_pseudo = names is not None and "is_pseudo" in names
     for r in meas_arr:
         if not r["status"]:
             continue
-        mid = int(r["id"])
-        ot = int(r["object_type"])
+        if has_pseudo and bool(r["is_pseudo"]):
+            continue
+        if int(r["object_type"]) != OBJ_BRANCH:
+            continue
         kind = int(r["measurement_type"])
-        is_pseudo = bool(r["is_pseudo"]) if "is_pseudo" in meas_arr.dtype.names else False
-        if ot == OBJ_BRANCH and not is_pseudo:
-            if kind == KIND_POWER_P:
-                p_branch_by_id[mid] = {"value": float(r["value"])}
-            elif kind == KIND_POWER_Q:
-                q_branch_by_id[mid] = {"value": float(r["value"])}
-        elif ot == OBJ_NODE and not is_pseudo and kind == KIND_POWER_INJECTION_P:
-            have_pinj_real.add(int(r["object_id"]))
+        if kind == KIND_POWER_P:
+            p_branch_by_id[int(r["id"])] = {"value": float(r["value"])}
+        elif kind == KIND_POWER_Q:
+            q_branch_by_id[int(r["id"])] = {"value": float(r["value"])}
+    # Nodes that already carry a real P_inj measurement.
+    have_pinj_real = scan_node_meas_by_kind(meas_arr, (KIND_POWER_INJECTION_P,), real_only=True)[
+        KIND_POWER_INJECTION_P
+    ]
 
     # 2) node_id → список инцидентных активных ветвей с их ti_* IDs.
-    incident: dict[int, list[tuple[int, str]]] = {}  # node_id → [(branch_idx, side)]
-    for bi, b in enumerate(branches_arr):
-        if not bool(b["status"]):
-            continue
-        f = int(b["from_node"])
-        t = int(b["to_node"])
-        incident.setdefault(f, []).append((bi, "from"))
-        incident.setdefault(t, []).append((bi, "to"))
+    incident = _incident_branches(branches_arr)
 
     # 3) Проходимся по активным узлам.
     nodes_synth = 0
     skipped_has_inj = 0
     skipped_no_cov = 0
     skipped_orphan = 0
-    mid_counter = mid_start
+    next_id = mid_start
 
     new_rows: list[dict] = []
     for row in nodes_arr:
@@ -133,9 +147,6 @@ def _synthesize_node_injection_on_arrays(
         if require_all_sides_known and not full:
             skipped_no_cov += 1
             continue
-        if not full and not require_all_sides_known:
-            # Хотя бы один side был — продолжаем
-            pass
 
         # Знак: p_side_of_node = расход из узла в ветвь (конвенция входного формата).
         # Σ расходов = -P_inj_node (т.к. P_inj = втекание; расход = -втекание).
@@ -148,33 +159,13 @@ def _synthesize_node_injection_on_arrays(
         variance = float(sigma * sigma)
 
         new_rows.append(
-            {
-                "id": mid_counter,
-                "object_type": OBJ_NODE,
-                "object_id": nid,
-                "measurement_type": KIND_POWER_INJECTION_P,
-                "value": synth_p,
-                "variance": variance,
-                "status": True,
-                "quality": 0,
-                "is_pseudo": True,
-            }
+            pseudo_node_measurement(next_id, nid, KIND_POWER_INJECTION_P, synth_p, variance)
         )
-        mid_counter += 1
+        next_id += 1
         new_rows.append(
-            {
-                "id": mid_counter,
-                "object_type": OBJ_NODE,
-                "object_id": nid,
-                "measurement_type": KIND_POWER_INJECTION_Q,
-                "value": synth_q,
-                "variance": variance,
-                "status": True,
-                "quality": 0,
-                "is_pseudo": True,
-            }
+            pseudo_node_measurement(next_id, nid, KIND_POWER_INJECTION_Q, synth_q, variance)
         )
-        mid_counter += 1
+        next_id += 1
         nodes_synth += 1
 
     stats = {
@@ -238,8 +229,9 @@ def synthesize_node_injection_from_branch_flows(
         require_all_sides_known=require_all_sides_known,
         mid_start=mid_start,
     )
-    for r in new_rows:
-        model.measurements.add(r)
+    # Batch insert in a single concatenation (per-row .add() is O(n^2)); ids are
+    # already assigned so add_many is semantically identical.
+    model.measurements.add_many(new_rows)
     return stats
 
 
@@ -293,39 +285,23 @@ def synthesize_block_bus_injection_from_branch_xml(
     branches_arr = model.branches.to_numpy()
     meas_arr = model.measurements.to_numpy()
 
-    real_v: set[int] = set()
-    real_p: set[int] = set()
-    real_q: set[int] = set()
-    for r in meas_arr:
-        if not bool(r["status"]):
-            continue
-        names = meas_arr.dtype.names
-        if bool(r["is_pseudo"]) if names is not None and "is_pseudo" in names else False:
-            continue
-        if int(r["object_type"]) != OBJ_NODE:
-            continue
-        kind = int(r["measurement_type"])
-        nid = int(r["object_id"])
-        if kind == 2:  # KIND_VOLTAGE
-            real_v.add(nid)
-        elif kind == KIND_POWER_INJECTION_P:
-            real_p.add(nid)
-        elif kind == KIND_POWER_INJECTION_Q:
-            real_q.add(nid)
+    real_by_kind = scan_node_meas_by_kind(
+        meas_arr,
+        (KIND_VOLTAGE, KIND_POWER_INJECTION_P, KIND_POWER_INJECTION_Q),
+        real_only=True,
+    )
+    real_v = real_by_kind[KIND_VOLTAGE]
+    real_p = real_by_kind[KIND_POWER_INJECTION_P]
+    real_q = real_by_kind[KIND_POWER_INJECTION_Q]
 
-    incident: dict[int, list[tuple[int, str]]] = {}
-    for bi, b in enumerate(branches_arr):
-        if not bool(b["status"]):
-            continue
-        incident.setdefault(int(b["from_node"]), []).append((bi, "from"))
-        incident.setdefault(int(b["to_node"]), []).append((bi, "to"))
+    incident = _incident_branches(branches_arr)
 
     added = 0
     skipped_not_block = 0
     skipped_has_real = 0
     skipped_multi_branch = 0
     skipped_no_branch = 0
-    mid_counter = mid_start
+    next_id = mid_start
     new_rows: list[dict] = []
 
     for row in nodes_arr:
@@ -356,37 +332,17 @@ def synthesize_block_bus_injection_from_branch_xml(
         variance = float(sigma * sigma)
 
         new_rows.append(
-            {
-                "id": mid_counter,
-                "object_type": OBJ_NODE,
-                "object_id": nid,
-                "measurement_type": KIND_POWER_INJECTION_P,
-                "value": p_inj,
-                "variance": variance,
-                "status": True,
-                "quality": 0,
-                "is_pseudo": True,
-            }
+            pseudo_node_measurement(next_id, nid, KIND_POWER_INJECTION_P, p_inj, variance)
         )
-        mid_counter += 1
+        next_id += 1
         new_rows.append(
-            {
-                "id": mid_counter,
-                "object_type": OBJ_NODE,
-                "object_id": nid,
-                "measurement_type": KIND_POWER_INJECTION_Q,
-                "value": q_inj,
-                "variance": variance,
-                "status": True,
-                "quality": 0,
-                "is_pseudo": True,
-            }
+            pseudo_node_measurement(next_id, nid, KIND_POWER_INJECTION_Q, q_inj, variance)
         )
-        mid_counter += 1
+        next_id += 1
         added += 1
 
-    for r in new_rows:
-        model.measurements.add(r)
+    # Batch insert in a single concatenation (ids already assigned).
+    model.measurements.add_many(new_rows)
 
     return {
         "added": added,

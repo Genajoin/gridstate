@@ -44,10 +44,13 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+from gridstate.constants import NodeType
 
-_SLACK_NODE_TYPE = 2  # NodeType.SLACK (литерал, чтобы не импортировать constants).
-_PQ_NODE_TYPE = 0  # NodeType.PQ
-_PV_NODE_TYPE = 1  # NodeType.PV
+
+# Plain ints for hot comparison loops; values come from the canonical enum.
+_SLACK_NODE_TYPE = int(NodeType.SLACK)
+_PQ_NODE_TYPE = int(NodeType.PQ)
+_PV_NODE_TYPE = int(NodeType.PV)
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +231,7 @@ def _gen_nodes_to_promote(
 # ---------------------------------------------------------------------------
 
 
-def disable_orphan_branches(model: Any) -> int:
+def disable_orphan_branches(model: Any) -> dict[str, int]:
     """Отключить ветви, ссылающиеся на отсутствующие или отключённые узлы.
 
     На реальных тестовых моделях встречаются ветви с ``from_node`` или ``to_node``,
@@ -240,7 +243,7 @@ def disable_orphan_branches(model: Any) -> int:
     active-узлов. Если хотя бы один отсутствует или отключён — ветвь отключается.
 
     Returns:
-        Количество отключённых ветвей.
+        Статистика шага ``{"disabled": <число отключённых ветвей>}``.
 
     Note:
         Применять **до** ``disable_isolated_nodes``, иначе узлы-соседи
@@ -249,10 +252,10 @@ def disable_orphan_branches(model: Any) -> int:
     to_disable = _orphan_branches_to_disable(model.nodes.to_numpy(), model.branches.to_numpy())
     for bid in to_disable:
         model.branches.update(bid, {"status": False})
-    return len(to_disable)
+    return {"disabled": len(to_disable)}
 
 
-def disable_disconnected_components(model: Any) -> int:
+def disable_disconnected_components(model: Any) -> dict[str, int]:
     """Отключить узлы, не связанные со slack через активные ветви.
 
     Из набора active-узлов и active-ветвей выполняется BFS от всех slack-узлов
@@ -264,7 +267,7 @@ def disable_disconnected_components(model: Any) -> int:
     свободы H, что даёт ранг-дефицит матрицы Якоби SE / Power Flow.
 
     Returns:
-        Количество отключённых узлов.
+        Статистика шага ``{"disabled": <число отключённых узлов>}``.
 
     Note:
         - Применять **после** ``disable_orphan_branches`` и **до**
@@ -275,10 +278,10 @@ def disable_disconnected_components(model: Any) -> int:
     to_disable = _disconnected_nodes_to_disable(model.nodes.to_numpy(), model.branches.to_numpy())
     for nid in to_disable:
         model.nodes.update(nid, {"status": False})
-    return len(to_disable)
+    return {"disabled": len(to_disable)}
 
 
-def disable_isolated_nodes(model: Any) -> int:
+def disable_isolated_nodes(model: Any) -> dict[str, int]:
     """Отключить узлы, оставшиеся без активных ветвей.
 
     На реальной TM некоторые узлы помечены ``status=True``, но **все**
@@ -289,7 +292,7 @@ def disable_isolated_nodes(model: Any) -> int:
     это сигнал об ошибке топологии, не молчаливое «исправление».
 
     Returns:
-        Количество отключённых узлов.
+        Статистика шага ``{"disabled": <число отключённых узлов>}``.
 
     Note:
         Перед вызовом рекомендуется ``disable_orphan_branches``.
@@ -297,10 +300,10 @@ def disable_isolated_nodes(model: Any) -> int:
     to_disable = _isolated_nodes_to_disable(model.nodes.to_numpy(), model.branches.to_numpy())
     for nid in to_disable:
         model.nodes.update(nid, {"status": False})
-    return len(to_disable)
+    return {"disabled": len(to_disable)}
 
 
-def refine_slack_to_one(model: Any) -> int:
+def refine_slack_to_one(model: Any) -> dict[str, int]:
     """Свести множество SLACK-узлов к одному через ``balance_priority``.
 
     Входной формат помечает SLACK по XML ``PR_BAL=1`` — а в тестовых моделях обычно
@@ -317,19 +320,19 @@ def refine_slack_to_one(model: Any) -> int:
     Применять **сразу после загрузки**, ДО ``refine_node_types_from_generators``.
 
     Returns:
-        Количество узлов SLACK→PQ.
+        Статистика шага ``{"demoted": <число узлов SLACK→PQ>}``.
     """
     to_demote = _slack_nodes_to_demote(model.nodes.to_numpy(), model.branches.to_numpy())
     for nid in to_demote:
         model.nodes.update(nid, {"node_type": _PQ_NODE_TYPE})
-    return len(to_demote)
+    return {"demoted": len(to_demote)}
 
 
 def refine_node_types_from_generators(
     model: Any,
     *,
     node_load_props: dict[int, dict] | None = None,
-) -> int:
+) -> dict[str, int]:
     """Пометить узлы с активными генераторами как PV (``node_type=1``).
 
     Входной формат **не классифицирует PV-узлы** — все кроме SLACK помечены PQ.
@@ -344,14 +347,14 @@ def refine_node_types_from_generators(
     Применять **после** ``refine_slack_to_one``.
 
     Returns:
-        Количество узлов PQ→PV.
+        Статистика шага ``{"promoted": <число узлов PQ→PV>}``.
     """
     to_promote = _gen_nodes_to_promote(
         model.nodes.to_numpy(), model.generators.to_numpy(), node_load_props
     )
     for nid in to_promote:
         model.nodes.update(nid, {"node_type": _PV_NODE_TYPE})
-    return len(to_promote)
+    return {"promoted": len(to_promote)}
 
 
 __all__ = [

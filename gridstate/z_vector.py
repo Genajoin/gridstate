@@ -31,6 +31,9 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 from scipy.sparse import csr_matrix, diags
 
+from gridstate.constants import MeasurementQuality
+from gridstate.utils import id_to_pos_map
+
 
 if TYPE_CHECKING:
     from gridstate.units import NetworkPU
@@ -125,15 +128,11 @@ def build_z_and_r(
         R: (m × m) sparse — диагональ ``σ² = variance`` (в p.u.²);
         meas_index: метаданные для последующего h(x).
     """
-    bus_id_to_pos: dict[int, int] = {
-        int(bid): pos for pos, bid in enumerate(network_pu.bus_ids.tolist())
-    }
-    branch_id_to_pos: dict[int, int] = {
-        int(bid): pos for pos, bid in enumerate(network_pu.branch_ids.tolist())
-    }
+    bus_id_to_pos = id_to_pos_map(network_pu.bus_ids)
+    branch_id_to_pos = id_to_pos_map(network_pu.branch_ids)
 
     branches_arr = model.branches.to_numpy()
-    branch_id_to_row: dict[int, int] = {int(b["id"]): i for i, b in enumerate(branches_arr)}
+    branch_id_to_row = id_to_pos_map(branches_arr["id"])
 
     z_values: list[float] = []
     variances: list[float] = []
@@ -146,8 +145,7 @@ def build_z_and_r(
     for meas in measurements:
         if not meas.status:
             continue
-        # quality 2 == BAD (см. MeasurementQuality enum)
-        if int(meas.quality) == 2:
+        if int(meas.quality) == MeasurementQuality.BAD:
             continue
         if meas.variance <= 0:
             logger.warning(

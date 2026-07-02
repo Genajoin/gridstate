@@ -42,6 +42,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from gridstate.constants import MeasurementQuality
+
 
 __all__ = [
     "QUALITY_BAD",
@@ -55,9 +57,11 @@ __all__ = [
 ]
 
 
-QUALITY_GOOD = 0
-QUALITY_QUESTIONABLE = 1
-QUALITY_BAD = 2
+# Canonical values live in gridstate.constants.MeasurementQuality; these
+# module-level ints are kept as backward-compatible aliases.
+QUALITY_GOOD = int(MeasurementQuality.GOOD)
+QUALITY_QUESTIONABLE = int(MeasurementQuality.QUESTIONABLE)
+QUALITY_BAD = int(MeasurementQuality.BAD)
 
 # Имя класса по числу — для tm_code_histogram.
 _NAMES = {

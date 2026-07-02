@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -45,6 +45,33 @@ logger = logging.getLogger(__name__)
 QUALITY_BAD = 2
 
 
+class ResidualTopRecord(NamedTuple):
+    """One entry of ``NormalizedResidualReport.top_records`` (named fields).
+
+    A ``NamedTuple`` (tuple subclass): positional access is preserved for
+    backward compatibility while giving the fields readable names.
+
+    Attributes:
+        rn: нормированный остаток ``r^N``.
+        meas_id: ``meas_id`` измерения.
+        object_kind: ``0`` — NODE, ``1`` — BRANCH.
+        object_id: ID объекта измерения (``-1`` если не найден).
+        kind: ``MeasurementType`` (0=POWER_P, 1=POWER_Q, 2=VOLTAGE, ...).
+        value: значение измерения (``nan`` если не найдено).
+        residual: невязка ``r``.
+        sigma: ``√σ²``.
+    """
+
+    rn: float
+    meas_id: int
+    object_kind: int
+    object_id: int
+    kind: int
+    value: float
+    residual: float
+    sigma: float
+
+
 @dataclass
 class NormalizedResidualReport:
     """Audit-only отчёт по нормированным остаткам после SE.
@@ -58,10 +85,8 @@ class NormalizedResidualReport:
             (``diag(Ω)`` ≤ 0).
         meas_ids: ``meas_id`` для каждого элемента ``rn`` (порядок совпадает
             с z-vector в текущей model).
-        top_records: топ-N записей по ``|rn|`` (исключая ``inf``):
-            ``[(rn, meas_id, object_kind, object_id, kind, value, residual,
-            sigma)]``. ``object_kind=0`` — NODE, ``1`` — BRANCH; ``kind`` —
-            ``MeasurementType`` (0=POWER_P, 1=POWER_Q, 2=VOLTAGE, ...).
+        top_records: топ-N записей по ``|rn|`` (исключая ``inf``) —
+            список :class:`ResidualTopRecord` (именованные поля).
         n_above_threshold: сколько измерений (исключая ``inf``) дают
             ``rn > rn_threshold``.
         rn_max_finite: ``max(rn[rn<inf])`` — максимум по информативным.
@@ -69,7 +94,7 @@ class NormalizedResidualReport:
 
     rn: np.ndarray
     meas_ids: np.ndarray
-    top_records: list[tuple]
+    top_records: list[ResidualTopRecord]
     n_above_threshold: int
     rn_max_finite: float
 
@@ -120,7 +145,7 @@ def compute_normalized_residuals_report(
     kind = np.asarray(diag.meas_index.kind, dtype=np.int64)
 
     order = np.argsort(-np.where(finite_mask, rn, -np.inf))
-    top_records: list[tuple] = []
+    top_records: list[ResidualTopRecord] = []
     for pos in order[:top_n]:
         if not finite_mask[pos]:
             break
@@ -129,15 +154,15 @@ def compute_normalized_residuals_report(
         obj_id = int(bad_meas.object_id) if bad_meas is not None else -1
         sigma = float(np.sqrt(diag.sigma2[pos]))
         top_records.append(
-            (
-                float(rn[pos]),
-                int(meas_ids[pos]),
-                int(object_kind[pos]),
-                obj_id,
-                int(kind[pos]),
-                value,
-                float(diag.r[pos]),
-                sigma,
+            ResidualTopRecord(
+                rn=float(rn[pos]),
+                meas_id=int(meas_ids[pos]),
+                object_kind=int(object_kind[pos]),
+                object_id=obj_id,
+                kind=int(kind[pos]),
+                value=value,
+                residual=float(diag.r[pos]),
+                sigma=sigma,
             )
         )
     return NormalizedResidualReport(
@@ -178,6 +203,13 @@ def _normalized_residuals(diag: Diagnostics) -> np.ndarray:
     Используем плотную линейную алгебру: ``n_state = 2·n_bus − 1`` обычно
     мало (≤ десятков тысяч), поэтому ``G⁻¹`` через ``np.linalg.solve``
     значительно проще, чем sparse-инверсия.
+
+    Note:
+        ``gridstate.quality_summary._normalized_residuals`` computes the same
+        quantity through a faster Cholesky + triangular-solve path. The two are
+        kept separate on purpose (not merged): results may differ in the tails
+        due to differing numerical paths, and this iterative bad-data driver
+        must not depend on the quality-summary module.
     """
     H_dense = diag.H.toarray()  # (m × (2n−1))
     R_inv_dense = diag.R_inv.toarray()
@@ -242,29 +274,27 @@ def remove_bad_data(
             max_iterations=estimate_max_iterations,
         )
 
+    def _result(*, converged: bool) -> BadDataResult:
+        # Snapshot the current se_result / removed / rn_history (late-bound).
+        return BadDataResult(
+            se_result=se_result,
+            removed_meas_ids=removed,
+            rn_max_history=rn_history,
+            converged=converged,
+        )
+
+    # Первый прогон — до цикла; цикл только повторяет estimate после отбраковки.
     se_result = _run_estimate()
 
     for it in range(max_iterations + 1):
-        if it > 0:
-            se_result = _run_estimate()
         if not se_result.success:
             logger.warning("rn_max: SE не сошлась на итерации %d — прерываем чистку", it)
-            return BadDataResult(
-                se_result=se_result,
-                removed_meas_ids=removed,
-                rn_max_history=rn_history,
-                converged=False,
-            )
+            return _result(converged=False)
 
         diag = compute_diagnostics(model, measurements)
         if diag.r.shape[0] == 0:
             logger.warning("rn_max: нет активных измерений — нечего проверять")
-            return BadDataResult(
-                se_result=se_result,
-                removed_meas_ids=removed,
-                rn_max_history=rn_history,
-                converged=True,
-            )
+            return _result(converged=True)
 
         rn = _normalized_residuals(diag)
         rn_max = float(np.max(rn))
@@ -277,12 +307,7 @@ def remove_bad_data(
                 rn_max,
                 rn_max_threshold,
             )
-            return BadDataResult(
-                se_result=se_result,
-                removed_meas_ids=removed,
-                rn_max_history=rn_history,
-                converged=True,
-            )
+            return _result(converged=True)
 
         # Иначе — отбрасываем худшее измерение.
         bad_pos = int(np.argmax(rn))
@@ -293,12 +318,7 @@ def remove_bad_data(
                 "rn_max: не нашли измерение id=%d в коллекции — прерываем",
                 bad_id,
             )
-            return BadDataResult(
-                se_result=se_result,
-                removed_meas_ids=removed,
-                rn_max_history=rn_history,
-                converged=False,
-            )
+            return _result(converged=False)
         bad_meas.status = False
         bad_meas.quality = QUALITY_BAD
         removed.append(bad_id)
@@ -310,13 +330,14 @@ def remove_bad_data(
             rn_max_threshold,
         )
 
+        # Лимит итераций достигнут — не переоцениваем после последней отбраковки
+        # (финальный se_result соответствует прошедшему прогону, как раньше).
+        if it == max_iterations:
+            break
+        se_result = _run_estimate()
+
     logger.warning(
         "rn_max: достигнут лимит итераций (%d), а тест ещё не пройден",
         max_iterations,
     )
-    return BadDataResult(
-        se_result=se_result,
-        removed_meas_ids=removed,
-        rn_max_history=rn_history,
-        converged=False,
-    )
+    return _result(converged=False)

@@ -96,10 +96,29 @@ def current_version() -> ContractVersion:
     return ContractVersion.parse(CONTRACT_VERSION)
 
 
+def check_compatibility(data_version: str) -> str | None:
+    """Single compatibility check of a data version against the built-in contract.
+
+    Returns ``None`` when ``data_version`` is compatible, otherwise a
+    human-readable incompatibility reason (version-mismatch description). A
+    malformed version string raises :class:`ValueError` (delegated to
+    :meth:`ContractVersion.parse`) — callers decide whether to propagate or
+    translate it into their own diagnostic. Both compatibility-check sites
+    (the ``.npz`` loader and :func:`gridstate.contract.validate.validate_input`)
+    route through this one implementation, wrapping the result into their own
+    exception type / issue.
+    """
+    parsed = ContractVersion.parse(data_version)
+    schema_v = current_version()
+    if parsed.is_compatible_with(schema_v):
+        return None
+    return f"данные версии {parsed} несовместимы с контрактом {schema_v}"
+
+
 def is_data_compatible(data_version: str) -> bool:
     """Совместима ли версия данных ``data_version`` с текущим контрактом.
 
-    Тонкая обёртка над :meth:`ContractVersion.is_compatible_with` для
-    типичного случая «проверить входные данные против встроенного контракта».
+    Тонкая обёртка над :func:`check_compatibility` для типичного случая
+    «проверить входные данные против встроенного контракта» (bool-результат).
     """
-    return ContractVersion.parse(data_version).is_compatible_with(current_version())
+    return check_compatibility(data_version) is None

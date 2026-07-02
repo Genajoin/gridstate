@@ -39,7 +39,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gridstate.z_vector import KIND_VOLTAGE, OBJ_NODE
+from gridstate.preprocessing._scan import scan_node_voltage
+from gridstate.preprocessing.meas_rows import pseudo_node_measurement
+from gridstate.z_vector import KIND_VOLTAGE
 
 
 if TYPE_CHECKING:
@@ -72,19 +74,8 @@ def _mirror_voltage_on_arrays(
     исходном порядке с локальной мутацией ``any_v_by_node``/``new_id`` внутри прохода
     (within-pass dedup и раздача id — load-bearing; векторизация изменит результат).
     """
-    real_v_by_node: dict[int, tuple[float, float]] = {}
-    any_v_by_node: set[int] = set()
-    for r in meas_arr:
-        if not r["status"]:
-            continue
-        if int(r["object_type"]) != OBJ_NODE:
-            continue
-        if int(r["measurement_type"]) != KIND_VOLTAGE:
-            continue
-        nid = int(r["object_id"])
-        any_v_by_node.add(nid)
-        if not bool(r["is_pseudo"]):
-            real_v_by_node[nid] = (float(r["value"]), float(r["variance"]))
+    all_v_by_node, real_v_by_node = scan_node_voltage(meas_arr)
+    any_v_by_node: set[int] = set(all_v_by_node)
 
     active_node_ids = {int(r["id"]) for r in nodes_arr if r["status"]}
 
@@ -97,6 +88,29 @@ def _mirror_voltage_on_arrays(
         new_id += 1
 
     new_rows: list[dict] = []
+
+    def _mirror(src: int, dst: int) -> None:
+        """Copy the real V-meas on ``src`` onto the bare node ``dst``.
+
+        ``(value, variance)`` are copied verbatim (no arithmetic); ``dst`` is
+        recorded in ``any_v_by_node`` so a later branch does not re-mirror it.
+        """
+        nonlocal new_id
+        val, var = real_v_by_node[src]
+        new_rows.append(
+            pseudo_node_measurement(
+                new_id,
+                dst,
+                KIND_VOLTAGE,
+                val,
+                var,
+                branch_side=-1,
+                source_code="mirror_unit_tap",
+            )
+        )
+        new_id += 1
+        any_v_by_node.add(dst)
+
     for r in branches_arr:
         if not r["status"]:
             continue
@@ -109,43 +123,9 @@ def _mirror_voltage_on_arrays(
         if f not in active_node_ids or t not in active_node_ids:
             continue
         if f in real_v_by_node and t not in any_v_by_node:
-            val, var = real_v_by_node[f]
-            new_rows.append(
-                {
-                    "id": new_id,
-                    "object_type": OBJ_NODE,
-                    "object_id": t,
-                    "measurement_type": KIND_VOLTAGE,
-                    "value": val,
-                    "variance": var,
-                    "status": True,
-                    "quality": 0,
-                    "is_pseudo": True,
-                    "branch_side": -1,
-                    "source_code": "mirror_unit_tap",
-                }
-            )
-            new_id += 1
-            any_v_by_node.add(t)
+            _mirror(f, t)
         elif t in real_v_by_node and f not in any_v_by_node:
-            val, var = real_v_by_node[t]
-            new_rows.append(
-                {
-                    "id": new_id,
-                    "object_type": OBJ_NODE,
-                    "object_id": f,
-                    "measurement_type": KIND_VOLTAGE,
-                    "value": val,
-                    "variance": var,
-                    "status": True,
-                    "quality": 0,
-                    "is_pseudo": True,
-                    "branch_side": -1,
-                    "source_code": "mirror_unit_tap",
-                }
-            )
-            new_id += 1
-            any_v_by_node.add(f)
+            _mirror(t, f)
 
     return new_rows
 
@@ -155,7 +135,7 @@ def mirror_voltage_through_unit_tap_links(
     *,
     tap_tolerance: float = 1e-3,
     mid_start: int = 200_000_000,
-) -> int:
+) -> dict[str, int]:
     """Скопировать real V-измерения через ktr=1.0 trafo-связи.
 
     Для каждой активной ветви ``branch_type=1`` с ``|tap_ratio - 1| <
@@ -166,7 +146,7 @@ def mirror_voltage_through_unit_tap_links(
     variance)``.
 
     Returns:
-        Количество добавленных mirror-V измерений.
+        Статистика шага ``{"added": <число добавленных mirror-V измерений>}``.
     """
     new_rows = _mirror_voltage_on_arrays(
         model.nodes.to_numpy(),
@@ -179,4 +159,4 @@ def mirror_voltage_through_unit_tap_links(
     model.measurements.add_many(new_rows)
 
     logger.info("mirror_voltage_through_unit_tap_links: добавлено %d pseudo V-meas", len(new_rows))
-    return len(new_rows)
+    return {"added": len(new_rows)}

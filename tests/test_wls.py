@@ -256,7 +256,7 @@ def test_solve_wls_recovers_true_state_no_noise() -> None:
     z, R, idx = build_z_and_r(m, coll, pu)
 
     e_init = flat_start(layout)
-    e_final, success, k, _J = solve_wls(
+    res = solve_wls(
         e_init,
         z,
         R,
@@ -270,8 +270,8 @@ def test_solve_wls_recovers_true_state_no_noise() -> None:
         max_iterations=20,
     )
 
-    assert success, f"WLS не сошёлся за {k} итераций"
-    np.testing.assert_allclose(e_final, e_true, atol=1e-6)
+    assert res.success, f"WLS не сошёлся за {res.iterations} итераций"
+    np.testing.assert_allclose(res.x, e_true, atol=1e-6)
 
 
 def test_solve_wls_meets_iteration_budget() -> None:
@@ -297,7 +297,7 @@ def test_solve_wls_meets_iteration_budget() -> None:
     ybus, yf, yt = build_ybus(pu)
     z, R, idx = build_z_and_r(m, coll, pu)
     e_init = flat_start(layout)
-    e_final, success, k, _J = solve_wls(
+    res = solve_wls(
         e_init,
         z,
         R,
@@ -310,10 +310,10 @@ def test_solve_wls_meets_iteration_budget() -> None:
         tolerance=1e-6,
         max_iterations=20,
     )
-    assert success
-    assert k <= 5, f"требуется ≤5 итераций, фактически {k}"
+    assert res.success
+    assert res.iterations <= 5, f"требуется ≤5 итераций, фактически {res.iterations}"
     # Близко к истинному состоянию (разброс ~ σ).
-    np.testing.assert_allclose(e_final, e_true, atol=0.05)
+    np.testing.assert_allclose(res.x, e_true, atol=0.05)
 
 
 # ------------------------------------------------------------- estimate API
@@ -407,10 +407,10 @@ def test_solve_wls_empty_measurements_warns() -> None:
     from gridstate.working import Working
 
     z, R, idx = build_z_and_r(m, Working.empty().measurements, pu)
-    _e_final, success, k, J = solve_wls(flat_start(layout), z, R, ybus, yf, yt, idx, layout, pu)
-    assert not success
-    assert k == 0
-    assert np.isnan(J)
+    res = solve_wls(flat_start(layout), z, R, ybus, yf, yt, idx, layout, pu)
+    assert not res.success
+    assert res.iterations == 0
+    assert np.isnan(res.objective)
 
 
 def test_solve_wls_singular_returns_failure() -> None:
@@ -443,7 +443,7 @@ def test_solve_wls_singular_returns_failure() -> None:
         }
     )
     z, R, idx = build_z_and_r(m, coll, pu)
-    _e_final, success, _k, J = solve_wls(
+    res = solve_wls(
         flat_start(layout),
         z,
         R,
@@ -455,5 +455,5 @@ def test_solve_wls_singular_returns_failure() -> None:
         pu,
         max_iterations=10,
     )
-    assert not success, "WLS не должен сообщать успех на сингулярной задаче"
-    assert np.isfinite(J), f"J должен быть числом, а не {J}"
+    assert not res.success, "WLS не должен сообщать успех на сингулярной задаче"
+    assert np.isfinite(res.objective), f"J должен быть числом, а не {res.objective}"

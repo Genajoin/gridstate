@@ -11,13 +11,29 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from gridstate.algebra.base import BaseAlgebra
+from gridstate.algebra.estimators import build_branch_pq_huber_mask
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.wls import solve_wls
-from gridstate.constants import SIGMA2_FLOOR
+from gridstate.post_processing import (
+    apply_load_characteristic,
+    reconcile_node_balance,
+    write_measurement_estimates,
+    write_node_estimates,
+    write_node_estimates_from_inj,
+)
+from gridstate.preprocessing.ipm_setup import build_ipm_setup
+from gridstate.quality_summary import (
+    compute_chi2,
+    observability_warnings_from_H,
+    top_worst_imbalance,
+    top_worst_residuals,
+)
 from gridstate.result import SEResult, extract_output_tables
 from gridstate.state import StateLayout, flat_start, flat_start_with_box, pack, unpack, unpack_full
 from gridstate.units import BASE_MVA, model_to_pu, write_results_to_model
+from gridstate.utils import floored_sigma2, id_to_pos_map
 from gridstate.ybus import build_ybus
 from gridstate.z_vector import build_z_and_r
 
@@ -50,6 +66,8 @@ def estimate(
     huber_use_mad: bool = False,
     reconcile_balance: bool = True,
     kkt_solver: str = "auto",
+    include_quality_summary: bool = True,
+    quality_summary_top_n: int = 10,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Выполнить оценку состояния по модели и телеметрии.
@@ -63,7 +81,8 @@ def estimate(
         model: рабочая модель сети — носитель входных таблиц контракта.
         measurements: коллекция измерений. Если ``None``, берётся
             ``model.measurements``.
-        algorithm: алгоритм SE. Сейчас реализован только ``"wls"``.
+        algorithm: алгоритм SE: ``"wls"`` (Gauss-Newton) или ``"ipm"``
+            (primal log-barrier с box-переменными нагрузки/генерации).
         init: стратегия начального приближения:
             - ``"flat"`` — V=1 p.u., δ=0 для всех узлов;
             - ``"results"`` — взять текущие ``voltage_magnitude``/``voltage_angle``
@@ -82,6 +101,16 @@ def estimate(
             ``"scipy"``, см. ``gridstate.algorithms.kkt_solver``). ``auto``
             использует CHOLMOD при установленном cvxopt (×8-11 на крупных
             моделях), иначе scipy spsolve (прежнее поведение бит-в-бит).
+        huber_c: SHGM-IRLS tuning constant; 0 disables robust reweighting
+            (see ``gridstate.algebra.estimators``).
+        huber_use_mad: normalize SHGM residuals by the MAD scale.
+        include_quality_summary: compute chi2/worst_* diagnostics on the
+            final solution. Disable in loops/tests where the summary is not
+            needed — on large models it costs about as much as a solve.
+        quality_summary_top_n: row count of worst_residuals/worst_imbalance.
+        **ipm_kwargs: forwarded to ``build_ipm_setup`` in IPM mode
+            (``balance_weight_factor``, ``bound_relax``, prior sigmas — the
+            A/B-calibration knobs). Ignored for WLS.
 
     Returns:
         ``SEResult`` с полями ``success``, ``iterations``, ``objective_value``
@@ -97,12 +126,6 @@ def estimate(
         )
     if zero_injection is not None:
         raise NotImplementedError(f"zero_injection={zero_injection!r} пока не реализован.")
-
-    # Опция: пропустить расчёт quality summary (chi2/worst_*). Полезно
-    # в тестах/loop, где summary не нужна и H-dense вычисление лишнее
-    # на крупных моделях. Default ``True`` — сводка считается всегда.
-    include_quality_summary = bool(ipm_kwargs.pop("include_quality_summary", True))
-    quality_summary_top_n = int(ipm_kwargs.pop("quality_summary_top_n", 10))
 
     if measurements is None:
         measurements = model.measurements
@@ -158,7 +181,7 @@ def estimate(
         delta, v_pu = unpack(e_final[: 2 * network_pu.n_bus - 1], layout)
     else:
         # 5. WLS
-        e_final, success, iterations, objective = solve_wls(
+        wls_res = solve_wls(
             e_init=e_init,
             z=z,
             r_matrix=r_matrix,
@@ -174,6 +197,10 @@ def estimate(
             huber_use_mad=huber_use_mad,
             kkt_solver=kkt,
         )
+        e_final = wls_res.x
+        success = wls_res.success
+        iterations = wls_res.iterations
+        objective = wls_res.objective
 
         # 6. Распаковка состояния и запись обратно в модель
         delta, v_pu = unpack(e_final, layout)
@@ -181,8 +208,6 @@ def estimate(
         convergence_status = "converged" if success else "not_converged"
     write_results_to_model(model, v_pu, delta, network_pu, yf=yf, yt=yt, ybus=ybus)
     # 7. Постпроцессинг measurements: estimated_si/value/residual.
-    from gridstate.post_processing import write_measurement_estimates
-
     write_measurement_estimates(
         model=model,
         measurements=measurements,
@@ -199,11 +224,6 @@ def estimate(
     # generation_*_estimated. У IPM это уже сделано через box-vars в
     # _run_ipm (write_node_estimates), повторять не нужно.
     if algorithm == "wls":
-        from gridstate.post_processing import (
-            apply_load_characteristic,
-            write_node_estimates_from_inj,
-        )
-
         write_node_estimates_from_inj(model)
         # Если модель содержит СХН (``load_characteristics``) и узел на неё
         # ссылается, перекрыть load_*_estimated полиномом P(V)/Q(V).
@@ -214,8 +234,6 @@ def estimate(
     # согласованным режимом: gen_est − load_est ≡ p/q_inj_calc. Последним —
     # после всех правок *_estimated, до extract_output_tables.
     if reconcile_balance:
-        from gridstate.post_processing import reconcile_node_balance
-
         reconcile_stats = reconcile_node_balance(model)
         logger.debug("reconcile_node_balance: %s", reconcile_stats)
 
@@ -283,14 +301,6 @@ def _populate_quality_summary(
     Все ошибки в summary глушатся в логи: качество отчёта — не показатель
     успешности SE, и падение здесь не должно ломать ``estimate()``.
     """
-    from gridstate.algebra.base import BaseAlgebra
-    from gridstate.quality_summary import (
-        compute_chi2,
-        observability_warnings_from_H,
-        top_worst_imbalance,
-        top_worst_residuals,
-    )
-
     try:
         if z.shape[0] == 0:
             # Нет измерений — оставляем default empty.
@@ -302,8 +312,7 @@ def _populate_quality_summary(
         r_vec = z - h_pu
         H = algebra.evaluate_jacobian(v_pu, delta_rad)
 
-        sigma2 = r_matrix.diagonal().astype(np.float64).copy()
-        sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
+        sigma2 = floored_sigma2(r_matrix.diagonal())
 
         # Пометка псевдо-приоров в z-порядке: meas_id → is_pseudo из коллекции.
         is_pseudo_z: np.ndarray | None = None
@@ -389,9 +398,7 @@ def _build_initial_state(
         nodes_arr = model.nodes.to_numpy()
         active = nodes_arr[nodes_arr["status"]]
         # Перенумеруем под порядок network_pu.bus_ids.
-        id_to_pos: dict[int, int] = {
-            int(nid): pos for pos, nid in enumerate(network_pu.bus_ids.tolist())
-        }
+        id_to_pos = id_to_pos_map(network_pu.bus_ids)
         v_pu = np.ones(network_pu.n_bus, dtype=np.float64)
         delta = np.zeros(network_pu.n_bus, dtype=np.float64)
         for row in active:
@@ -447,10 +454,6 @@ def _run_ipm(
     Значения box-vars из результата записывает в ``model.nodes`` через
     ``write_node_estimates``.
     """
-    from gridstate.algebra.base import BaseAlgebra
-    from gridstate.post_processing import write_node_estimates
-    from gridstate.preprocessing.ipm_setup import build_ipm_setup
-
     setup = build_ipm_setup(
         model,
         network_pu,
@@ -479,47 +482,19 @@ def _run_ipm(
 
     algebra = BaseAlgebra(ybus, yf, yt, setup.meas_index, layout_ipm, network_pu)
 
-    sigma2 = setup.r_matrix.diagonal().copy()
-    sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
-    r_inv_diag = 1.0 / sigma2
+    r_inv_diag = 1.0 / floored_sigma2(setup.r_matrix.diagonal())
 
-    # SHGM-IRLS mask: branch P/Q (object_kind=1), исключая трансформаторы
-    # и leverage-Q (B≥threshold). Параллель с ``solve_wls``: на блочных
-    # АТ ГЭС/ТЭЦ residual часто большой из-за RPN — downweight срывает
-    # связь LV/HV. На длинных 750 кВ ВЛ Q_charging≈BV² легитимна,
-    # downweight срывает V на терминалах.
+    # SHGM-IRLS mask shared with solve_wls; balance/prior rows appended by
+    # build_ipm_setup are never reweighted (padding inside the helper).
     huber_mask = None
     if huber_c > 0.0:
-        m_total = int(setup.z.shape[0])
-        ok_branch = np.asarray(setup.meas_index.object_kind == 1, dtype=bool)
-        if ok_branch.size != m_total:
-            # build_ipm_setup мог добавить balance-rows; они не branch.
-            ok_branch = np.concatenate([ok_branch, np.zeros(m_total - ok_branch.size, dtype=bool)])
-        mask = ok_branch.copy()
-        if mask.any():
-            branch_pos_all = np.asarray(setup.meas_index.object_pos, dtype=np.int64)
-            if branch_pos_all.size < m_total:
-                branch_pos_all = np.concatenate(
-                    [branch_pos_all, np.zeros(m_total - branch_pos_all.size, dtype=np.int64)]
-                )
-            kinds_all = np.asarray(setup.meas_index.kind, dtype=np.int64)
-            if kinds_all.size < m_total:
-                kinds_all = np.concatenate(
-                    [kinds_all, -np.ones(m_total - kinds_all.size, dtype=np.int64)]
-                )
-            n_br = network_pu.n_branch
-            if huber_skip_transformers and n_br > 0:
-                is_xfmr_br = np.abs(network_pu.tap_ratio - 1.0) > 1e-3
-                is_xfmr_meas = np.zeros(m_total, dtype=bool)
-                is_xfmr_meas[mask] = is_xfmr_br[branch_pos_all[mask]]
-                mask = mask & (~is_xfmr_meas)
-            if huber_leverage_b_threshold_pu > 0 and n_br > 0:
-                b_pu = network_pu.branch_b
-                is_lev_br = np.abs(b_pu) >= huber_leverage_b_threshold_pu
-                is_lev_q = np.zeros(m_total, dtype=bool)
-                q_mask = mask & (kinds_all == 1)  # POWER_Q = 1
-                is_lev_q[q_mask] = is_lev_br[branch_pos_all[q_mask]]
-                mask = mask & (~is_lev_q)
+        mask = build_branch_pq_huber_mask(
+            setup.meas_index,
+            network_pu,
+            m_total=int(setup.z.shape[0]),
+            skip_transformers=huber_skip_transformers,
+            leverage_b_threshold_pu=huber_leverage_b_threshold_pu,
+        )
         huber_mask = mask if mask.any() else None
 
     def residual_fn(x: np.ndarray) -> np.ndarray:

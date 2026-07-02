@@ -90,10 +90,13 @@ def load_se_input(
 # ---------------------------------------------------------------------------
 
 
+# name → OUTPUT-схема таблицы (единый источник — SEOutputSchema.tables()).
+_SE_OUTPUT_BY_NAME = {t.name: t for t in SE_OUTPUT.tables()}
+
+
 def _empty_output(table_name: str) -> np.ndarray:
     """Пустой структурированный массив выходного слоя для таблицы ``table_name``."""
-    schema = {t.name: t for t in SE_OUTPUT.tables()}[table_name]
-    return np.empty(0, dtype=schema.output_dtype())
+    return np.empty(0, dtype=_SE_OUTPUT_BY_NAME[table_name].output_dtype())
 
 
 @dataclass

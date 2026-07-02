@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from gridstate.contract.tables import SE_INPUT, SE_OUTPUT, io_dtype
+
 
 if TYPE_CHECKING:
     from gridstate.contract.runtime import SEInput
@@ -38,18 +40,21 @@ if TYPE_CHECKING:
 
 _DERIVED_KEY = "__derived_pickle__"
 _META_KEY = "__contract_version__"
-_CONTRACT_TABLES = ("nodes", "branches", "measurements", "generators")
-# Доменные числовые input-таблицы — first-class, наравне с основными
-# контрактными: пишутся/читаются под собственным именем. Опциональны
-# (источник может их не нести): отсутствующая → пустая коллекция в
-# Working.from_arrays.
-_DOMAIN_TABLES = ("tap_steps", "load_characteristics", "shunts")
+
+# Имена таблиц входа в порядке объявления контракта (единый источник —
+# SEInputSchema.tables()). Первые четыре — основные контрактные таблицы
+# (позиционные аргументы Working.from_arrays, с особой обработкой ниже);
+# остальные — доменные числовые input-таблицы: first-class (пишутся/читаются
+# под собственным именем), но опциональны (источник может их не нести:
+# отсутствующая → пустая коллекция в Working.from_arrays).
+_INPUT_TABLE_NAMES = tuple(t.name for t in SE_INPUT.tables())
+_N_CORE_TABLES = 4
+_CONTRACT_TABLES = _INPUT_TABLE_NAMES[:_N_CORE_TABLES]
+_DOMAIN_TABLES = _INPUT_TABLE_NAMES[_N_CORE_TABLES:]
 
 
 def _schema_map() -> dict[str, Any]:
-    """name → ``TableSchema`` для контрактных таблиц (ленивый импорт)."""
-    from gridstate.contract import SE_INPUT
-
+    """name → ``TableSchema`` для контрактных таблиц."""
     return {name: getattr(SE_INPUT, name) for name in _CONTRACT_TABLES}
 
 
@@ -89,15 +94,8 @@ def _expand_to_io(arr: np.ndarray, in_schema: Any, out_schema: Any) -> np.ndarra
     Обратная совместимость: если ``arr`` уже содержит OUTPUT-поля (старый формат),
     они копируются как есть.
     """
-    in_dt = in_schema.input_dtype()
-    out_dt = out_schema.output_dtype()
-    # Собрать полный IO dtype (как Working.empty()._io_dtype)
-    fields = list(in_dt.descr)
-    have = set(in_dt.names or ())
-    for name in out_dt.names or ():
-        if name not in have:
-            fields.append((name, out_dt[name].str))
-    full_dt = np.dtype(fields)
+    # Полный IO dtype — единый билдер io_dtype (contract.tables).
+    full_dt = io_dtype(in_schema, out_schema)
     result = np.zeros(len(arr), dtype=full_dt)
     for name in arr.dtype.names or ():
         if full_dt.names is not None and name in full_dt.names:
@@ -170,9 +168,8 @@ def load_se_input_npz(path: str | Path) -> SEInput:
     Возвращаемый ``SEInput`` готов к ``run(se_input)``: ``derived`` —
     восстановленные числовые планы.
     """
-    from gridstate.contract import SE_INPUT, SE_OUTPUT
     from gridstate.contract.runtime import SEInput
-    from gridstate.contract.version import CONTRACT_VERSION, is_data_compatible
+    from gridstate.contract.version import CONTRACT_VERSION, check_compatibility
     from gridstate.working import Working
 
     with np.load(path, allow_pickle=False) as npz:
@@ -199,7 +196,7 @@ def load_se_input_npz(path: str | Path) -> SEInput:
     # Граница входа: версия данных в файле должна быть совместима со встроенным
     # контрактом библиотеки. Падаем РАНО и ЯВНО (а не тихо грузим несовместимую
     # схему, которая упадёт глубже в пайплайне непонятной ошибкой).
-    if contract_version is not None and not is_data_compatible(contract_version):
+    if contract_version is not None and check_compatibility(contract_version) is not None:
         raise ValueError(
             f"Несовместимая версия контракта в npz {Path(path).name!r}: "
             f"файл собран под {contract_version}, библиотека ожидает "

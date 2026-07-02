@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.utils import branch_endpoints_map
 from gridstate.z_vector import (
     KIND_CURRENT,
     KIND_POWER_INJECTION_P,
@@ -169,10 +170,7 @@ def classify_bad_data(
     # --- Guard покрытия (node, домен): reject разрешён, только если каждый
     # затронутый узел сохраняет хотя бы одну real-меру своего P/Q-домена
     # (inj на узле либо flow стороной узла).
-    b2n = {
-        int(i): (int(f), int(t))
-        for i, f, t in zip(branches["id"], branches["from_node"], branches["to_node"], strict=True)
-    }
+    b2n = branch_endpoints_map(branches)
     cover: dict[tuple[int, str], set[int]] = collections.defaultdict(set)
     for j in np.where(sel)[0]:
         mid = int(measurements["id"][j])

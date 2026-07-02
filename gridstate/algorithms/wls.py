@@ -9,7 +9,7 @@ Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
     - удалена зависимость от ``ExtendedPPCI`` и PYPOWER-формата;
     - работает с ``BaseAlgebra``, ``StateLayout`` и ``MeasurementIndex``
       напрямую;
-    - возвращает обычный ``tuple`` вместо мутирующего ``eppci``;
+    - возвращает ``WLSResult`` вместо мутирующего ``eppci``;
     - простой ``max_step``-clamp + α·line search заменён на гибридную
       trust-region/Levenberg-Marquardt стратегию (см. ниже).
 
@@ -44,15 +44,17 @@ Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.sparse import csc_matrix, csr_matrix
 
 from gridstate.algebra.base import BaseAlgebra
+from gridstate.algebra.estimators import HuberReweighter, build_branch_pq_huber_mask
 from gridstate.algorithms.kkt_solver import KKTSolver
-from gridstate.constants import SIGMA2_FLOOR
 from gridstate.state import unpack
+from gridstate.utils import floored_sigma2, scale_csr_rows, sparse_diag
 
 
 if TYPE_CHECKING:
@@ -62,6 +64,26 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class WLSResult:
+    """Result of :func:`solve_wls`, mirroring :class:`~gridstate.algorithms.ipm.IPMResult`.
+
+    Replaces the former bare 4-tuple so both solvers expose the same kind of
+    contract to ``gridstate.api.estimate``.
+
+    Attributes:
+        x: final state vector ``E`` (length ``layout.size``).
+        success: ``max|dE| <= tolerance`` reached without divergence.
+        iterations: accepted Gauss-Newton iterations.
+        objective: ``r^T R^-1 r`` at the last iterate (NaN for empty ``z``).
+    """
+
+    x: np.ndarray
+    success: bool
+    iterations: int
+    objective: float
 
 
 def _solve_damped(
@@ -194,8 +216,10 @@ def solve_wls(
     huber_leverage_b_threshold_pu: float = 2.0,
     huber_w_floor: float = 0.05,
     huber_use_mad: bool = False,
+    huber_adaptive_k: float = 6.0,
+    huber_warmup_iters: int = 5,
     kkt_solver: KKTSolver | None = None,
-) -> tuple[np.ndarray, bool, int, float]:
+) -> WLSResult:
     """Выполнить trust-region Gauss-Newton WLS (опционально SHGM-IRLS).
 
     Args:
@@ -218,13 +242,22 @@ def solve_wls(
             работают как WLS. Типичные значения: 1.5 (агрессивно),
             2.0 (стандарт Abur & Exposito), 3.0 (консервативно).
             См. Abur & Exposito ch.6, Mili et al. 1991.
+        huber_skip_transformers: exclude transformer-branch P/Q from
+            reweighting (see ``build_branch_pq_huber_mask``).
+        huber_leverage_b_threshold_pu: leverage-Q exclusion threshold
+            (``<= 0`` disables it).
+        huber_w_floor: lower bound on the SHGM weight.
+        huber_use_mad: normalize residuals by the MAD scale instead of sigma.
+        huber_adaptive_k: one-shot adaptive constant multiplier
+            (``c_eff = max(c, k * median|r_n|)``); 6.0 is the classic
+            robust-statistics choice (Huber 1981).
+        huber_warmup_iters: pure-WLS iterations before reweighting starts.
         kkt_solver: решатель систем нормальных уравнений с реюзом
             символьной факторизации (см. ``gridstate.algorithms.kkt_solver``).
             ``None`` — scipy spsolve (прежнее поведение бит-в-бит).
 
     Returns:
-        ``(E_final, success, iterations, objective_value)``.
-        ``objective_value = rᵀ R⁻¹ r`` на последней итерации (NaN для пустого z).
+        :class:`WLSResult` (``x``, ``success``, ``iterations``, ``objective``).
     """
     if e_init.shape != (layout.size,):
         raise ValueError(f"e_init должен быть длины {layout.size}, получено {e_init.shape}")
@@ -237,65 +270,40 @@ def solve_wls(
     solver = kkt_solver if kkt_solver is not None else KKTSolver("scipy")
 
     # σ² с регуляризацией; затем R⁻¹ как разреженная диагональ.
-    sigma2 = r_matrix.diagonal().copy()
-    sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
+    sigma2 = floored_sigma2(r_matrix.diagonal())
     r_inv_diag_base = 1.0 / sigma2
     sigma_arr = np.sqrt(sigma2)
     n_meas = sigma2.shape[0]
-    rows = np.arange(n_meas)
-
-    def _build_r_inv(diag: np.ndarray) -> csr_matrix:
-        return cast("csr_matrix", csr_matrix((diag, (rows, rows)), shape=(n_meas, n_meas)))
 
     r_inv_diag = r_inv_diag_base.copy()
-    r_inv = _build_r_inv(r_inv_diag)
+    r_inv = sparse_diag(r_inv_diag)
 
-    # SHGM-IRLS: Huber-веса w_i = min(1, c/|r_N_i|), r_N = r/σ. Обновляются
-    # в начале каждой итерации (со 2-й) по residual предыдущего шага —
-    # outliers получают авто-downweight без жёсткого drop. См. Abur &
-    # Exposito ch.6, Mili 1991. Применяется **только к branch P/Q** —
-    # NODE V и P_inj/Q_inj оставляем при стартовых весах (они — мягкие
-    # якоря и pseudo-priors, Huber по ним рушит max ΔV на терминалах
-    # через downweight pseudo-V с большим residual.
+    # SHGM-IRLS mask + weight policy shared with the IPM solver; see
+    # gridstate.algebra.estimators for the rationale behind the mask
+    # (branch P/Q only) and the adaptive tuning constant.
     use_huber = huber_c > 0.0
-    # Huber-mask: branch P/Q (object_kind==1). NODE V и P_inj/Q_inj —
-    # мягкие якоря и pseudo-priors, Huber по ним рушит max ΔV.
-    huber_mask = np.asarray(meas_index.object_kind == 1, dtype=bool)
-    if use_huber:
-        branch_pos = np.asarray(meas_index.object_pos, dtype=np.int64)
-        kinds = np.asarray(meas_index.kind, dtype=np.int64)
-        n_branches = network_pu.n_branch
-        # huber_skip_transformers: исключить branch-meas на трансформаторах
-        # (tap_ratio != 1.0). На блочных трансформаторах ГЭС/ТЭЦ residual
-        # часто большой из-за неточного RPN — downweight P/Q-меры на них
-        # срывает связь LV (блочная шина 6-35 кВ) с HV через АТ → V LV
-        # дрейфит, и max ΔV на блочных шинах вырастает.
-        if huber_skip_transformers and n_branches > 0:
-            tap = network_pu.tap_ratio
-            is_xfmr_br = np.abs(tap - 1.0) > 1e-3
-            is_xfmr_meas = np.zeros(n_meas, dtype=bool)
-            sel = huber_mask
-            is_xfmr_meas[sel] = is_xfmr_br[branch_pos[sel]]
-            huber_mask = huber_mask & (~is_xfmr_meas)
-        # PS-proxy для Q-замеров: ветви с большой зарядной B (|B_pu| >
-        # threshold) — leverage measurements в смысле Mili 1996. Их
-        # Q-замеры физически легитимны (Q_charging ≈ B·V²·S_base/2) и
-        # downweight через Huber срывает связь V на терминалах. Поэтому
-        # такие Q-меры исключаем из перевзвешивания. Threshold подобран
-        # по нашей шкале (S_base=100): |B|≥2.0 pu ≈ 200 МВар зарядной
-        # — типично для 500/750 кВ ВЛ длиннее ~100 км.
-        if huber_leverage_b_threshold_pu > 0 and n_branches > 0:
-            b_pu = network_pu.branch_b
-            is_leverage_br = np.abs(b_pu) >= huber_leverage_b_threshold_pu
-            is_leverage_q = np.zeros(n_meas, dtype=bool)
-            q_branch_mask = huber_mask & (kinds == 1)  # MeasurementType.POWER_Q = 1
-            sel_q = q_branch_mask
-            is_leverage_q[sel_q] = is_leverage_br[branch_pos[sel_q]]
-            huber_mask = huber_mask & (~is_leverage_q)
+    huber_mask = (
+        build_branch_pq_huber_mask(
+            meas_index,
+            network_pu,
+            skip_transformers=huber_skip_transformers,
+            leverage_b_threshold_pu=huber_leverage_b_threshold_pu,
+        )
+        if use_huber
+        else np.zeros(n_meas, dtype=bool)
+    )
+    reweighter = HuberReweighter(
+        c=huber_c,
+        mask=huber_mask,
+        sigma=sigma_arr,
+        w_floor=huber_w_floor,
+        adaptive_k=huber_adaptive_k,
+        use_mad=huber_use_mad,
+    )
 
     if n_meas == 0:
         logger.warning("WLS вызван с пустым вектором измерений — возвращаю e_init")
-        return e_init.copy(), False, 0, float("nan")
+        return WLSResult(x=e_init.copy(), success=False, iterations=0, objective=float("nan"))
 
     E = e_init.astype(np.float64, copy=True)
 
@@ -326,16 +334,6 @@ def solve_wls(
     # «зависнуть» в маленьком значении после случайного reject.
     tr_recover = 2.0
 
-    # adaptive c_eff: после warmup итераций (чистый WLS) замеряем
-    # median(|r/σ|) на huber_mask и используем c_eff = max(c_min, k · median).
-    # Median (а не p95) устойчив к outliers: c_eff × median ≪ outlier,
-    # поэтому tail downweight'аются как ожидается. На regional уровне:
-    # шумные TM (большой типичный residual) auto-получают либеральный c.
-    huber_c_eff = huber_c
-    huber_adaptive_k = 6.0  # стандарт robust-statistics (Huber 1981)
-    huber_warmup_iters = 5
-    huber_adaptive_applied = False
-
     # Текущие значения h, r, J — пересчитываем при принятии шага.
     delta, v = unpack(E, layout)
     h_cur = algebra.evaluate_h(v, delta)
@@ -347,39 +345,17 @@ def solve_wls(
     diverged = False
 
     while current_error > tolerance and cur_it < max_iterations:
-        # SHGM-IRLS: пересчитываем веса по последнему residual. Первая
-        # итерация (cur_it==0) идёт чистым WLS — residual от flat-start
-        # не информативен для outlier-detection.
+        # SHGM-IRLS: recompute weights from the last residual. Warmup
+        # iterations run as pure WLS — flat-start residuals are not
+        # informative for outlier detection.
         if use_huber and cur_it > huber_warmup_iters:
-            if huber_use_mad and np.any(huber_mask):
-                ar = np.abs(r_cur[huber_mask])
-                mad_scale = float(np.median(ar)) * 1.4826 + 1e-12
-                r_n = np.abs(r_cur) / mad_scale
-            else:
-                r_n = np.abs(r_cur) / sigma_arr
-            if not huber_adaptive_applied and np.any(huber_mask):
-                med = float(np.median(r_n[huber_mask]))
-                huber_c_eff = max(huber_c, huber_adaptive_k * med)
-                huber_adaptive_applied = True
-                logger.debug(
-                    "SHGM adaptive c (iter %d): median(|r/σ|)=%.3f → c_eff=%.2f",
-                    cur_it,
-                    med,
-                    huber_c_eff,
-                )
-            w_huber = np.ones_like(r_n)
-            sel = huber_mask & (r_n > huber_c_eff)
-            w_huber[sel] = np.maximum(huber_c_eff / np.maximum(r_n[sel], 1e-30), huber_w_floor)
-            r_inv_diag = r_inv_diag_base * w_huber
-            r_inv = _build_r_inv(r_inv_diag)
+            r_inv_diag = r_inv_diag_base * reweighter.weights(r_cur)
+            r_inv = sparse_diag(r_inv_diag)
             objective = float(r_cur @ (r_inv @ r_cur))
 
         H = algebra.evaluate_jacobian(v, delta)
-        # H.T @ r_inv с диагональной R⁻¹ = row-scaling H по r_inv_diag, затем
-        # transpose: O(nnz) вместо полного sparse-matmul диагонали (тождество).
-        _row = np.repeat(np.arange(H.shape[0]), np.diff(H.indptr))
-        H_w = csr_matrix((H.data * r_inv_diag[_row], H.indices, H.indptr), shape=H.shape)
-        Ht_Rinv = H_w.T
+        # H.T @ R^-1 with diagonal R^-1 == row-scaling H then transpose.
+        Ht_Rinv = scale_csr_rows(H, r_inv_diag).T
         G = (Ht_Rinv @ H).tocsc()
         rhs = np.asarray(Ht_Rinv @ r_cur, dtype=np.float64).ravel()
         diag_G = G.diagonal()
@@ -559,4 +535,4 @@ def solve_wls(
             current_error,
             tolerance,
         )
-    return E, success, cur_it, objective
+    return WLSResult(x=E, success=success, iterations=cur_it, objective=objective)

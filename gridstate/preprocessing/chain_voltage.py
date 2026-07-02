@@ -29,7 +29,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from gridstate.z_vector import KIND_VOLTAGE, OBJ_NODE
+from gridstate.preprocessing._scan import node_degree_map, scan_node_voltage
+from gridstate.preprocessing.meas_rows import pseudo_node_measurement
+from gridstate.z_vector import KIND_VOLTAGE
 
 
 if TYPE_CHECKING:
@@ -48,7 +50,7 @@ def chain_pseudo_voltage_through_tap_links(
     min_sigma_frac: float = 0.01,
     block_bus_only: bool = True,
     mid_start: int = 210_000_000,
-) -> int:
+) -> dict[str, int]:
     """Распространить V через trafo-ветви, скейлуя по tap_ratio.
 
     Для каждой active trafo-ветви (``branch_type=1``): если у одного
@@ -72,7 +74,7 @@ def chain_pseudo_voltage_through_tap_links(
         mid_start: начальный ID для добавляемых measurements.
 
     Returns:
-        Общее число добавленных pseudo V-meas.
+        Статистика шага ``{"added": <общее число добавленных pseudo V-meas>}``.
     """
     nodes_arr = model.nodes.to_numpy()
     node_by_id = {int(r["id"]): r for r in nodes_arr}
@@ -86,32 +88,59 @@ def chain_pseudo_voltage_through_tap_links(
     # pseudo-V поверх уже существующих constraints.
     allowed_lv_nodes: set[int] | None = None
     if block_bus_only:
-        degree: dict[int, int] = {}
-        for r in branches_arr:
-            if not r["status"]:
-                continue
-            for end in (int(r["from_node"]), int(r["to_node"])):
-                degree[end] = degree.get(end, 0) + 1
-        allowed_lv_nodes = {nid_ for nid_, d in degree.items() if d == 1}
+        degree = node_degree_map(branches_arr)
+        allowed_lv_nodes = {nid for nid, d in degree.items() if d == 1}
 
-    v_by_node: dict[int, tuple[float, float]] = {}
     meas_arr = model.measurements.to_numpy()
-    for r in meas_arr:
-        if not r["status"]:
-            continue
-        if int(r["object_type"]) != OBJ_NODE:
-            continue
-        if int(r["measurement_type"]) != KIND_VOLTAGE:
-            continue
-        nid = int(r["object_id"])
-        v_by_node[nid] = (float(r["value"]), float(r["variance"]))
+    # Chain propagates through both real and pseudo V (all_v), so the real-only
+    # map is ignored here.
+    v_by_node, _ = scan_node_voltage(meas_arr)
 
     active_node_ids = {int(r["id"]) for r in nodes_arr if r["status"]}
 
+    # Free id: scan the existing id set once, then increment-only. Equivalent to
+    # the former ``while any(int(m.id) == new_id ...)`` (see mirror_voltage).
+    existing_ids = {int(x) for x in meas_arr["id"]}
     new_id = mid_start
-    while any(int(m.id) == new_id for m in model.measurements):
+    while new_id in existing_ids:
         new_id += 1
     cnt = 0
+    added_this_iter = 0  # reset per outer pass; bound here so _emit can rebind it
+
+    def _emit(src: int, dst: int, vn_dst: float, *, divide: bool) -> None:
+        """Add a chain pseudo-V on ``dst`` scaled from ``src`` through ``scale``.
+
+        ``divide`` selects the exact arithmetic of the original direction (HV->LV
+        multiplies by ``scale``, LV->HV divides by it) so the result stays
+        bit-identical. The ``allowed_lv_nodes`` gate is checked on the destination.
+        """
+        nonlocal new_id, cnt, added_this_iter
+        if allowed_lv_nodes is not None and dst not in allowed_lv_nodes:
+            return
+        val_src, var_src = v_by_node[src]
+        if divide:
+            val_dst = val_src / scale
+            var_dst = var_src / (scale**2)
+        else:
+            val_dst = val_src * scale
+            var_dst = var_src * (scale**2)
+        min_var = (min_sigma_frac * vn_dst) ** 2
+        var_dst = max(var_dst, min_var)
+        model.measurements.add(
+            pseudo_node_measurement(
+                new_id,
+                dst,
+                KIND_VOLTAGE,
+                val_dst,
+                var_dst,
+                branch_side=-1,
+                source_code="chain_through_tap",
+            )
+        )
+        new_id += 1
+        cnt += 1
+        added_this_iter += 1
+        v_by_node[dst] = (val_dst, var_dst)
 
     for _ in range(max_iterations):
         added_this_iter = 0
@@ -144,62 +173,12 @@ def chain_pseudo_voltage_through_tap_links(
             vn_hv = float(node_by_id[hv]["voltage_nominal"])
 
             if hv in v_by_node and lv not in v_by_node:
-                if allowed_lv_nodes is not None and lv not in allowed_lv_nodes:
-                    continue
-                val_hv, var_hv = v_by_node[hv]
-                val_lv = val_hv * scale
-                var_lv = var_hv * (scale**2)
-                min_var = (min_sigma_frac * vn_lv) ** 2
-                var_lv = max(var_lv, min_var)
-                model.measurements.add(
-                    {
-                        "id": new_id,
-                        "object_type": OBJ_NODE,
-                        "object_id": lv,
-                        "measurement_type": KIND_VOLTAGE,
-                        "value": val_lv,
-                        "variance": var_lv,
-                        "status": True,
-                        "quality": 0,
-                        "is_pseudo": True,
-                        "branch_side": -1,
-                        "source_code": "chain_through_tap",
-                    }
-                )
-                new_id += 1
-                cnt += 1
-                added_this_iter += 1
-                v_by_node[lv] = (val_lv, var_lv)
+                _emit(hv, lv, vn_lv, divide=False)
             elif lv in v_by_node and hv not in v_by_node:
-                if allowed_lv_nodes is not None and hv not in allowed_lv_nodes:
-                    continue
-                val_lv, var_lv = v_by_node[lv]
-                val_hv = val_lv / scale
-                var_hv = var_lv / (scale**2)
-                min_var = (min_sigma_frac * vn_hv) ** 2
-                var_hv = max(var_hv, min_var)
-                model.measurements.add(
-                    {
-                        "id": new_id,
-                        "object_type": OBJ_NODE,
-                        "object_id": hv,
-                        "measurement_type": KIND_VOLTAGE,
-                        "value": val_hv,
-                        "variance": var_hv,
-                        "status": True,
-                        "quality": 0,
-                        "is_pseudo": True,
-                        "branch_side": -1,
-                        "source_code": "chain_through_tap",
-                    }
-                )
-                new_id += 1
-                cnt += 1
-                added_this_iter += 1
-                v_by_node[hv] = (val_hv, var_hv)
+                _emit(lv, hv, vn_hv, divide=True)
 
         if added_this_iter == 0:
             break
 
     logger.info("chain_pseudo_voltage_through_tap_links: добавлено %d pseudo V-meas", cnt)
-    return cnt
+    return {"added": cnt}

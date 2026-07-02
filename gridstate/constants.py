@@ -7,9 +7,6 @@ gridstate — самостоятельный модуль SE; домен-пер�
 Числовые значения IntEnum — часть контракта данных: они участвуют в
 целочисленных сравнениях z-вектора/фильтров/таблиц, поэтому стабильны и не
 меняются произвольно.
-
-(``topology.py`` исторически инлайнит те же литералы с комментарием
-``# NodeType.SLACK``; это эквивалентно.)
 """
 
 from __future__ import annotations
@@ -49,6 +46,34 @@ class MeasurementType(IntEnum):
     CURRENT = 3
     POWER_INJECTION_P = 4
     POWER_INJECTION_Q = 5
+
+
+class MeasurementQuality(IntEnum):
+    """Quality class of a measurement (``quality`` contract column).
+
+    Values mirror the classifier in :mod:`gridstate.telemetry.quality`
+    (``QUALITY_GOOD/QUESTIONABLE/BAD`` are kept there as aliases).
+    """
+
+    GOOD = 0
+    QUESTIONABLE = 1
+    BAD = 2
+
+
+class FilterFlag(IntEnum):
+    """Reason a measurement was deactivated/downweighted (``filter_flag`` column).
+
+    Previously these codes lived as bare literals with reminder comments
+    scattered across the telemetry filters; the values are part of the data
+    contract and must stay stable.
+    """
+
+    OK = 0
+    BAD_QUALITY = 1
+    Q_INCONSISTENCY = 2
+    V_LOSS_INCONSISTENT = 3
+    V_BELOW_HALF_NOMINAL = 4
+    P_SIGN_INCONSISTENCY = 5
 
 
 class MeasurementObjectType(IntEnum):

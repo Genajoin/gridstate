@@ -41,6 +41,7 @@ from gridstate.contract.tables import (
     SEInputSchema,
     SEOutputSchema,
     TableSchema,
+    io_dtype,
 )
 from gridstate.contract.validate import (
     ContractValidationError,
@@ -85,6 +86,7 @@ __all__ = [
     "ValidationIssue",
     "ValidationReport",
     "current_version",
+    "io_dtype",
     "is_data_compatible",
     "load_se_input",
     "prepare_network",

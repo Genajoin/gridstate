@@ -11,10 +11,18 @@ from gridstate.telemetry.apply_resolved import (
     apply_materialize_resolved,
     apply_telemetry_resolved,
 )
+from gridstate.telemetry.generators import (
+    aggregate_generators_to_node,
+    apply_generator_status_from_node,
+)
 from gridstate.telemetry.loss_filter import (
     BranchLossReport,
     analyze_branch_loss_consistency,
     compute_branch_loss_formulas,
+)
+from gridstate.telemetry.measurements import (
+    deactivate_orphan_measurements,
+    resolve_merged_measurement_conflicts,
 )
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.quality import (
@@ -28,15 +36,11 @@ from gridstate.telemetry.quality import (
     tm_code_histogram,
 )
 from gridstate.telemetry.rpn import apply_rpn_resolved
-from gridstate.telemetry.sigma_floor import apply_flow_sigma_floor
-from gridstate.telemetry.topology import (
-    aggregate_generators_to_node,
-    apply_generator_status_from_node,
+from gridstate.telemetry.shunts import (
     apply_reactors_to_node_shunt,
-    deactivate_orphan_measurements,
     normalize_breaker_reactance,
-    resolve_merged_measurement_conflicts,
 )
+from gridstate.telemetry.sigma_floor import apply_flow_sigma_floor
 from gridstate.telemetry.units import (
     normalize_guid,
     variance_branch_q,

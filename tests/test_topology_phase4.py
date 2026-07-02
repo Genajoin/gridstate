@@ -176,7 +176,7 @@ def test_adapter_effect_matches_core_plan():
     # slack→PQ
     plan = _slack_nodes_to_demote(m.nodes.to_numpy(), m.branches.to_numpy())
     n = refine_slack_to_one(m)
-    assert n == len(plan)
+    assert n == {"demoted": len(plan)}
     types = {int(r["id"]): int(r["node_type"]) for r in m.nodes.to_numpy()}
     for nid in plan:
         assert types[nid] == _PQ
@@ -184,7 +184,7 @@ def test_adapter_effect_matches_core_plan():
     # gen→PV (после refine_slack, как в pipeline)
     plan = _gen_nodes_to_promote(m.nodes.to_numpy(), m.generators.to_numpy(), None)
     n = refine_node_types_from_generators(m)
-    assert n == len(plan)
+    assert n == {"promoted": len(plan)}
     types = {int(r["id"]): int(r["node_type"]) for r in m.nodes.to_numpy()}
     for nid in plan:
         assert types[nid] == 1  # PV
@@ -192,7 +192,7 @@ def test_adapter_effect_matches_core_plan():
     # orphan branches
     plan = _orphan_branches_to_disable(m.nodes.to_numpy(), m.branches.to_numpy())
     n = disable_orphan_branches(m)
-    assert n == len(plan)
+    assert n == {"disabled": len(plan)}
     bstat = {int(r["id"]): bool(r["status"]) for r in m.branches.to_numpy()}
     for bid in plan:
         assert bstat[bid] is False
@@ -200,7 +200,7 @@ def test_adapter_effect_matches_core_plan():
     # disconnected
     plan = _disconnected_nodes_to_disable(m.nodes.to_numpy(), m.branches.to_numpy())
     n = disable_disconnected_components(m)
-    assert n == len(plan)
+    assert n == {"disabled": len(plan)}
     nstat = {int(r["id"]): bool(r["status"]) for r in m.nodes.to_numpy()}
     for nid in plan:
         assert nstat[nid] is False
@@ -208,4 +208,4 @@ def test_adapter_effect_matches_core_plan():
     # isolated
     plan = _isolated_nodes_to_disable(m.nodes.to_numpy(), m.branches.to_numpy())
     n = disable_isolated_nodes(m)
-    assert n == len(plan)
+    assert n == {"disabled": len(plan)}

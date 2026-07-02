@@ -24,7 +24,10 @@ import numpy as np
 from gridstate.constants import (
     MeasurementObjectType,
     MeasurementType,
+    NodeType,
 )
+from gridstate.telemetry._filters import downweight_measurement, validate_downweight_action
+from gridstate.utils import id_to_pos_map
 
 
 if TYPE_CHECKING:
@@ -94,8 +97,7 @@ def apply_voltage_range_filter(
     """
     # Енумы object/measurement-type резолвятся здесь (gridstate.constants),
     # ядро принимает готовые int и читает только контрактные колонки.
-    if action not in ("downweight", "deactivate"):
-        raise ValueError(f"action must be 'downweight' or 'deactivate', got {action!r}")
+    validate_downweight_action(action)
     meas_arr = model.measurements.to_numpy().copy()
     nodes_arr = model.nodes.to_numpy()
     stats = _voltage_range_filter_on_arrays(
@@ -138,7 +140,7 @@ def _voltage_range_filter_on_arrays(
     ``voltage_max``). Енумы object/measurement-type приходят готовыми int из
     адаптера. БЕЗ внешних зависимостей и XML. Последовательный цикл в исходном порядке.
     """
-    node_by_id: dict[int, int] = {int(r["id"]): i for i, r in enumerate(nodes_arr)}
+    node_by_id = id_to_pos_map(nodes_arr["id"])
 
     counters: dict[str, int] = {
         "checked": 0,
@@ -171,10 +173,9 @@ def _voltage_range_filter_on_arrays(
             if action == "deactivate":
                 meas_arr[i]["status"] = False
             else:
-                new_var = float(meas_arr[i]["variance"]) * questionable_sigma2_multiplier
-                meas_arr[i]["variance"] = new_var
-                meas_arr[i]["weight"] = 1.0 / new_var if new_var > 0 else 0.0
-                meas_arr[i]["quality"] = 1
+                downweight_measurement(
+                    meas_arr, i, questionable_sigma2_multiplier, mark_questionable=True
+                )
             continue
 
         # Нижний порог: voltage_critical → voltage_min → V_ном/2.
@@ -212,17 +213,15 @@ def _voltage_range_filter_on_arrays(
             if action == "deactivate":
                 meas_arr[i]["status"] = False
             else:  # downweight
-                new_var = float(meas_arr[i]["variance"]) * questionable_sigma2_multiplier
-                meas_arr[i]["variance"] = new_var
-                meas_arr[i]["weight"] = 1.0 / new_var if new_var > 0 else 0.0
-                meas_arr[i]["quality"] = 1
+                downweight_measurement(
+                    meas_arr, i, questionable_sigma2_multiplier, mark_questionable=True
+                )
             continue
 
         if detect_nominal_substitution and abs(v_meas - v_nom) / v_nom < nominal_substitution_eps:
-            new_var = float(meas_arr[i]["variance"]) * questionable_sigma2_multiplier
-            meas_arr[i]["variance"] = new_var
-            meas_arr[i]["weight"] = 1.0 / new_var if new_var > 0 else 0.0
-            meas_arr[i]["quality"] = 1  # QUESTIONABLE
+            downweight_measurement(
+                meas_arr, i, questionable_sigma2_multiplier, mark_questionable=True
+            )
             counters["downweighted_nominal_substitution"] += 1
 
     return {
@@ -273,8 +272,6 @@ def apply_voltage_meas_calibration_for_gen_nodes(
     Returns:
         ``{"updated_meas": N, "target_nodes": N}``.
     """
-    from gridstate.constants import NodeType
-
     meas_arr = model.measurements.to_numpy().copy()
     nodes_arr = model.nodes.to_numpy()
     stats = _voltage_meas_calibration_on_arrays(

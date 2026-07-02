@@ -57,8 +57,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from gridstate.constants import (
+    FilterFlag,
     MeasurementObjectType,
     MeasurementType,
+)
+from gridstate.telemetry._filters import (
+    build_measurement_index,
+    downweight_measurement,
+    validate_downweight_action,
 )
 
 
@@ -286,29 +292,18 @@ def analyze_branch_loss_consistency(
                 "reports": [BranchLossReport, ...],
             }
     """
-    if action not in ("downweight", "deactivate"):
-        raise ValueError(f"action must be 'downweight' or 'deactivate', got {action!r}")
+    validate_downweight_action(action)
 
-    nn = model.nodes.to_numpy()
-    bn = model.branches.to_numpy()
+    nodes_arr = model.nodes.to_numpy()
+    branches_arr = model.branches.to_numpy()
     arr = model.measurements.to_numpy().copy()
 
     # Index measurements: (object_type, measurement_type, branch_side, object_id) → row idx
-    meas_idx: dict[tuple[int, int, int, int], int] = {}
-    for i, r in enumerate(arr):
-        if not bool(r["status"]):
-            continue
-        key = (
-            int(r["object_type"]),
-            int(r["measurement_type"]),
-            int(r["branch_side"]),
-            int(r["object_id"]),
-        )
-        meas_idx.setdefault(key, i)
+    meas_idx = build_measurement_index(arr, only_active=True)
 
     # node_id → V (либо из measurement, либо из node.voltage_magnitude)
     node_v: dict[int, float] = {}
-    for n in nn:
+    for n in nodes_arr:
         nid = int(n["id"])
         if not bool(n["status"]):
             continue
@@ -338,7 +333,11 @@ def analyze_branch_loss_consistency(
     checked = 0
     outliers = 0
 
-    for b in bn:
+    def _val(bid: int, side: int, mt: int) -> float | None:
+        i = meas_idx.get((OT_BR, mt, side, bid))
+        return float(arr[i]["value"]) if i is not None else None
+
+    for b in branches_arr:
         if not bool(b["status"]):
             continue
         bid = int(b["id"])
@@ -358,14 +357,10 @@ def analyze_branch_loss_consistency(
         z2_si = r_si**2 + x_si**2
 
         # ТИ значения ветви
-        def _val(side: int, mt: int, bid: int = bid) -> float | None:
-            i = meas_idx.get((OT_BR, mt, side, bid))
-            return float(arr[i]["value"]) if i is not None else None
-
-        p_beg = _val(0, MT_P)
-        p_end = _val(1, MT_P)
-        q_beg = _val(0, MT_Q)
-        q_end = _val(1, MT_Q)
+        p_beg = _val(bid, 0, MT_P)
+        p_end = _val(bid, 1, MT_P)
+        q_beg = _val(bid, 0, MT_Q)
+        q_end = _val(bid, 1, MT_Q)
         v_beg = node_v.get(from_id)
         v_end = node_v.get(to_id)
 
@@ -427,22 +422,17 @@ def analyze_branch_loss_consistency(
         if action == "deactivate":
             arr[ki]["status"] = False
             field_names = arr.dtype.names
-            arr[ki]["filter_flag"] = (
-                3
-                if field_names is not None and "filter_flag" in field_names
-                else arr[ki]["filter_flag"]
-            )
+            if field_names is not None and "filter_flag" in field_names:
+                arr[ki]["filter_flag"] = int(FilterFlag.V_LOSS_INCONSISTENT)
         else:
-            new_var = float(arr[ki]["variance"]) * downweight_factor
-            arr[ki]["variance"] = new_var
-            arr[ki]["weight"] = 1.0 / new_var if new_var > 0 else 0.0
+            downweight_measurement(arr, ki, downweight_factor)
         actions_taken += 1
 
     # Записать обратно
     model.measurements.update_from_array(arr)
 
     return {
-        "total": len(bn),
+        "total": len(branches_arr),
         "checked": checked,
         "outliers": outliers,
         "blame": blame_counts,

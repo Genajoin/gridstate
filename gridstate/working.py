@@ -500,24 +500,12 @@ class Working:
         инкрементальное построение через ``.nodes.add({...})`` / ``.get_by_id`` /
         ``.update`` — удобно для тестов и синтетики.
         """
-        from gridstate.contract import SE_INPUT, SE_OUTPUT
-
-        def _io_dtype(in_schema: Any, out_schema: Any) -> np.dtype:
-            in_dt = in_schema.input_dtype()
-            fields = list(in_dt.descr)
-            have = set(in_dt.names or ())
-            out_dt = out_schema.output_dtype()
-            for name in out_dt.names or ():
-                if name not in have:
-                    fields.append((name, out_dt[name].str))
-            return np.dtype(fields)
+        from gridstate.contract import SE_INPUT, SE_OUTPUT, io_dtype
 
         return cls.from_arrays(
-            nodes=np.zeros(0, dtype=_io_dtype(SE_INPUT.nodes, SE_OUTPUT.nodes)),
-            branches=np.zeros(0, dtype=_io_dtype(SE_INPUT.branches, SE_OUTPUT.branches)),
-            measurements=np.zeros(
-                0, dtype=_io_dtype(SE_INPUT.measurements, SE_OUTPUT.measurements)
-            ),
+            nodes=np.zeros(0, dtype=io_dtype(SE_INPUT.nodes, SE_OUTPUT.nodes)),
+            branches=np.zeros(0, dtype=io_dtype(SE_INPUT.branches, SE_OUTPUT.branches)),
+            measurements=np.zeros(0, dtype=io_dtype(SE_INPUT.measurements, SE_OUTPUT.measurements)),
             generators=np.zeros(0, dtype=SE_INPUT.generators.input_dtype()),
         )
 

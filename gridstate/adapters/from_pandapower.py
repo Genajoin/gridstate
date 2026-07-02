@@ -24,14 +24,17 @@ import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pandas as pd  # type: ignore[import-untyped]
 
 from gridstate.constants import BranchType, NodeType
 from gridstate.contract.runtime import SEInput
-from gridstate.contract.tables import SE_INPUT, SE_OUTPUT
+from gridstate.contract.tables import SE_INPUT, SE_OUTPUT, io_dtype
 from gridstate.working import Working
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import pandapower as pp  # noqa: F401
 
 
@@ -52,27 +55,13 @@ def _require_pandapower() -> Any:
     return pp
 
 
-def _io_dtype(in_schema: Any, out_schema: Any) -> np.dtype:
-    """Объединённый dtype входного+выходного слоёв таблицы (как ``Working.empty``).
-
-    Пайплайн пишет OUTPUT-колонки (``voltage_magnitude``/``p_inj_calc``/перетоки/
-    ``estimated_si`` …) прямо в живые коллекции, поэтому backing-массивы должны
-    нести и INPUT/WORKING, и OUTPUT-колонки — ровно как нулевые коллекции
-    :meth:`gridstate.working.Working.empty`.
-    """
-    in_dt = in_schema.input_dtype()
-    fields = list(in_dt.descr)
-    have = set(in_dt.names or ())
-    out_dt = out_schema.output_dtype()
-    for name in out_dt.names or ():
-        if name not in have:
-            fields.append((name, out_dt[name].str))
-    return np.dtype(fields)
-
-
-_NODES_DTYPE = _io_dtype(SE_INPUT.nodes, SE_OUTPUT.nodes)
-_BRANCHES_DTYPE = _io_dtype(SE_INPUT.branches, SE_OUTPUT.branches)
-_MEASUREMENTS_DTYPE = _io_dtype(SE_INPUT.measurements, SE_OUTPUT.measurements)
+# Backing-массивы несут INPUT/WORKING ⊕ OUTPUT-колонки — ровно как нулевые
+# коллекции Working.empty(): пайплайн пишет OUTPUT-колонки (voltage_magnitude/
+# p_inj_calc/перетоки/estimated_si) прямо в живые коллекции. Единый билдер —
+# io_dtype (contract.tables).
+_NODES_DTYPE = io_dtype(SE_INPUT.nodes, SE_OUTPUT.nodes)
+_BRANCHES_DTYPE = io_dtype(SE_INPUT.branches, SE_OUTPUT.branches)
+_MEASUREMENTS_DTYPE = io_dtype(SE_INPUT.measurements, SE_OUTPUT.measurements)
 _GENERATORS_DTYPE = SE_INPUT.generators.input_dtype()
 
 
@@ -164,6 +153,25 @@ def measurement_array(n: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+def _iter_bus_rows(
+    table: Any, pos_of: dict[Any, int], *columns: str
+) -> Iterator[tuple[int, list[Any]]]:
+    """Yield ``(node_pos, [col_values...])`` for in-service rows of a pp element table.
+
+    Factors out the shared preamble of the per-element loops (load/gen/sgen/
+    shunt): skip out-of-service rows and resolve the bus index to a node
+    position. ``columns`` are the extra columns to read alongside the mandatory
+    ``bus`` / ``in_service``; iteration order matches ``zip`` over the columns.
+    """
+    if len(table) == 0:
+        return
+    extra = [getattr(table, c) for c in columns]
+    for bus, in_svc, *vals in zip(table.bus, table.in_service, *extra, strict=False):
+        if not bool(in_svc):
+            continue
+        yield pos_of[bus], vals
+
+
 def _build_nodes(net: Any) -> np.ndarray:
     """``net.bus`` + инжекции (load/gen/sgen/ext_grid/shunt) → массив узлов."""
     bus_index = list(net.bus.index)
@@ -183,70 +191,39 @@ def _build_nodes(net: Any) -> np.ndarray:
     has_load = np.zeros(n, dtype=bool)
 
     # Нагрузка (consumer, +).
-    if len(net.load) > 0:
-        for bus, p, q, in_svc in zip(
-            net.load.bus, net.load.p_mw, net.load.q_mvar, net.load.in_service, strict=False
-        ):
-            if not bool(in_svc):
-                continue
-            i = pos_of[bus]
-            arr["load_p"][i] += float(p)
-            arr["load_q"][i] += float(q)
-            has_load[i] = True
+    for i, (p, q) in _iter_bus_rows(net.load, pos_of, "p_mw", "q_mvar"):
+        arr["load_p"][i] += float(p)
+        arr["load_q"][i] += float(q)
+        has_load[i] = True
 
     # Генерация PV (net.gen): задаёт node_type=PV (если узел не slack).
-    if len(net.gen) > 0:
-        for bus, p, in_svc in zip(net.gen.bus, net.gen.p_mw, net.gen.in_service, strict=False):
-            if not bool(in_svc):
-                continue
-            i = pos_of[bus]
-            arr["generation_p"][i] += float(p)
-            has_gen[i] = True
-            arr["node_type"][i] = int(NodeType.PV)
-        # Vsetpoint для PV (vm_pu задан на gen).
-        if "vm_pu" in net.gen.columns:
-            for bus, vm, in_svc in zip(
-                net.gen.bus, net.gen.vm_pu, net.gen.in_service, strict=False
-            ):
-                if not bool(in_svc):
-                    continue
-                i = pos_of[bus]
-                arr["voltage_setpoint"][i] = float(vm) * float(arr["voltage_nominal"][i])
+    for i, (p,) in _iter_bus_rows(net.gen, pos_of, "p_mw"):
+        arr["generation_p"][i] += float(p)
+        has_gen[i] = True
+        arr["node_type"][i] = int(NodeType.PV)
+    # Vsetpoint для PV (vm_pu задан на gen).
+    if len(net.gen) > 0 and "vm_pu" in net.gen.columns:
+        for i, (vm,) in _iter_bus_rows(net.gen, pos_of, "vm_pu"):
+            arr["voltage_setpoint"][i] = float(vm) * float(arr["voltage_nominal"][i])
 
     # Статическая генерация (net.sgen) — PQ-инжекция (+).
-    if len(net.sgen) > 0:
-        for bus, p, q, in_svc in zip(
-            net.sgen.bus, net.sgen.p_mw, net.sgen.q_mvar, net.sgen.in_service, strict=False
-        ):
-            if not bool(in_svc):
-                continue
-            i = pos_of[bus]
-            arr["generation_p"][i] += float(p)
-            arr["generation_q"][i] += float(q)
-            has_gen[i] = True
+    for i, (p, q) in _iter_bus_rows(net.sgen, pos_of, "p_mw", "q_mvar"):
+        arr["generation_p"][i] += float(p)
+        arr["generation_q"][i] += float(q)
+        has_gen[i] = True
 
     # Шунты (net.shunt): q_mvar/p_mw заданы при vn_kv шунта; переводим в См.
     # B[См] = -Q_MVAr / (vn_shunt_kv² ) ; знак: Q_MVAr>0 = поглощение реактива
     # (индуктивный) → отрицательная susceptance. P_MW>0 = активные потери → G>0.
-    if len(net.shunt) > 0:
-        for bus, p_mw, q_mvar, vn_kv, step, in_svc in zip(
-            net.shunt.bus,
-            net.shunt.p_mw,
-            net.shunt.q_mvar,
-            net.shunt.vn_kv,
-            net.shunt.step,
-            net.shunt.in_service,
-            strict=False,
-        ):
-            if not bool(in_svc):
-                continue
-            i = pos_of[bus]
-            vn = float(vn_kv)
-            if vn <= 0:
-                continue
-            s = float(step)
-            arr["shunt_g"][i] += s * float(p_mw) / (vn * vn)
-            arr["shunt_b"][i] += -s * float(q_mvar) / (vn * vn)
+    for i, (p_mw, q_mvar, vn_kv, step) in _iter_bus_rows(
+        net.shunt, pos_of, "p_mw", "q_mvar", "vn_kv", "step"
+    ):
+        vn = float(vn_kv)
+        if vn <= 0:
+            continue
+        s = float(step)
+        arr["shunt_g"][i] += s * float(p_mw) / (vn * vn)
+        arr["shunt_b"][i] += -s * float(q_mvar) / (vn * vn)
 
     # ext_grid → slack-узел; несёт генерацию-баланс (P/Q не известны до PF — 0).
     eg_bus = int(net.ext_grid.bus.iloc[0])
@@ -268,10 +245,21 @@ def _build_nodes(net: Any) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+def _set_row(row: np.void, names: tuple[str, ...], values: dict[str, Any]) -> None:
+    """Записать поля ``values`` прямо в строку структурного массива (по имени)."""
+    for key, value in values.items():
+        if key in names:
+            row[key] = value
+
+
 def _build_branches(net: Any, f_hz: float) -> np.ndarray:
     """``net.line`` + ``net.trafo`` → массив ветвей (импеданс Ом, шунты См)."""
-    rows: list[dict[str, Any]] = []
+    # Пишем прямо в преаллоцированный массив (без промежуточного list[dict]):
+    # число ветвей известно заранее = линии + трансформаторы.
+    arr = np.zeros(len(net.line) + len(net.trafo), dtype=_BRANCHES_DTYPE)
+    names = arr.dtype.names or ()
     next_bid = 1
+    bi = 0
 
     # ----- Линии -----
     for _, ln in net.line.iterrows():
@@ -283,7 +271,9 @@ def _build_branches(net: Any, f_hz: float) -> np.ndarray:
         # Зарядная susceptance: B = 2π·f·C·length·parallel (См), C в нФ/км.
         b_total = 2.0 * math.pi * f_hz * float(ln.c_nf_per_km) * 1e-9 * length * parallel
         g_total = float(ln.g_us_per_km) * 1e-6 * length * parallel
-        rows.append(
+        _set_row(
+            arr[bi],
+            names,
             {
                 "id": next_bid,
                 "from_node": int(ln.from_bus),
@@ -300,11 +290,12 @@ def _build_branches(net: Any, f_hz: float) -> np.ndarray:
                 "tap_ratio": 1.0,
                 "phase_shift": 0.0,
                 "current_limit_normal": float(ln.max_i_ka) * 1000.0
-                if "max_i_ka" in net.line.columns and not _is_nan(ln.max_i_ka)
+                if "max_i_ka" in net.line.columns and not pd.isna(ln.max_i_ka)
                 else 0.0,
-            }
+            },
         )
         next_bid += 1
+        bi += 1
 
     # ----- Трансформаторы -----
     for _, tr in net.trafo.iterrows():
@@ -322,19 +313,21 @@ def _build_branches(net: Any, f_hz: float) -> np.ndarray:
 
         # Коэф. трансформации (физический, HV:LV) с учётом РПН.
         tap_factor = 1.0
-        if not _is_nan(getattr(tr, "tap_pos", float("nan"))):
+        if not pd.isna(getattr(tr, "tap_pos", float("nan"))):
             tap_pos = float(tr.tap_pos)
-            tap_neutral = float(tr.tap_neutral) if not _is_nan(tr.tap_neutral) else 0.0
-            tap_step = float(tr.tap_step_percent) if not _is_nan(tr.tap_step_percent) else 0.0
+            tap_neutral = float(tr.tap_neutral) if not pd.isna(tr.tap_neutral) else 0.0
+            tap_step = float(tr.tap_step_percent) if not pd.isna(tr.tap_step_percent) else 0.0
             delta = (tap_pos - tap_neutral) * tap_step / 100.0
             tap_side = str(getattr(tr, "tap_side", "hv"))
             # РПН на HV: ratio растёт; на LV — обратно.
             tap_factor = (1.0 + delta) if tap_side == "hv" else 1.0 / (1.0 + delta)
         tap_ratio = (vn_hv / vn_lv) * tap_factor
 
-        shift = float(tr.shift_degree) if not _is_nan(tr.shift_degree) else 0.0
+        shift = float(tr.shift_degree) if not pd.isna(tr.shift_degree) else 0.0
 
-        rows.append(
+        _set_row(
+            arr[bi],
+            names,
             {
                 "id": next_bid,
                 "from_node": int(tr.hv_bus),
@@ -348,17 +341,13 @@ def _build_branches(net: Any, f_hz: float) -> np.ndarray:
                 "tap_ratio": tap_ratio,
                 "phase_shift": math.radians(shift),
                 "current_limit_normal": 0.0,
-            }
+            },
         )
         next_bid += 1
+        bi += 1
 
-    arr = np.zeros(len(rows), dtype=_BRANCHES_DTYPE)
-    for i, row in enumerate(rows):
-        for key, value in row.items():
-            if key in (arr.dtype.names or ()):
-                arr[i][key] = value
     # parallel_id обязателен для KEY; единичные ветви → 1.
-    if "parallel_id" in (arr.dtype.names or ()):
+    if "parallel_id" in names:
         arr["parallel_id"] = 1
     return arr
 
@@ -394,13 +383,3 @@ def _build_generators(net: Any) -> np.ndarray:
         arr[i]["reactive_output"] = q
         arr[i]["status"] = True
     return arr
-
-
-def _is_nan(value: Any) -> bool:
-    """True, если ``value`` — NaN/None (pandapower кодирует «нет значения» как NaN)."""
-    if value is None:
-        return True
-    try:
-        return bool(math.isnan(float(value)))
-    except (TypeError, ValueError):
-        return False
