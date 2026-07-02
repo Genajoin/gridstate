@@ -51,6 +51,8 @@ def estimate(
     huber_use_mad: bool = False,
     reconcile_balance: bool = True,
     kkt_solver: str = "auto",
+    include_quality_summary: bool = True,
+    quality_summary_top_n: int = 10,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Выполнить оценку состояния по модели и телеметрии.
@@ -64,7 +66,8 @@ def estimate(
         model: рабочая модель сети — носитель входных таблиц контракта.
         measurements: коллекция измерений. Если ``None``, берётся
             ``model.measurements``.
-        algorithm: алгоритм SE. Сейчас реализован только ``"wls"``.
+        algorithm: алгоритм SE: ``"wls"`` (Gauss-Newton) или ``"ipm"``
+            (primal log-barrier с box-переменными нагрузки/генерации).
         init: стратегия начального приближения:
             - ``"flat"`` — V=1 p.u., δ=0 для всех узлов;
             - ``"results"`` — взять текущие ``voltage_magnitude``/``voltage_angle``
@@ -83,6 +86,16 @@ def estimate(
             ``"scipy"``, см. ``gridstate.algorithms.kkt_solver``). ``auto``
             использует CHOLMOD при установленном cvxopt (×8-11 на крупных
             моделях), иначе scipy spsolve (прежнее поведение бит-в-бит).
+        huber_c: SHGM-IRLS tuning constant; 0 disables robust reweighting
+            (see ``gridstate.algebra.estimators``).
+        huber_use_mad: normalize SHGM residuals by the MAD scale.
+        include_quality_summary: compute chi2/worst_* diagnostics on the
+            final solution. Disable in loops/tests where the summary is not
+            needed — on large models it costs about as much as a solve.
+        quality_summary_top_n: row count of worst_residuals/worst_imbalance.
+        **ipm_kwargs: forwarded to ``build_ipm_setup`` in IPM mode
+            (``balance_weight_factor``, ``bound_relax``, prior sigmas — the
+            A/B-calibration knobs). Ignored for WLS.
 
     Returns:
         ``SEResult`` с полями ``success``, ``iterations``, ``objective_value``
@@ -98,12 +111,6 @@ def estimate(
         )
     if zero_injection is not None:
         raise NotImplementedError(f"zero_injection={zero_injection!r} пока не реализован.")
-
-    # Опция: пропустить расчёт quality summary (chi2/worst_*). Полезно
-    # в тестах/loop, где summary не нужна и H-dense вычисление лишнее
-    # на крупных моделях. Default ``True`` — сводка считается всегда.
-    include_quality_summary = bool(ipm_kwargs.pop("include_quality_summary", True))
-    quality_summary_top_n = int(ipm_kwargs.pop("quality_summary_top_n", 10))
 
     if measurements is None:
         measurements = model.measurements
@@ -159,7 +166,7 @@ def estimate(
         delta, v_pu = unpack(e_final[: 2 * network_pu.n_bus - 1], layout)
     else:
         # 5. WLS
-        e_final, success, iterations, objective = solve_wls(
+        wls_res = solve_wls(
             e_init=e_init,
             z=z,
             r_matrix=r_matrix,
@@ -175,6 +182,10 @@ def estimate(
             huber_use_mad=huber_use_mad,
             kkt_solver=kkt,
         )
+        e_final = wls_res.x
+        success = wls_res.success
+        iterations = wls_res.iterations
+        objective = wls_res.objective
 
         # 6. Распаковка состояния и запись обратно в модель
         delta, v_pu = unpack(e_final, layout)

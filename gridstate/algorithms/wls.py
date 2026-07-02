@@ -9,7 +9,7 @@ Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
     - удалена зависимость от ``ExtendedPPCI`` и PYPOWER-формата;
     - работает с ``BaseAlgebra``, ``StateLayout`` и ``MeasurementIndex``
       напрямую;
-    - возвращает обычный ``tuple`` вместо мутирующего ``eppci``;
+    - возвращает ``WLSResult`` вместо мутирующего ``eppci``;
     - простой ``max_step``-clamp + α·line search заменён на гибридную
       trust-region/Levenberg-Marquardt стратегию (см. ниже).
 
@@ -44,6 +44,7 @@ Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -63,6 +64,26 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class WLSResult:
+    """Result of :func:`solve_wls`, mirroring :class:`~gridstate.algorithms.ipm.IPMResult`.
+
+    Replaces the former bare 4-tuple so both solvers expose the same kind of
+    contract to ``gridstate.api.estimate``.
+
+    Attributes:
+        x: final state vector ``E`` (length ``layout.size``).
+        success: ``max|dE| <= tolerance`` reached without divergence.
+        iterations: accepted Gauss-Newton iterations.
+        objective: ``r^T R^-1 r`` at the last iterate (NaN for empty ``z``).
+    """
+
+    x: np.ndarray
+    success: bool
+    iterations: int
+    objective: float
 
 
 def _solve_damped(
@@ -198,7 +219,7 @@ def solve_wls(
     huber_adaptive_k: float = 6.0,
     huber_warmup_iters: int = 5,
     kkt_solver: KKTSolver | None = None,
-) -> tuple[np.ndarray, bool, int, float]:
+) -> WLSResult:
     """Выполнить trust-region Gauss-Newton WLS (опционально SHGM-IRLS).
 
     Args:
@@ -236,8 +257,7 @@ def solve_wls(
             ``None`` — scipy spsolve (прежнее поведение бит-в-бит).
 
     Returns:
-        ``(E_final, success, iterations, objective_value)``.
-        ``objective_value = rᵀ R⁻¹ r`` на последней итерации (NaN для пустого z).
+        :class:`WLSResult` (``x``, ``success``, ``iterations``, ``objective``).
     """
     if e_init.shape != (layout.size,):
         raise ValueError(f"e_init должен быть длины {layout.size}, получено {e_init.shape}")
@@ -283,7 +303,7 @@ def solve_wls(
 
     if n_meas == 0:
         logger.warning("WLS вызван с пустым вектором измерений — возвращаю e_init")
-        return e_init.copy(), False, 0, float("nan")
+        return WLSResult(x=e_init.copy(), success=False, iterations=0, objective=float("nan"))
 
     E = e_init.astype(np.float64, copy=True)
 
@@ -515,4 +535,4 @@ def solve_wls(
             current_error,
             tolerance,
         )
-    return E, success, cur_it, objective
+    return WLSResult(x=E, success=success, iterations=cur_it, objective=objective)
