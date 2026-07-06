@@ -135,8 +135,14 @@ def test_garbage_source_gated_by_max_pu_dev():
 
 def test_cross_at_gate():
     """Через АТ (оба конца ≥110 кВ) фронт идёт только при cross_at=True."""
-    m = _build_chain(n=3, src_vmag=242.0, vn=220.0, deep_vn=110.0, tap_ratio=2.0,
-                     branch_type=int(BranchType.TRANSFORMER))
+    m = _build_chain(
+        n=3,
+        src_vmag=242.0,
+        vn=220.0,
+        deep_vn=110.0,
+        tap_ratio=2.0,
+        branch_type=int(BranchType.TRANSFORMER),
+    )
     assert not _classify(m)  # default cross_at=False → класс меняется, стоп
     vals = _classify(m, cross_at=True)
     assert abs(vals[2] - 121.0) < 1e-9  # d=1 за АТ: pu 1.10 · 110
@@ -145,8 +151,15 @@ def test_cross_at_gate():
 
 def test_cross_at_below_110_blocked():
     """Через АТ на <110 кВ pu-инвариант не работает → фронт не проходит."""
-    m = _build_chain(n=2, src_vmag=121.0, vn=110.0, deep_vn=10.0, tap_ratio=11.0,
-                     branch_type=int(BranchType.TRANSFORMER), deep_vmag=10.02)
+    m = _build_chain(
+        n=2,
+        src_vmag=121.0,
+        vn=110.0,
+        deep_vn=10.0,
+        tap_ratio=11.0,
+        branch_type=int(BranchType.TRANSFORMER),
+        deep_vmag=10.02,
+    )
     assert not _classify(m, cross_at=True)
 
 
