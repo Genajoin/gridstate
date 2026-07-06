@@ -518,6 +518,18 @@ class PipelineConfig:
         "сохраняются. Default OFF: pu-инвариант через tap≈2 даёт 2-4% остаточную "
         "ошибку, Юг-регрессия не исключена. Включать после A/B 4 ОДУ.",
     )
+    refine_merge: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="Слить v_refine/v_mirror/chain в один re-solve (research)",
+        help="Перф-режим: классификации v_refine, v_mirror и v_mirror_chain "
+        "выполняются последовательно по ОДНОМУ решению (после bad_data), их "
+        "планы применяются к мерам, затем ОДИН warm re-solve вместо трёх. "
+        "−2 полных solve (Юг ≈ −25% wall). Семантика меняется: v_mirror/chain "
+        "классифицируются по решению ДО v_refine-ужесточения (не бит-в-бит) — "
+        "включать только после A/B качества. Уважает индивидуальные тогглы "
+        "(выключенная стадия не участвует). Default OFF.",
+    )
     v_mirror_chain: bool = _toggle(
         False,
         group=_G_POST,
@@ -911,8 +923,13 @@ def _s_bad_data_repass(ctx: _Ctx) -> dict:
     )
 
 
+_MERGED_SKIP = {"skipped": "слит в refine_merged (refine_merge=True)"}
+
+
 def _s_v_refine(ctx: _Ctx) -> dict:
     cfg = ctx.cfg
+    if cfg.refine_merge:
+        return dict(_MERGED_SKIP)
     return _refine_two_pass(
         ctx,
         classify=lambda c: classify_v_refine(
@@ -930,6 +947,8 @@ def _s_v_refine(ctx: _Ctx) -> dict:
 
 def _s_v_mirror(ctx: _Ctx) -> dict:
     cfg = ctx.cfg
+    if cfg.refine_merge:
+        return dict(_MERGED_SKIP)
     return _refine_two_pass(
         ctx,
         classify=lambda c: classify_v_mirror(
@@ -951,6 +970,8 @@ def _s_v_mirror(ctx: _Ctx) -> dict:
 
 def _s_v_mirror_chain(ctx: _Ctx) -> dict:
     cfg = ctx.cfg
+    if cfg.refine_merge:
+        return dict(_MERGED_SKIP)
 
     def _apply(c: _Ctx, plan: Any) -> dict:
         stats = apply_v_mirror_plan(c.model, plan)
@@ -976,6 +997,58 @@ def _s_v_mirror_chain(ctx: _Ctx) -> dict:
         },
         unusable_reason="решение непригодно — нет надёжного уровня источников",
     )
+
+
+def _s_refine_merged(ctx: _Ctx) -> dict:
+    """Слитые v_refine + v_mirror + v_mirror_chain: планы по одному решению,
+    один общий warm re-solve (перф-режим refine_merge)."""
+    cfg = ctx.cfg
+    if not cfg.refine_merge:
+        return {"skipped": "выключено (refine_merge=False)"}
+    assert ctx.result is not None
+    if not ctx.result.success:
+        return {"skipped": "решение непригодно — нет надёжных остатков"}
+    stats: dict[str, Any] = {}
+    applied = False
+    if cfg.v_refine:
+        vr_plan = classify_v_refine(ctx.model.measurements.to_numpy(), rn_threshold=cfg.v_refine_rn)
+        if not vr_plan.empty:
+            stats["v_refine"] = apply_v_refine_plan(ctx.model, vr_plan, factor=cfg.v_refine_factor)
+            applied = True
+    if cfg.v_mirror:
+        vm_plan = classify_v_mirror(
+            ctx.model.measurements.to_numpy(),
+            ctx.model.branches.to_numpy(),
+            ctx.model.nodes.to_numpy(),
+            max_pu_dev=cfg.v_mirror_max_pu_dev,
+            min_lift=cfg.v_mirror_min_lift,
+            cross_at=cfg.v_mirror_cross_at,
+        )
+        if not vm_plan.empty:
+            stats["v_mirror"] = apply_v_mirror_plan(ctx.model, vm_plan)
+            applied = True
+    if cfg.v_mirror_chain:
+        # classify ПОСЛЕ apply v_mirror: его узлы уже не флэт → непересечение,
+        # как в последовательном порядке шагов.
+        ch_plan = classify_chain_mirror(
+            ctx.model.measurements.to_numpy(),
+            ctx.model.branches.to_numpy(),
+            ctx.model.nodes.to_numpy(),
+            max_pu_dev=cfg.v_mirror_max_pu_dev,
+            min_lift=cfg.v_mirror_min_lift,
+            decay=cfg.v_mirror_chain_decay,
+            max_depth=cfg.v_mirror_chain_max_depth,
+            cross_at=cfg.v_mirror_cross_at,
+        )
+        if not ch_plan.empty:
+            st = apply_v_mirror_plan(ctx.model, ch_plan)
+            stats["v_mirror_chain"] = {"max_depth": st.pop("clusters"), **st}
+            applied = True
+    if not applied:
+        return {"skipped": "no-op (все планы пусты)"}
+    result = _warm_resolve(ctx)
+    stats.update(success=bool(result.success), iterations=int(result.iterations))
+    return stats
 
 
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
@@ -1260,6 +1333,14 @@ STEPS: list[Step] = [
         "pu источника с затуханием decay^(d−1) + warm re-solve.",
         _s_v_mirror_chain,
         toggle="v_mirror_chain",
+    ),
+    Step(
+        "refine_merged",
+        "Слитый refine-re-solve (Линия C, перф)",
+        _G_POST,
+        "refine_merge: планы v_refine+v_mirror+chain по одному решению, один warm re-solve.",
+        _s_refine_merged,
+        toggle="refine_merge",
     ),
     Step(
         "anti_overshoot",
