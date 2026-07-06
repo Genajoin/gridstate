@@ -217,6 +217,11 @@ def run(
     # это либо прошлый SEResult, либо несём его из SEOutput.result.
     prev = init_state.result if isinstance(init_state, SEOutput) else init_state
 
+    # Research-оркестрация shunt-sanity: trial-прогоны требуют ПРИСТИННУЮ копию
+    # входа ДО базового прогона (пайплайн мутирует model in place).
+    sanity_on = bool(getattr(config, "shunt_sanity", False)) if config is not None else False
+    pristine = se_input.model.copy() if sanity_on else None
+
     # Числовые планы (``derived``) предвычислены вне ядра; шаги применяют их
     # контрактными ядрами. ``derived=None`` → XML/формат-зависимые шаги пропускаются.
     result = _pipeline_run(
@@ -226,7 +231,118 @@ def run(
         on_event=on_event,
         init_state=prev,
     )
+    if sanity_on:
+        result = _shunt_sanity_rerun(
+            base_result=result,
+            pristine=pristine,
+            config=config,
+            derived=se_input.derived,
+            on_event=on_event,
+        )
     return SEOutput.from_result(result)
+
+
+def _shunt_sanity_rerun(
+    *,
+    base_result: SEResult,
+    pristine: Any,
+    config: Any,
+    derived: DerivedInputs | None,
+    on_event: Callable[[dict], None] | None,
+) -> SEResult:
+    """Try-off/flip шунтов-кандидатов ПОЛНЫМИ re-run'ами пайплайна (research).
+
+    Валидированный механизм (4 ОДУ 2026-07-06): кандидаты — активные шунты на
+    узлах, где node-V-мера расходится с БАЗОВЫМ решением; каждый вариант
+    (off/flip) правится на копии пристинного входа и прогоняется ПОЛНЫМ
+    пайплайном; гейт — падение Σrn² (согласие с собственными real-мерами)
+    больше ``shunt_sanity_gate_drop``. Ложные кандидаты гейтом отвергаются.
+
+    Сравнение обязано быть «полный прогон против полного прогона»: правка сети
+    меняет решение, и σ-ужесточения v_refine (и планы v_mirror/bad_data)
+    должны пересчитаться вокруг НОВОГО решения — одиночный warm re-solve
+    внутри пайплайна штрафует честную правку и ложно её отвергает.
+    """
+    from dataclasses import replace as _dc_replace
+
+    from gridstate.pipeline import run as _pipeline_run
+    from gridstate.shunt_sanity import classify_shunt_candidates, edit_shunt, sum_rn2
+
+    if not base_result.success:
+        return base_result
+    model = base_result.model
+    plan = classify_shunt_candidates(
+        model.measurements.to_numpy(),
+        model.nodes.to_numpy(),
+        model.shunts.to_numpy(),
+        v_frac=float(config.shunt_sanity_v_frac),
+        max_candidates=int(config.shunt_sanity_max_candidates),
+    )
+
+    def _emit(stats: dict) -> None:
+        if on_event is not None:
+            on_event({"type": "step_done", "name": "shunt_sanity", "stats": stats})
+
+    if plan.empty:
+        _emit({"candidates": 0, "accepted": 0, "skipped": "no-op (нет кандидатов)"})
+        return base_result
+
+    trial_cfg = _dc_replace(config, shunt_sanity=False)  # без рекурсии
+    base_rn2 = sum_rn2(model.measurements.to_numpy())
+    gate = float(config.shunt_sanity_gate_drop)
+
+    def _trial(edits: dict[int, str]) -> tuple[SEResult | None, float]:
+        m = pristine.copy()
+        for nid, mode in edits.items():
+            if edit_shunt(m, nid, mode) == 0:
+                return None, float("inf")
+        res = _pipeline_run(m, config=trial_cfg, derived=derived)
+        if not res.success:
+            return None, float("inf")
+        # ВАЖНО: пайплайн работает на внутренней копии — считать по res.model
+        # (во входном m остаются value=0/est=0 → Σrn² ложно нулевой).
+        return res, sum_rn2(res.model.measurements.to_numpy())
+
+    accepted: dict[int, str] = {}
+    for nid in plan.candidates:
+        best_mode: str | None = None
+        best_rn2 = base_rn2 - gate
+        for mode in ("off", "flip"):
+            _res, rn2 = _trial({nid: mode})
+            if rn2 < best_rn2:
+                best_mode, best_rn2 = mode, rn2
+        if best_mode is not None:
+            accepted[nid] = best_mode
+
+    if not accepted:
+        _emit(
+            {
+                "candidates": len(plan.candidates),
+                "accepted": 0,
+                "skipped": "no-op (гейт отверг всех кандидатов)",
+            }
+        )
+        return base_result
+
+    final_res, final_rn2 = _trial(accepted)
+    if final_res is None or final_rn2 >= base_rn2 - gate:
+        _emit(
+            {
+                "candidates": len(plan.candidates),
+                "accepted": 0,
+                "skipped": "no-op (совместное применение не прошло гейт)",
+            }
+        )
+        return base_result
+    _emit(
+        {
+            "candidates": len(plan.candidates),
+            "accepted": len(accepted),
+            "edits": {int(k): v for k, v in accepted.items()},
+            "rn2_drop": float(base_rn2 - final_rn2),
+        }
+    )
+    return final_res
 
 
 def prepare_network(
