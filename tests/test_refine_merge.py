@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from gridstate.pipeline import (
-    PIPELINE_STEPS,
+    STEPS,
     PipelineConfig,
     _s_v_mirror,
     _s_v_mirror_chain,
@@ -18,7 +18,7 @@ def test_default_off():
 
 
 def test_merged_step_registered_before_anti_overshoot():
-    names = [s.name for s in PIPELINE_STEPS]
+    names = [s.name for s in STEPS]
     assert "refine_merged" in names
     assert names.index("refine_merged") == names.index("anti_overshoot") - 1
     assert names.index("refine_merged") > names.index("v_mirror_chain")
