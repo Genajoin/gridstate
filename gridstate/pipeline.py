@@ -70,7 +70,7 @@ from gridstate.topology import (
     refine_node_types_from_generators,
     refine_slack_to_one,
 )
-from gridstate.v_mirror import apply_v_mirror_plan, classify_v_mirror
+from gridstate.v_mirror import apply_v_mirror_plan, classify_chain_mirror, classify_v_mirror
 from gridstate.v_refine import apply_v_refine_plan, classify_v_refine
 from gridstate.working import Working
 
@@ -518,6 +518,44 @@ class PipelineConfig:
         "сохраняются. Default OFF: pu-инвариант через tap≈2 даёт 2-4% остаточную "
         "ошибку, Юг-регрессия не исключена. Включать после A/B 4 ОДУ.",
     )
+    v_mirror_chain: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="Chain-mirror pseudo-V глубоких цепочек (research)",
+        help="Двухпроходный: pseudo-V-плейсхолдеры (value=Vnom) узлов на глубине "
+        "d≥1 от ближайшей живой real-V-меры (multi-source BFS по активным ветвям "
+        "того же класса; + через АТ ≥110 кВ при v_mirror_cross_at) переставить в "
+        "(1+(pu_src−1)·decay^(d−1))·Vnom + warm re-solve. Дополняет v_mirror: тот "
+        "покрывает лишь полностью слепые кластеры, а узлы, наблюдаемые только "
+        "перетоками, проседают к номиналу (Восток 36%/Юг 48% узлов на d≥2). "
+        "Гейты v_mirror (max_pu_dev, min_lift) сохраняются. Default OFF.",
+    )
+    v_mirror_chain_decay: float = _param(
+        0.85,
+        group=_G_POST,
+        label="Затухание pu к номиналу за шаг",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"v_mirror_chain": True},
+        help="pu_target = 1 + (pu_src−1)·decay^(d−1): d=1 — полный pu источника "
+        "(как граница v_mirror), глубже — затухание к Vnom. 0.85 — оптимум A/B "
+        "4 ОДУ 2026-07-06 (универсально ненегативен); 1.0 (без затухания) — "
+        "перелёт: глубокие узлы, которые эталонная OC сама держит у номинала, "
+        "задираются на +3…7 кВ (СЗ p95 +2.2%). Затухание ≈ физическое падение "
+        "V вдоль неизмеренных цепочек — НЕ экстраполяция.",
+    )
+    v_mirror_chain_max_depth: int = _param(
+        12,
+        group=_G_POST,
+        label="Максимальная глубина BFS",
+        control="number",
+        min=1,
+        max=30,
+        depends={"v_mirror_chain": True},
+        help="Дальше фронт не распространяем: при decay=0.85 вклад на d=12 уже "
+        "~17% лифта; цепочки Юга доходят до d18, но там честнее номинал.",
+    )
     shunt_sanity: bool = _toggle(
         False,
         group=_G_POST,
@@ -911,6 +949,35 @@ def _s_v_mirror(ctx: _Ctx) -> dict:
     )
 
 
+def _s_v_mirror_chain(ctx: _Ctx) -> dict:
+    cfg = ctx.cfg
+
+    def _apply(c: _Ctx, plan: Any) -> dict:
+        stats = apply_v_mirror_plan(c.model, plan)
+        # у chain-плана поле n_clusters несёт максимальную глубину фронта
+        return {"max_depth": stats.pop("clusters"), **stats}
+
+    return _refine_two_pass(
+        ctx,
+        classify=lambda c: classify_chain_mirror(
+            c.model.measurements.to_numpy(),
+            c.model.branches.to_numpy(),
+            c.model.nodes.to_numpy(),
+            max_pu_dev=cfg.v_mirror_max_pu_dev,
+            min_lift=cfg.v_mirror_min_lift,
+            decay=cfg.v_mirror_chain_decay,
+            max_depth=cfg.v_mirror_chain_max_depth,
+            cross_at=cfg.v_mirror_cross_at,
+        ),
+        apply=_apply,
+        empty_stats=lambda _plan: {
+            "nodes": 0,
+            "skipped": "no-op (нет провисших флэт-плейсхолдеров в глубине)",
+        },
+        unusable_reason="решение непригодно — нет надёжного уровня источников",
+    )
+
+
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
     assert ctx.result is not None  # шаг идёт после estimate → результат уже есть
     cfg = ctx.cfg
@@ -1184,6 +1251,15 @@ STEPS: list[Step] = [
         "classify_v_mirror: pseudo-V слепых кластеров → median pu границы × Vnom + warm re-solve.",
         _s_v_mirror,
         toggle="v_mirror",
+    ),
+    Step(
+        "v_mirror_chain",
+        "Chain-mirror pseudo-V глубоких цепочек (Линия C)",
+        _G_POST,
+        "classify_chain_mirror: pseudo-V флэт-плейсхолдеров на d≥1 от real-V → "
+        "pu источника с затуханием decay^(d−1) + warm re-solve.",
+        _s_v_mirror_chain,
+        toggle="v_mirror_chain",
     ),
     Step(
         "anti_overshoot",
