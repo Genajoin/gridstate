@@ -219,6 +219,135 @@ def classify_v_mirror(
     return VMirrorPlan(tuple(new_values), n_clusters)
 
 
+def classify_chain_mirror(
+    measurements: np.ndarray,
+    branches: np.ndarray,
+    nodes: np.ndarray,
+    *,
+    max_pu_dev: float,
+    min_lift: float,
+    decay: float,
+    max_depth: int,
+    cross_at: bool = False,
+) -> VMirrorPlan:
+    """Chain-mirror: pseudo-V флэт-плейсхолдеров в ГЛУБИНЕ сети от real-V.
+
+    :func:`classify_v_mirror` покрывает только полностью слепые кластеры (без
+    единой real-TM). Узлы, «наблюдаемые» лишь перетоками, в кластер не попадают,
+    но их уровень V не заякорен ничем, кроме флэт-приора ``value = Vnom`` —
+    глубокие цепочки (d≥2 от ближайшей живой real-V-меры) проседают к номиналу.
+
+    Механизм: multi-source BFS от узлов с живой real node-V-мерой по активным
+    ветвям ТОГО ЖЕ класса напряжения (гейт 1 v_mirror; при ``cross_at`` — плюс
+    активные трансформаторы с ``tap>0`` при обоих концах ≥110 кВ, pu-инвариант).
+    Узел на глубине ``d`` наследует median pu источников, достигших его первым
+    фронтом, с затуханием к номиналу::
+
+        pu_target = 1 + (pu_src − 1) · decay^(d−1)
+
+    (d=1 — полный pu, как граница v_mirror; глубже — консервативное затухание,
+    НЕ экстраполяция). Остальные гейты v_mirror сохраняются: только
+    флэт-плейсхолдеры, ``|pu_src − 1| ≤ max_pu_dev`` (мусорный источник),
+    lift-гейт ``pu_target − pu_узла > min_lift`` (двигаем лишь систематически
+    провисшие узлы). σ приоров не трогается.
+    """
+    vn_map = {int(i): float(v) for i, v in zip(nodes["id"], nodes["voltage_nominal"], strict=True)}
+    vse_map = {
+        int(i): float(v) for i, v in zip(nodes["id"], nodes["voltage_magnitude"], strict=True)
+    }
+    active = {int(i) for i, st in zip(nodes["id"], nodes["status"], strict=True) if st}
+
+    # рёбра распространения pu: тот же класс всегда; через активный АТ ≥110 кВ
+    # обеих сторон — только при cross_at (pu-инвариант к идеальному tap)
+    adj: dict[int, set[int]] = defaultdict(set)
+    for f, t, st, bt, tap in zip(
+        branches["from_node"],
+        branches["to_node"],
+        branches["status"],
+        branches["branch_type"],
+        branches["tap_ratio"],
+        strict=True,
+    ):
+        if not st:
+            continue
+        fi, ti = int(f), int(t)
+        if fi not in active or ti not in active:
+            continue
+        vf, vt = vn_map.get(fi, 0.0), vn_map.get(ti, 0.0)
+        same_class = vf > 0 and abs(vf - vt) < _FLAT_REL_TOL * vf
+        trafo_ok = (
+            cross_at
+            and int(bt) == BranchType.TRANSFORMER
+            and float(tap) > 0
+            and vf >= _CROSS_AT_MIN_VNOM
+            and vt >= _CROSS_AT_MIN_VNOM
+        )
+        if same_class or trafo_ok:
+            adj[fi].add(ti)
+            adj[ti].add(fi)
+
+    # источники: живые real node-V-меры с правдоподобным решённым pu
+    sel_src = (
+        measurements["status"].astype(bool)
+        & ~measurements["is_pseudo"].astype(bool)
+        & (measurements["measurement_type"] == KIND_VOLTAGE)
+        & (measurements["object_type"] == OBJ_NODE)
+    )
+    level: dict[int, float] = {}
+    for j in np.where(sel_src)[0]:
+        nid = int(measurements["object_id"][j])
+        vn = vn_map.get(nid, 0.0)
+        vse = vse_map.get(nid, 0.0)
+        if nid not in active or vn <= 0 or vse <= 0:
+            continue
+        pu = vse / vn
+        if abs(pu - 1.0) <= max_pu_dev:
+            level[nid] = pu
+
+    # флэт-плейсхолдеры pseudo-V (кандидаты в цели)
+    psv_flat: set[int] = set()
+    sel_ps = (
+        measurements["status"].astype(bool)
+        & measurements["is_pseudo"].astype(bool)
+        & (measurements["measurement_type"] == KIND_VOLTAGE)
+        & (measurements["object_type"] == OBJ_NODE)
+    )
+    for j in np.where(sel_ps)[0]:
+        nid = int(measurements["object_id"][j])
+        vnom = vn_map.get(nid, 0.0)
+        if vnom > 0 and abs(float(measurements["value"][j]) - vnom) < _FLAT_REL_TOL * vnom:
+            psv_flat.add(nid)
+
+    # level-synchronous multi-source BFS: узел получает median pu первого фронта
+    dist: dict[int, int] = dict.fromkeys(level, 0)
+    new_values: list[tuple[int, float]] = []
+    max_d = 0
+    for d in range(1, max_depth + 1):
+        contrib: dict[int, list[float]] = defaultdict(list)
+        for u, pu in level.items():
+            for w in adj[u]:
+                if w not in dist:
+                    contrib[w].append(pu)
+        if not contrib:
+            break
+        level = {}
+        for w, pus in contrib.items():
+            dist[w] = d
+            raw_pu = float(np.median(pus))
+            level[w] = raw_pu  # дальше передаём НЕзатухший уровень источника
+            if w not in psv_flat or abs(raw_pu - 1.0) > max_pu_dev:
+                continue
+            vn = vn_map[w]
+            pu_target = 1.0 + (raw_pu - 1.0) * decay ** (d - 1)
+            pu_node = vse_map.get(w, 0.0) / vn
+            if pu_target - pu_node <= min_lift:
+                continue
+            new_values.append((w, pu_target * vn))
+            max_d = d
+
+    return VMirrorPlan(tuple(new_values), n_clusters=max_d)
+
+
 def apply_v_mirror_plan(model: Working, plan: VMirrorPlan) -> dict:
     """Переставить значения pseudo-V мер на узлах плана."""
     if not plan.new_values:
