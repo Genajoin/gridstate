@@ -518,6 +518,50 @@ class PipelineConfig:
         "сохраняются. Default OFF: pu-инвариант через tap≈2 даёт 2-4% остаточную "
         "ошибку, Юг-регрессия не исключена. Включать после A/B 4 ОДУ.",
     )
+    shunt_sanity: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="Shunt-sanity try-off/flip (research)",
+        help="Оркестрируется НА УРОВНЕ contract.run (не шаг пайплайна): после "
+        "базового прогона у активных шунтов на узлах с V-невязкой "
+        "|z−h| > v_frac·Vnom пробуются off/flip ПОЛНЫМ re-run пайплайна на "
+        "копии входа; вариант принимается ТОЛЬКО при падении Σrn² > gate_drop. "
+        "Ловит поведенчески-дефектные записи реакторов (статически неотличимы "
+        "от честных). Дорого: (1+2·кандидаты) полных прогонов. ⚠️ Research: "
+        "редактирует сеть по статистике мер — на живой ТМ может мерцать между "
+        "слайсами; для прод-фикса предпочтителен offline-аудит данных. "
+        "Валидация 4 ОДУ 2026-07-06: Юг dVmax −40.7%, остальные бит-в-бит.",
+    )
+    shunt_sanity_v_frac: float = _param(
+        0.012,
+        group=_G_POST,
+        label="Порог V-невязки кандидата (доля Vnom)",
+        control="number",
+        min=0.001,
+        max=0.2,
+        depends={"shunt_sanity": True},
+        help="Кандидат — шунт-узел с node-V-мерой |z−h| > v_frac·Vnom.",
+    )
+    shunt_sanity_gate_drop: float = _param(
+        5.0,
+        group=_G_POST,
+        label="Гейт принятия ΔΣrn²",
+        control="number",
+        min=0.0,
+        max=1e6,
+        depends={"shunt_sanity": True},
+        help="Правка принимается, только если Σrn² падает больше чем на gate_drop.",
+    )
+    shunt_sanity_max_candidates: int = _param(
+        6,
+        group=_G_POST,
+        label="Максимум кандидатов",
+        control="number",
+        min=1,
+        max=64,
+        depends={"shunt_sanity": True},
+        help="Кап числа кандидатов (каждый стоит до двух warm re-solve).",
+    )
     anti_overshoot: bool = _toggle(
         True,
         group=_G_POST,
