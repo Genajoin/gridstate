@@ -44,7 +44,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _normalized_residuals(r: np.ndarray, H: csr_matrix, sigma2: np.ndarray) -> np.ndarray:
+def _normalized_residuals(
+    r: np.ndarray,
+    H: csr_matrix,
+    sigma2: np.ndarray,
+    rows_mask: np.ndarray | None = None,
+) -> np.ndarray:
     """``r_N = |r| / √diag(Ω)``, где ``Ω = R − H G⁻¹ Hᵀ``.
 
     Если ``Ω_ii`` численно ≤ 0 — non-redundant измерение, возвращаем ``inf``.
@@ -52,6 +57,12 @@ def _normalized_residuals(r: np.ndarray, H: csr_matrix, sigma2: np.ndarray) -> n
     подстановку по строкам ``H`` — без материализации плотной ``H`` (m×n)
     и без полного ``solve(G, Hᵀ)``, которые на крупных моделях доминировали
     во времени всего SE.
+
+    Args:
+        rows_mask: (m,) bool — считать ``r_N`` только для этих строк
+            (остальные получают ``nan``). ``G`` всегда собирается по ВСЕМ
+            строкам ``H`` (веса всех измерений участвуют в оценке) —
+            маскируется только дорогая блочная подстановка. ``None`` — все.
     """
     if r.size == 0:
         return np.array([], dtype=np.float64)
@@ -65,7 +76,9 @@ def _normalized_residuals(r: np.ndarray, H: csr_matrix, sigma2: np.ndarray) -> n
     # Cholesky: G SPD, и diag(H G⁻¹ Hᵀ) = ‖L⁻¹·hᵢ‖² требует лишь ОДНОЙ
     # треугольной подстановки (BLAS trsm, многопоточно) вместо полного
     # solve. Sparse-альтернатива (splu + блочный solve) здесь медленнее:
-    # SuperLU слабо векторизован по множественным правым частям.
+    # SuperLU слабо векторизован по множественным правым частям; cvxopt-CHOLMOD
+    # (полный и половинный sys=L solve) — однопоточный, проигрывает BLAS-trsm
+    # (замер 2026-07-07: 3.6-6.1с против 2.5с на Юге).
     G = np.asarray((H_csr.T @ diags(R_inv_diag) @ H_csr).todense())
     try:
         L, lower = cho_factor(G, lower=True, overwrite_a=True, check_finite=False)
@@ -74,19 +87,26 @@ def _normalized_residuals(r: np.ndarray, H: csr_matrix, sigma2: np.ndarray) -> n
         return np.full_like(r, np.inf, dtype=np.float64)
 
     m = H_csr.shape[0]
-    HGH_diag = np.empty(m, dtype=np.float64)
+    row_idx = np.arange(m) if rows_mask is None else np.where(rows_mask)[0]
+    HGH_diag = np.full(m, np.nan, dtype=np.float64)
     # Блоками по строкам H — ограничивает память под dense RHS (n_state × block).
     block = 4096
-    for s in range(0, m, block):
-        e = min(s + block, m)
+    for s in range(0, row_idx.size, block):
+        sel = row_idx[s : s + block]
         Y = solve_triangular(
-            L, H_csr[s:e, :].toarray().T, lower=lower, check_finite=False
+            L, H_csr[sel, :].toarray().T, lower=lower, check_finite=False
         )  # (n_state × b) = L⁻¹ · Hbᵀ
-        HGH_diag[s:e] = np.einsum("ij,ij->j", Y, Y)
+        HGH_diag[sel] = np.einsum("ij,ij->j", Y, Y)
 
     omega_diag = sigma2 - HGH_diag
     omega_diag = np.where(omega_diag > 1e-12, omega_diag, np.nan)
     rn = np.abs(r) / np.sqrt(omega_diag)
+    if rows_mask is not None:
+        # немаскированные строки — nan (не участвуют в топе), маскированные
+        # с Ω≤0 — inf (non-redundant, прежняя семантика).
+        bad = np.isnan(rn) & (np.asarray(rows_mask, dtype=bool))
+        rn = np.where(bad, np.inf, rn)
+        return rn
     return np.where(np.isnan(rn), np.inf, rn)
 
 
@@ -124,6 +144,7 @@ def top_worst_residuals(
     n: int = 10,
     network_pu: NetworkPU | None = None,
     is_pseudo: np.ndarray | None = None,
+    scope: str = "real",
 ) -> list[ResidualRow]:
     """Топ-``n`` измерений по ``|r_N|`` (десятками; default 10).
 
@@ -138,10 +159,22 @@ def top_worst_residuals(
             разрешается в ``id`` объекта (``bus_ids``/``branch_ids``) для
             ``ResidualRow.object_id``.
         is_pseudo: (m,) bool в z-порядке — пометка псевдо-приоров.
+        scope: ``"real"`` (default) — в топ идут только реальные измерения
+            (телеметрия); псевдо-приоры (инжекц-prior, pseudo-V) исключены —
+            иначе они вытесняют телеметрию (на крупных моделях 8/10 топа —
+            наши же приоры с r_N до сотен). Заодно дешевле: блочная
+            подстановка идёт только по real-строкам (m падает в ~2.5×).
+            ``"all"`` — прежняя семантика (все строки z-вектора).
+            Без ``is_pseudo`` scope="real" эквивалентен "all".
     """
     if r.size == 0:
         return []
-    rn = _normalized_residuals(r, H, sigma2)
+    rows_mask = None
+    if scope == "real" and is_pseudo is not None:
+        rows_mask = ~np.asarray(is_pseudo, dtype=bool)
+        if not rows_mask.any():
+            return []
+    rn = _normalized_residuals(r, H, sigma2, rows_mask=rows_mask)
     finite_mask = np.isfinite(rn)
     if not finite_mask.any():
         return []
