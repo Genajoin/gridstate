@@ -136,3 +136,30 @@ def test_deactivate_action() -> None:
     apply_voltage_range_filter(m, action="deactivate")
     me = m.measurements.to_numpy()
     assert bool(me[0]["status"]) is False
+
+
+def test_min_voltage_nominal_kv_default_skips_lv() -> None:
+    """Дефолт min_voltage_nominal_kv=110: LV-узел (11 кВ) не проверяется вовсе."""
+    m = _build({"voltage_nominal": 11.0, "voltage_critical": 0.0}, v_meas=21.2)
+    stats = apply_voltage_range_filter(m)
+    me = m.measurements.to_numpy()
+    # 21.2 кВ на 11 кВ шине (1.93 pu) — мусор, но класс < 110 кВ пропущен
+    assert bool(me[0]["status"]) is True
+    assert me[0]["variance"] == pytest.approx(100.0)
+    assert stats["checked"] == 0
+
+
+def test_min_voltage_nominal_kv_zero_checks_lv() -> None:
+    """min_voltage_nominal_kv=0: LV-класс проверяется — датчик чужого класса ×~2
+    (реальный кейс СК-2: 21.2 кВ на 11 кВ шине) downweight'ится."""
+    m = _build({"voltage_nominal": 11.0, "voltage_critical": 0.0}, v_meas=21.2)
+    stats = apply_voltage_range_filter(m, min_voltage_nominal_kv=0.0)
+    me = m.measurements.to_numpy()
+    # hi = 11·1.4 = 15.4 < 21.2 → out_of_range → downweight σ²×100
+    assert stats["out_of_range"] == 1
+    assert me[0]["variance"] == pytest.approx(100.0 * 100.0)
+    # валидная LV-мера при этом проходит
+    m2 = _build({"voltage_nominal": 11.0, "voltage_critical": 0.0}, v_meas=10.8)
+    stats2 = apply_voltage_range_filter(m2, min_voltage_nominal_kv=0.0)
+    assert stats2["out_of_range"] == 0
+    assert bool(m2.measurements.to_numpy()[0]["status"]) is True
