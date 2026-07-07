@@ -184,6 +184,18 @@ class PipelineConfig:
         label="Фильтр V вне диапазона",
         help="downweight V вне voltage_critical/max+10%.",
     )
+    voltage_filter_min_nominal_kv: float = _param(
+        110.0,
+        group=_G_XML,
+        label="Мин. класс V-фильтра, кВ",
+        control="number",
+        min=0.0,
+        max=1200.0,
+        help="apply_voltage_range_filter: узлы с Vnom ниже порога не проверяются. "
+        "0 = проверять все классы; ловит битые LV U-меры (датчик чужого класса, "
+        "value ≫ Vnom), которые проходят нижний фильтр apply_telemetry.",
+        depends={"apply_voltage_range_filter": True},
+    )
     resolve_merged_conflicts: bool = _toggle(
         True,
         group=_G_XML,
@@ -806,7 +818,13 @@ def _s_telemetry(ctx: _Ctx) -> dict:
 
 
 def _s_voltage_range_filter(ctx: _Ctx) -> dict:
-    return dict(apply_voltage_range_filter(ctx.model) or {})
+    return dict(
+        apply_voltage_range_filter(
+            ctx.model,
+            min_voltage_nominal_kv=ctx.cfg.voltage_filter_min_nominal_kv,
+        )
+        or {}
+    )
 
 
 def _s_resolve_merged(ctx: _Ctx) -> dict:
