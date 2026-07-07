@@ -145,3 +145,44 @@ def test_seresult_worst_residuals_object_binding() -> None:
         assert np.isfinite(row.sigma) and row.sigma > 0
         # Синтетические измерения — не псевдо.
         assert row.is_pseudo is False
+
+
+def _with_pseudo_outlier():
+    """Clean 3-bus model plus one pseudo V-prior with a gross deviation."""
+    from gridstate.z_vector import KIND_VOLTAGE, OBJ_NODE
+
+    m, _, _ = _three_bus_with_clean_measurements()
+    m.measurements.add(
+        {
+            "id": 900,
+            "object_type": int(OBJ_NODE),
+            "object_id": 2,
+            "measurement_type": int(KIND_VOLTAGE),
+            "value": 90.0,  # ~18 kV off the true state — dominates any top
+            "variance": 0.01,
+            "status": True,
+            "quality": 0,
+            "branch_side": -1,
+            "is_pseudo": True,
+        }
+    )
+    return m
+
+
+def test_worst_residuals_scope_real_excludes_pseudo() -> None:
+    """Default scope="real": pseudo rows never enter worst_residuals."""
+    m = _with_pseudo_outlier()
+    res = estimate(m, tolerance=1e-10)
+    assert len(res.worst_residuals) > 0
+    assert all(row.is_pseudo is False for row in res.worst_residuals)
+    assert all(row.measurement_id != 900 for row in res.worst_residuals)
+
+
+def test_worst_residuals_scope_all_keeps_pseudo() -> None:
+    """scope="all" restores the legacy semantics: the gross pseudo tops the list."""
+    m = _with_pseudo_outlier()
+    res = estimate(m, tolerance=1e-10, quality_summary_scope="all")
+    assert len(res.worst_residuals) > 0
+    top = res.worst_residuals[0]
+    assert top.measurement_id == 900
+    assert top.is_pseudo is True

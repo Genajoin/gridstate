@@ -68,6 +68,7 @@ def estimate(
     kkt_solver: str = "auto",
     include_quality_summary: bool = True,
     quality_summary_top_n: int = 10,
+    quality_summary_scope: str = "real",
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Выполнить оценку состояния по модели и телеметрии.
@@ -108,6 +109,11 @@ def estimate(
             final solution. Disable in loops/tests where the summary is not
             needed — on large models it costs about as much as a solve.
         quality_summary_top_n: row count of worst_residuals/worst_imbalance.
+        quality_summary_scope: ``"real"`` (default) — worst_residuals ranks
+            only real (telemetry) measurements; pseudo-priors otherwise crowd
+            out telemetry (large models: 8/10 of the top are our own priors
+            with r_N in the hundreds) and the masked block-solve is ~2.5×
+            cheaper. ``"all"`` — legacy semantics (every z-vector row).
         **ipm_kwargs: forwarded to ``build_ipm_setup`` in IPM mode
             (``balance_weight_factor``, ``bound_relax``, prior sigmas — the
             A/B-calibration knobs). Ignored for WLS.
@@ -273,6 +279,7 @@ def estimate(
             v_pu=v_pu,
             delta_rad=delta,
             top_n=quality_summary_top_n,
+            scope=quality_summary_scope,
         )
 
     return result
@@ -294,6 +301,7 @@ def _populate_quality_summary(
     v_pu: np.ndarray,
     delta_rad: np.ndarray,
     top_n: int,
+    scope: str = "real",
 ) -> None:
     """Заполнить ``result.chi2 / worst_residuals / worst_imbalance /
     observability_warnings`` после ``write_results_to_model``.
@@ -336,6 +344,7 @@ def _populate_quality_summary(
             n=top_n,
             network_pu=network_pu,
             is_pseudo=is_pseudo_z,
+            scope=scope,
         )
         result.worst_imbalance = top_worst_imbalance(model, n=top_n)
         result.observability_warnings = observability_warnings_from_H(
@@ -348,7 +357,7 @@ def _populate_quality_summary(
         logger.warning("quality_summary failed: %s", exc)
 
 
-def populate_quality_summary(result: SEResult, *, top_n: int = 10) -> None:
+def populate_quality_summary(result: SEResult, *, top_n: int = 10, scope: str = "real") -> None:
     """Посчитать quality summary post-hoc — от финального ``result.model``.
 
     Делает то же, что ``estimate(..., include_quality_summary=True)``, но на
@@ -381,6 +390,7 @@ def populate_quality_summary(result: SEResult, *, top_n: int = 10) -> None:
         v_pu=result.v_pu,
         delta_rad=result.delta_rad,
         top_n=top_n,
+        scope=scope,
     )
 
 
