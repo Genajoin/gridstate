@@ -196,6 +196,36 @@ class PipelineConfig:
         "value ≫ Vnom), которые проходят нижний фильтр apply_telemetry.",
         depends={"apply_voltage_range_filter": True},
     )
+    voltage_filter_deactivate_nonphysical: bool = _toggle(
+        False,
+        group=_G_XML,
+        label="Деактивировать нефизичные V",
+        help="apply_voltage_range_filter: V<=0, V<Vnom·lower и V>Vnom·upper (физически "
+        "невозможные как напряжение) деактивируются (status=False), а не downweight. "
+        "σ×10 не гасит pu=127 / отрицательные / коллапс — они рушат solve.",
+    )
+    voltage_filter_nonphysical_lower_factor: float = _param(
+        0.5,
+        group=_G_XML,
+        label="Нижний физ-предел V, ×Vnom",
+        control="number",
+        min=0.0,
+        max=0.9,
+        help="voltage_filter_deactivate_nonphysical: V<Vnom·factor деактивируется как "
+        "нефизичное (default 0.5 = 50 % Vnom, = soft-floor). V<=0 деактивируется всегда.",
+        depends={"voltage_filter_deactivate_nonphysical": True},
+    )
+    voltage_filter_nonphysical_upper_factor: float = _param(
+        1.5,
+        group=_G_XML,
+        label="Верхний физ-предел V, ×Vnom",
+        control="number",
+        min=1.1,
+        max=5.0,
+        help="voltage_filter_deactivate_nonphysical: V>Vnom·factor деактивируется как "
+        "нефизичное (default 1.5 = 150 % Vnom).",
+        depends={"voltage_filter_deactivate_nonphysical": True},
+    )
     resolve_merged_conflicts: bool = _toggle(
         True,
         group=_G_XML,
@@ -822,6 +852,9 @@ def _s_voltage_range_filter(ctx: _Ctx) -> dict:
         apply_voltage_range_filter(
             ctx.model,
             min_voltage_nominal_kv=ctx.cfg.voltage_filter_min_nominal_kv,
+            deactivate_nonphysical=ctx.cfg.voltage_filter_deactivate_nonphysical,
+            nonphysical_lower_factor=ctx.cfg.voltage_filter_nonphysical_lower_factor,
+            nonphysical_upper_factor=ctx.cfg.voltage_filter_nonphysical_upper_factor,
         )
         or {}
     )
