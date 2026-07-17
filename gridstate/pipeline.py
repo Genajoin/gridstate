@@ -271,7 +271,7 @@ class PipelineConfig:
         True,
         group=_G_CASCADE,
         label="Выбор slack (refine_slack_to_one)",
-        help="Родная семантика эталонной SE (НЕ KOCMOC-НБУ, тот deprecated).",
+        help="Родная семантика эталонных SE (не legacy-НБУ, тот deprecated).",
     )
     refine_node_types: bool = _toggle(True, group=_G_CASCADE, label="Типы узлов из генераторов")
     disable_orphan_branches: bool = _toggle(

@@ -7,7 +7,7 @@
 Используется ``add_pseudo_measurements`` для:
 
 * классификации узла как **transit** vs **load/gen** (порог жёсткости ZIB);
-* привязки V-прайора PV-узла к ``vzd`` (астровская семантика).
+* привязки V-прайора PV-узла к ``vzd`` (семантика эталонных SE).
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def extract_node_load_props_from_model(model: Working) -> dict[int, dict]:
     ``voltage_setpoint``, ``voltage_min/max``, ``area_id``, ``node_type``.
 
     Имена ключей в возврате (``pn_min``, ``vzd``, ``na`` и т.п.) сохранены
-    из астровской терминологии для ``add_pseudo_measurements``.
+    из терминологии исходных экспортов для ``add_pseudo_measurements``.
     """
     arr = model.nodes.to_numpy()
     # Extract each column once (vectorized) instead of per-row structured-scalar
