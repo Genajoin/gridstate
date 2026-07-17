@@ -852,6 +852,8 @@ def _s_telemetry(ctx: _Ctx) -> dict:
             ctx.derived.telemetry_resolved,
             ctx.derived.telemetry_arg_keys,
             total_args=ctx.derived.telemetry_total_args,
+            v_sigma2_scale_by_node=ctx.derived.v_sigma2_scale,
+            flow_sigma2_scale_by_branch=ctx.derived.flow_sigma2_scale,
         )
         or {}
     )

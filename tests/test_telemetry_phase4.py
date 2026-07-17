@@ -418,6 +418,84 @@ def test_questionable_variance_multiplier():
     assert int(meas[0]["quality"]) == QUALITY_QUESTIONABLE
 
 
+# ---------------------------------------------------------------- v_sigma2_scale_by_node
+
+
+def test_v_sigma2_scale_by_node_applied():
+    # Узел из плана: variance V-меры ×factor (0.1 = усиление доверия ×10).
+    nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
+    branches = _branches([])
+    meas = _meas([{"id": 10, "object_type": OT_NODE, "object_id": 1, "measurement_type": MT_V}])
+    resolved = {(1, "U"): (225.0, 1, "g-v", QUALITY_GOOD)}
+    stats, _ = _run(meas, nodes, branches, resolved, v_sigma2_scale_by_node={1: 0.1})
+    assert stats["applied"] == 1 and stats["v_sigma2_scaled"] == 1
+    exp_var = variance_voltage(225.0, 220.0) * 0.1
+    assert float(meas[0]["variance"]) == pytest.approx(exp_var)
+    assert float(meas[0]["weight"]) == pytest.approx(1.0 / exp_var)
+
+
+def test_flow_sigma2_scale_by_branch_applied():
+    # (branch_id, kind) из плана: variance потоковой меры ×factor (100 = ослабление);
+    # другой kind той же ветви не трогается.
+    nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
+    branches = _branches([{"id": 7, "from_node": 1, "status": True}])
+    meas = _meas(
+        [
+            {
+                "id": 10,
+                "object_type": OT_BRANCH,
+                "object_id": 7,
+                "measurement_type": MT_Q,
+                "branch_side": 0,
+            },
+            {
+                "id": 11,
+                "object_type": OT_BRANCH,
+                "object_id": 7,
+                "measurement_type": MT_P,
+                "branch_side": 0,
+            },
+        ]
+    )
+    resolved = {
+        (7, "QBEG"): (30.0, 1, "g-q", QUALITY_GOOD),
+        (7, "PBEG"): (150.0, 1, "g-p", QUALITY_GOOD),
+    }
+    stats, _ = _run(
+        meas, nodes, branches, resolved, flow_sigma2_scale_by_branch={(7, "QBEG"): 100.0}
+    )
+    assert stats["applied"] == 2 and stats["flow_sigma2_scaled"] == 1
+    exp_q = variance_branch_q(30.0, charging_mvar=0.0, charging_alpha=0.10, sigma_frac=0.07) * 100.0
+    assert float(meas[0]["variance"]) == pytest.approx(exp_q)
+    assert float(meas[1]["variance"]) == pytest.approx(variance_power(150.0, sigma_frac=0.02))
+
+
+def test_v_sigma2_scale_by_node_ignores_other_nodes_and_kinds():
+    # Узел вне плана и не-V меры не масштабируются.
+    nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}, {"id": 2, "voltage_nominal": 220.0}])
+    branches = _branches([{"id": 7, "from_node": 1, "status": True}])
+    meas = _meas(
+        [
+            {"id": 10, "object_type": OT_NODE, "object_id": 2, "measurement_type": MT_V},
+            {
+                "id": 11,
+                "object_type": OT_BRANCH,
+                "object_id": 7,
+                "measurement_type": MT_P,
+                "branch_side": 0,
+            },
+        ]
+    )
+    resolved = {
+        (2, "U"): (225.0, 1, "g-v", QUALITY_GOOD),
+        (7, "PBEG"): (150.0, 1, "g-p", QUALITY_GOOD),
+    }
+    stats, _ = _run(meas, nodes, branches, resolved, v_sigma2_scale_by_node={1: 0.1})
+    assert stats["applied"] == 2 and "v_sigma2_scaled" not in stats
+    assert float(meas[0]["variance"]) == pytest.approx(variance_voltage(225.0, 220.0))
+    assert float(meas[1]["variance"]) == pytest.approx(variance_power(150.0, sigma_frac=0.02))
+
+
 def test_questionable_node_inj_multiplier():
     nodes = _nodes([{"id": 5, "voltage_nominal": 220.0}])
     branches = _branches([])

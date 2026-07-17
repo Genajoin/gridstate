@@ -69,6 +69,8 @@ def _derived_to_blob(derived: Any) -> dict | None:
         "telemetry_total_args": derived.telemetry_total_args,
         "materialize_obs": derived.materialize_obs,
         "voltage_nominal": derived.voltage_nominal,
+        "v_sigma2_scale": derived.v_sigma2_scale,
+        "flow_sigma2_scale": derived.flow_sigma2_scale,
     }
 
 
@@ -84,7 +86,10 @@ def _blob_to_derived(blob: dict | None) -> Any:
         telemetry_arg_keys=blob["telemetry_arg_keys"],
         telemetry_total_args=blob["telemetry_total_args"],
         materialize_obs=blob["materialize_obs"],
+        # .get(): старые .npz этого плана не несут (обратная совместимость).
         voltage_nominal=blob["voltage_nominal"],
+        v_sigma2_scale=blob.get("v_sigma2_scale"),
+        flow_sigma2_scale=blob.get("flow_sigma2_scale"),
     )
 
 
