@@ -427,6 +427,19 @@ class PipelineConfig:
         depends={"algorithm": "ipm"},
         help="default 0.01 p.u.².",
     )
+    ipm_transit_balance_sigma2_pu: float = _param(
+        0.0,
+        group=_G_IPM,
+        label="σ² баланса транзита",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"algorithm": "ipm"},
+        help="σ² (p.u.²) balance-строк транзитных узлов (exist_load=0 и exist_gen=0). "
+        "0 = OFF (мягкий баланс как у всех узлов; остаточная инжекция транзита "
+        "материализуется reconcile-пассом в псевдонагрузку). >0 — жёсткий "
+        "zero-injection virtual-measurement, напр. 1e-8 (σ≈0.01 МВт).",
+    )
 
     # --- Пост-обработка (Линия C) ---
     bad_data: bool = _toggle(
@@ -738,6 +751,7 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
         "balance_weight_factor": cfg.ipm_balance_weight_factor,
         "bound_relax": cfg.ipm_bound_relax,
         "prior_sigma2_bus_equiv_pu": cfg.ipm_prior_sigma2_bus_equiv_pu,
+        "transit_balance_sigma2_pu": cfg.ipm_transit_balance_sigma2_pu,
     }
 
 
