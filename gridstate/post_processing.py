@@ -438,7 +438,9 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
     }
 
 
-def reconcile_node_balance(model: Working) -> dict[str, float | int]:
+def reconcile_node_balance(
+    model: Working, *, respect_bounds: bool = False
+) -> dict[str, float | int]:
     """Закрыть узловой небаланс оценок: ``gen_est − load_est ≡ *_inj_calc``.
 
     Мягкий IPM (и WLS-разнос с клипами/СХН-перекрытием) оставляет в узлах
@@ -454,9 +456,20 @@ def reconcile_node_balance(model: Working) -> dict[str, float | int]:
       (``load −= r``; на транзите появляется псевдонагрузка ``−inj`` —
       аналог материализации нагрузок по районам в эталонной SE).
 
-    Без клипов к границам — точность согласования важнее: после пасса
-    ``gen_est − load_est == inj_calc`` поэлементно, и standalone PF от
-    промоутнутых оценок воспроизводит режим SE.
+    По умолчанию (``respect_bounds=False``) — без клипов к границам:
+    точность согласования важнее, после пасса ``gen_est − load_est ==
+    inj_calc`` поэлементно, и standalone PF от промоутнутых оценок
+    воспроизводит режим SE.
+
+    ``respect_bounds=True`` — целевое значение клипуется к физическим
+    границам узла (``load_*_min/max`` через :func:`resolve_bounds`;
+    незаданные пары не клипуются). Мотив — паритет с эталонными SE:
+    их выходные режимы не нарушают ``pn_min`` (отрицательные нагрузки
+    легальны по границам), тогда как безусловный слив остатка r
+    мягкого баланса фабрикует нефизичные отрицательные нагрузки на узлах
+    с ``lo=0`` (box-var IPM в минус уйти не может — минус создаёт именно
+    reconcile). Цена: на клипнутых узлах ``gen−load ≠ inj_calc`` —
+    незакрытый остаток копится в ``sum_unclosed_p_mw`` (диагностика).
 
     Обрабатываются только решённые узлы (``solved=1`` — получили
     ``*_inj_calc`` в ``write_results_to_model``). Колонки
@@ -465,7 +478,9 @@ def reconcile_node_balance(model: Working) -> dict[str, float | int]:
     Returns:
         Счётчики: ``updated``, ``to_gen``/``to_load`` (узлов по ветке
         правила), ``sum_abs_p_mw``/``max_abs_p_mw`` — масштаб закрытого
-        P-небаланса (диагностика «насколько мягким» был IPM).
+        P-небаланса (диагностика «насколько мягким» был IPM); при
+        ``respect_bounds`` дополнительно ``clipped`` и
+        ``sum_unclosed_p_mw``.
     """
     nodes_arr = model.nodes.to_numpy()
     out: dict[str, float | int] = {
@@ -474,6 +489,8 @@ def reconcile_node_balance(model: Working) -> dict[str, float | int]:
         "to_load": 0,
         "sum_abs_p_mw": 0.0,
         "max_abs_p_mw": 0.0,
+        "clipped": 0,
+        "sum_unclosed_p_mw": 0.0,
     }
     if len(nodes_arr) == 0:
         return out
@@ -497,12 +514,41 @@ def reconcile_node_balance(model: Working) -> dict[str, float | int]:
                 "generation_p_estimated": float(row["generation_p_estimated"]) + r_p,
                 "generation_q_estimated": float(row["generation_q_estimated"]) + r_q,
             }
+            if respect_bounds:
+                gp_lo, gp_hi = resolve_bounds(row["generation_p_min"], row["generation_p_max"])
+                gq_lo, gq_hi = resolve_bounds(row["generation_q_min"], row["generation_q_max"])
+                gp = _clip(update["generation_p_estimated"], gp_lo, gp_hi)
+                gq = _clip(update["generation_q_estimated"], gq_lo, gq_hi)
+                if gp != update["generation_p_estimated"] or gq != update["generation_q_estimated"]:
+                    out["clipped"] = int(out["clipped"]) + 1
+                    out["sum_unclosed_p_mw"] = float(out["sum_unclosed_p_mw"]) + abs(
+                        update["generation_p_estimated"] - gp
+                    )
+                    update["generation_p_estimated"] = gp
+                    update["generation_q_estimated"] = gq
         else:
             out["to_load"] = int(out["to_load"]) + 1
             update = {
                 "load_p_estimated": float(row["load_p_estimated"]) - r_p,
                 "load_q_estimated": float(row["load_q_estimated"]) - r_q,
             }
+            if respect_bounds:
+                if not bool(row["exist_load"]):
+                    # Транзит (exist_load=0 в else-ветке): нагрузки на узле нет —
+                    # слив остатка сюда и есть фабрикация псевдонагрузки.
+                    lp, lq = 0.0, 0.0
+                else:
+                    lp_lo, lp_hi = resolve_bounds(row["load_p_min"], row["load_p_max"])
+                    lq_lo, lq_hi = resolve_bounds(row["load_q_min"], row["load_q_max"])
+                    lp = _clip(update["load_p_estimated"], lp_lo, lp_hi)
+                    lq = _clip(update["load_q_estimated"], lq_lo, lq_hi)
+                if lp != update["load_p_estimated"] or lq != update["load_q_estimated"]:
+                    out["clipped"] = int(out["clipped"]) + 1
+                    out["sum_unclosed_p_mw"] = float(out["sum_unclosed_p_mw"]) + abs(
+                        update["load_p_estimated"] - lp
+                    )
+                    update["load_p_estimated"] = lp
+                    update["load_q_estimated"] = lq
         model.nodes.update(int(row["id"]), update)
         out["updated"] = int(out["updated"]) + 1
         out["sum_abs_p_mw"] = float(out["sum_abs_p_mw"]) + abs(r_p)

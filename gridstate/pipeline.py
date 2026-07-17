@@ -680,6 +680,15 @@ class PipelineConfig:
         "слить остаток inj_calc − (gen−load) по разметке узла. Выход SE "
         "становится согласованным режимом (вход PF, промоут). V/δ не задеты.",
     )
+    reconcile_respect_bounds: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="Reconcile уважает границы",
+        help="Слив остатка клипуется к load/gen_*_min/max (транзит → 0): "
+        "не фабриковать нефизичные отрицательные нагрузки из остатка мягкого "
+        "баланса (паритет с эталонными SE: их режимы не нарушают pn_min). "
+        "Незакрытая часть — в stats sum_unclosed_p_mw. Default OFF (прежнее поведение).",
+    )
 
 
 def default_config() -> PipelineConfig:
@@ -751,6 +760,7 @@ def _estimate_kwargs(cfg: PipelineConfig, *, init: str, **overrides: Any) -> dic
         # (see populate_quality_summary); intermediate solves skip it.
         "include_quality_summary": False,
         "reconcile_balance": cfg.reconcile_balance,
+        "reconcile_respect_bounds": cfg.reconcile_respect_bounds,
     }
     kw.update(overrides)
     if cfg.algorithm == "ipm":

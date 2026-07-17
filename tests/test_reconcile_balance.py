@@ -123,3 +123,44 @@ def test_unit_routing_rules() -> None:
     assert abs(n3.load_q_estimated - 0.7) < 1e-12
     n4 = m.nodes.get_by_id(4)
     assert n4.load_p_estimated == 5.0
+
+
+def test_respect_bounds_clips_load_and_transit() -> None:
+    """respect_bounds: load клипуется к [min,max], транзит не получает
+    псевдонагрузку, незакрытый остаток копится в sum_unclosed_p_mw."""
+    m = Working.empty()
+    # load-only с lo=0: слив дал бы load = 10 − 25 = −15 → клип к 0.
+    row = _node_row(2, exist_load=1, exist_gen=0, p_inj=25.0, q_inj=0.0, load_p=10.0)
+    row["load_p_min"] = 0.0
+    row["load_p_max"] = 100.0
+    m.nodes.add(row)
+    # транзит: остаток НЕ материализуется псевдонагрузкой.
+    m.nodes.add(_node_row(3, exist_load=0, exist_gen=0, p_inj=1.5, q_inj=-0.7))
+    # load-only в границах: клип не срабатывает, слив как раньше.
+    row = _node_row(5, exist_load=1, exist_gen=0, p_inj=-28.0, q_inj=-9.0, load_p=30.0)
+    row["load_p_min"] = 0.0
+    row["load_p_max"] = 100.0
+    m.nodes.add(row)
+
+    stats = reconcile_node_balance(m, respect_bounds=True)
+    n2 = m.nodes.get_by_id(2)
+    assert n2.load_p_estimated == 0.0  # не −15
+    n3 = m.nodes.get_by_id(3)
+    assert n3.load_p_estimated == 0.0  # не −1.5
+    assert n3.load_q_estimated == 0.0
+    n5 = m.nodes.get_by_id(5)
+    assert abs(n5.load_p_estimated - 28.0) < 1e-12  # в границах — как раньше
+    assert stats["clipped"] == 2
+    assert float(stats["sum_unclosed_p_mw"]) > 0.0
+
+
+def test_respect_bounds_default_off_is_legacy() -> None:
+    """Без respect_bounds поведение бит-в-бит прежнее (слив без клипа)."""
+    m = Working.empty()
+    row = _node_row(2, exist_load=1, exist_gen=0, p_inj=25.0, q_inj=0.0, load_p=10.0)
+    row["load_p_min"] = 0.0
+    row["load_p_max"] = 100.0
+    m.nodes.add(row)
+    reconcile_node_balance(m)
+    # r = 25 − (0 − 10) = 35; load = 10 − 35 = −25 (нарушает lo=0 — легаси).
+    assert abs(m.nodes.get_by_id(2).load_p_estimated - (-25.0)) < 1e-12
