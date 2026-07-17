@@ -23,7 +23,11 @@ class DerivedInputs:
     * ``telemetry_resolved`` / ``telemetry_arg_keys`` / ``telemetry_total_args`` —
       z-вектор измерений;
     * ``materialize_obs`` — наблюдаемый узловой режим;
-    * ``voltage_nominal`` — ``{node_id → vn}`` (off-by-default шаг).
+    * ``voltage_nominal`` — ``{node_id → vn}`` (off-by-default шаг);
+    * ``v_sigma2_scale`` — ``{node_id → factor}`` точечного масштаба σ² узловых
+      V-мер (factor<1 усиливает доверие к мере); ``None`` = без масштабирования;
+    * ``flow_sigma2_scale`` — ``{(branch_id, kind) → factor}`` того же масштаба
+      для потоковых мер ветвей (kind ∈ PBEG/PEND/QBEG/QEND).
 
     Применение РПН идёт через входную таблицу ``tap_steps`` (выбор отпайки сделал
     производитель данных), а не через поле этого контейнера.
@@ -35,3 +39,5 @@ class DerivedInputs:
     telemetry_total_args: int = 0
     materialize_obs: dict | None = None
     voltage_nominal: dict | None = None
+    v_sigma2_scale: dict | None = None
+    flow_sigma2_scale: dict | None = None

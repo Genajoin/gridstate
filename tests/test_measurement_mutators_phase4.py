@@ -126,6 +126,116 @@ def test_vrf_above_hi_downweighted():
     assert bool(meas[0]["status"]) is True  # downweight, не деактивация
 
 
+def test_vrf_nonphysical_over_deactivated():
+    """deactivate_nonphysical: V>Vnom·factor (нефизично) → status=False, не downweight."""
+    nodes = _nodes(
+        [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
+    )
+    meas = _meas(
+        [
+            {
+                "id": 10,
+                "object_type": OT_NODE,
+                "object_id": 1,
+                "measurement_type": MT_V,
+                "value": 200.0,
+                "variance": 1.0,
+            }
+        ]  # 200/110 = 1.82 pu > 1.5
+    )
+    stats = _voltage_range_filter_on_arrays(
+        meas, nodes, **VR_KW, deactivate_nonphysical=True, nonphysical_upper_factor=1.5
+    )
+    assert stats["out_of_range"] == 1 and stats["hard_deactivated"] == 1
+    assert bool(meas[0]["status"]) is False  # деактивирован, НЕ downweight
+    assert float(meas[0]["variance"]) == 1.0  # variance не трогали (status=False)
+
+
+def test_vrf_nonphysical_negative_deactivated():
+    """deactivate_nonphysical: V<=0 → status=False (отрицательное невозможно как напряжение)."""
+    nodes = _nodes(
+        [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
+    )
+    meas = _meas(
+        [
+            {
+                "id": 10,
+                "object_type": OT_NODE,
+                "object_id": 1,
+                "measurement_type": MT_V,
+                "value": -115.0,
+                "variance": 1.0,
+            }
+        ]
+    )
+    stats = _voltage_range_filter_on_arrays(
+        meas,
+        nodes,
+        **VR_KW,
+        deactivate_nonphysical=True,
+        nonphysical_lower_factor=0.5,
+        nonphysical_upper_factor=1.5,
+    )
+    assert stats["hard_deactivated"] == 1
+    assert bool(meas[0]["status"]) is False
+
+
+def test_vrf_nonphysical_deep_low_deactivated():
+    """deactivate_nonphysical: V<Vnom·lower_factor (pu=0.27) → status=False (симметрия снизу)."""
+    nodes = _nodes(
+        [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
+    )
+    meas = _meas(
+        [
+            {
+                "id": 10,
+                "object_type": OT_NODE,
+                "object_id": 1,
+                "measurement_type": MT_V,
+                "value": 30.0,
+                "variance": 1.0,
+            }
+        ]  # 30/110 = 0.27 pu < 0.5
+    )
+    stats = _voltage_range_filter_on_arrays(
+        meas,
+        nodes,
+        **VR_KW,
+        deactivate_nonphysical=True,
+        nonphysical_lower_factor=0.5,
+        nonphysical_upper_factor=1.5,
+    )
+    assert stats["hard_deactivated"] == 1
+    assert bool(meas[0]["status"]) is False
+    assert float(meas[0]["variance"]) == 1.0  # variance не трогали
+
+
+def test_vrf_mild_over_still_downweight_with_flag():
+    """deactivate_nonphysical=True: мягкое out-of-range (hi<V<Vnom·factor) → downweight, не kill."""
+    nodes = _nodes(
+        [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
+    )
+    # hi = 121·1.1 = 133.1; Vnom·1.5 = 165 → value=150 между ними: мягкий edge.
+    meas = _meas(
+        [
+            {
+                "id": 10,
+                "object_type": OT_NODE,
+                "object_id": 1,
+                "measurement_type": MT_V,
+                "value": 150.0,
+                "variance": 1.0,
+            }
+        ]
+    )
+    stats = _voltage_range_filter_on_arrays(
+        meas, nodes, **VR_KW, deactivate_nonphysical=True, nonphysical_upper_factor=1.5
+    )
+    assert stats["out_of_range"] == 1 and stats["hard_deactivated"] == 0
+    assert bool(meas[0]["status"]) is True  # downweight
+    assert float(meas[0]["variance"]) == 100.0
+
+
 def test_vrf_below_lo_downweighted():
     nodes = _nodes(
         [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]

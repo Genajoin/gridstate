@@ -196,6 +196,36 @@ class PipelineConfig:
         "value ≫ Vnom), которые проходят нижний фильтр apply_telemetry.",
         depends={"apply_voltage_range_filter": True},
     )
+    voltage_filter_deactivate_nonphysical: bool = _toggle(
+        False,
+        group=_G_XML,
+        label="Деактивировать нефизичные V",
+        help="apply_voltage_range_filter: V<=0, V<Vnom·lower и V>Vnom·upper (физически "
+        "невозможные как напряжение) деактивируются (status=False), а не downweight. "
+        "σ×10 не гасит pu=127 / отрицательные / коллапс — они рушат solve.",
+    )
+    voltage_filter_nonphysical_lower_factor: float = _param(
+        0.5,
+        group=_G_XML,
+        label="Нижний физ-предел V, ×Vnom",
+        control="number",
+        min=0.0,
+        max=0.9,
+        help="voltage_filter_deactivate_nonphysical: V<Vnom·factor деактивируется как "
+        "нефизичное (default 0.5 = 50 % Vnom, = soft-floor). V<=0 деактивируется всегда.",
+        depends={"voltage_filter_deactivate_nonphysical": True},
+    )
+    voltage_filter_nonphysical_upper_factor: float = _param(
+        1.5,
+        group=_G_XML,
+        label="Верхний физ-предел V, ×Vnom",
+        control="number",
+        min=1.1,
+        max=5.0,
+        help="voltage_filter_deactivate_nonphysical: V>Vnom·factor деактивируется как "
+        "нефизичное (default 1.5 = 150 % Vnom).",
+        depends={"voltage_filter_deactivate_nonphysical": True},
+    )
     resolve_merged_conflicts: bool = _toggle(
         True,
         group=_G_XML,
@@ -241,7 +271,7 @@ class PipelineConfig:
         True,
         group=_G_CASCADE,
         label="Выбор slack (refine_slack_to_one)",
-        help="Родная семантика эталонной SE (НЕ KOCMOC-НБУ, тот deprecated).",
+        help="Родная семантика эталонных SE (не legacy-НБУ, тот deprecated).",
     )
     refine_node_types: bool = _toggle(True, group=_G_CASCADE, label="Типы узлов из генераторов")
     disable_orphan_branches: bool = _toggle(
@@ -396,6 +426,19 @@ class PipelineConfig:
         max=10.0,
         depends={"algorithm": "ipm"},
         help="default 0.01 p.u.².",
+    )
+    ipm_transit_balance_sigma2_pu: float = _param(
+        0.0,
+        group=_G_IPM,
+        label="σ² баланса транзита",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"algorithm": "ipm"},
+        help="σ² (p.u.²) balance-строк транзитных узлов (exist_load=0 и exist_gen=0). "
+        "0 = OFF (мягкий баланс как у всех узлов; остаточная инжекция транзита "
+        "материализуется reconcile-пассом в псевдонагрузку). >0 — жёсткий "
+        "zero-injection virtual-measurement, напр. 1e-8 (σ≈0.01 МВт).",
     )
 
     # --- Пост-обработка (Линия C) ---
@@ -650,6 +693,15 @@ class PipelineConfig:
         "слить остаток inj_calc − (gen−load) по разметке узла. Выход SE "
         "становится согласованным режимом (вход PF, промоут). V/δ не задеты.",
     )
+    reconcile_respect_bounds: bool = _toggle(
+        False,
+        group=_G_POST,
+        label="Reconcile уважает границы",
+        help="Слив остатка клипуется к load/gen_*_min/max (транзит → 0): "
+        "не фабриковать нефизичные отрицательные нагрузки из остатка мягкого "
+        "баланса (паритет с эталонными SE: их режимы не нарушают pn_min). "
+        "Незакрытая часть — в stats sum_unclosed_p_mw. Default OFF (прежнее поведение).",
+    )
 
 
 def default_config() -> PipelineConfig:
@@ -699,6 +751,7 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
         "balance_weight_factor": cfg.ipm_balance_weight_factor,
         "bound_relax": cfg.ipm_bound_relax,
         "prior_sigma2_bus_equiv_pu": cfg.ipm_prior_sigma2_bus_equiv_pu,
+        "transit_balance_sigma2_pu": cfg.ipm_transit_balance_sigma2_pu,
     }
 
 
@@ -721,6 +774,7 @@ def _estimate_kwargs(cfg: PipelineConfig, *, init: str, **overrides: Any) -> dic
         # (see populate_quality_summary); intermediate solves skip it.
         "include_quality_summary": False,
         "reconcile_balance": cfg.reconcile_balance,
+        "reconcile_respect_bounds": cfg.reconcile_respect_bounds,
     }
     kw.update(overrides)
     if cfg.algorithm == "ipm":
@@ -812,6 +866,8 @@ def _s_telemetry(ctx: _Ctx) -> dict:
             ctx.derived.telemetry_resolved,
             ctx.derived.telemetry_arg_keys,
             total_args=ctx.derived.telemetry_total_args,
+            v_sigma2_scale_by_node=ctx.derived.v_sigma2_scale,
+            flow_sigma2_scale_by_branch=ctx.derived.flow_sigma2_scale,
         )
         or {}
     )
@@ -822,6 +878,9 @@ def _s_voltage_range_filter(ctx: _Ctx) -> dict:
         apply_voltage_range_filter(
             ctx.model,
             min_voltage_nominal_kv=ctx.cfg.voltage_filter_min_nominal_kv,
+            deactivate_nonphysical=ctx.cfg.voltage_filter_deactivate_nonphysical,
+            nonphysical_lower_factor=ctx.cfg.voltage_filter_nonphysical_lower_factor,
+            nonphysical_upper_factor=ctx.cfg.voltage_filter_nonphysical_upper_factor,
         )
         or {}
     )

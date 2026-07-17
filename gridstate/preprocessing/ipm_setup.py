@@ -284,6 +284,7 @@ def build_ipm_setup(
     layout_base: StateLayout,
     balance_sigma2: float | None = None,
     balance_weight_factor: float = 0.1,
+    transit_balance_sigma2_pu: float = 0.0,
     bound_relax: float = 0.0,
     default_box_halfwidth_pu: float = 50.0,
     prior_sigma2_normal_pu: float = 0.0,
@@ -311,6 +312,15 @@ def build_ipm_setup(
             калибровка в пользу data-fit; узловой баланс достигается
             солвером как стационарная точка, а не вбивается весом.
             Значения >1 делают баланс жёстче медианной меры.
+        transit_balance_sigma2_pu: σ² (p.u.²) balance-строк ТРАНЗИТНЫХ
+            узлов (``exist_load=0`` и ``exist_gen=0``). Default ``0`` —
+            выключено: транзит получает ту же мягкую σ², что и все
+            balance-строки, солвер оставляет на нём остаточную инжекцию,
+            и ``reconcile_node_balance`` материализует её псевдонагрузкой.
+            Значение >0 делает нулевую инжекцию транзита жёстким
+            virtual-measurement (классический приём вместо equality-
+            constraint): σ² берётся как ``min(мягкая, заданная)`` — рычаг
+            никогда не ослабляет транзит относительно baseline.
         bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
             (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
         default_box_halfwidth_pu: полуширина (p.u.) дефолтной коробки
@@ -400,11 +410,20 @@ def build_ipm_setup(
     # (Sbus = 0 в скобках). Узлы с exist — связь Sbus = Pgen-Pnag.
     active_mask = nodes_arr["status"].astype(bool)
     active_nids = nodes_arr["id"][active_mask].astype(np.int64)
+    active_transit = ~(
+        nodes_arr["exist_load"][active_mask].astype(bool)
+        | nodes_arr["exist_gen"][active_mask].astype(bool)
+    )
     active_positions: list[int] = []
-    for nid in active_nids.tolist():
+    transit_flags: list[bool] = []
+    slack_pos = int(layout_base.slack_idx)
+    for nid, is_transit in zip(active_nids.tolist(), active_transit.tolist(), strict=True):
         active_pos = bus_id_to_pos.get(int(nid))
         if active_pos is not None:
             active_positions.append(active_pos)
+            # Slack исключён из транзит-затяжки: он закрывает потери сети,
+            # жёсткий zero-injection на нём ломал бы решение.
+            transit_flags.append(bool(is_transit) and active_pos != slack_pos)
     n_balance = len(active_positions)
 
     # ---- Prior-meas: z=0, σ² индивидуальные. Только для box-var с σ²>0 ----
@@ -467,6 +486,13 @@ def build_ipm_setup(
     sigma2_new = np.empty(n_new, dtype=np.float64)
     sigma2_new[:n_old] = sigma2_old
     sigma2_new[n_old : n_old + 2 * n_balance] = balance_sigma2_eff
+    if transit_balance_sigma2_pu > 0.0 and n_balance > 0:
+        transit_arr = np.asarray(transit_flags, dtype=bool)
+        if transit_arr.any():
+            tight = min(float(transit_balance_sigma2_pu), balance_sigma2_eff)
+            # Строки баланса: сначала n_balance P-строк, затем n_balance Q-строк.
+            sigma2_new[n_old : n_old + n_balance][transit_arr] = tight
+            sigma2_new[n_old + n_balance : n_old + 2 * n_balance][transit_arr] = tight
     if n_prior > 0:
         prior_sigmas = np.concatenate(
             [

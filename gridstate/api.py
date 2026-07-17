@@ -65,6 +65,7 @@ def estimate(
     huber_c: float = 1.5,
     huber_use_mad: bool = False,
     reconcile_balance: bool = True,
+    reconcile_respect_bounds: bool = False,
     kkt_solver: str = "auto",
     include_quality_summary: bool = True,
     quality_summary_top_n: int = 10,
@@ -98,6 +99,10 @@ def estimate(
             :func:`gridstate.post_processing.reconcile_node_balance`).
             Default ``True`` — выход SE согласован как режим (вход PF,
             промоут). V/δ и сходимость не затрагиваются.
+        reconcile_respect_bounds: клиповать слив остатка reconcile к
+            физическим границам узла (``load/gen_*_min/max``; транзит → 0).
+            Default ``False`` — прежнее поведение (безусловный слив).
+            См. ``reconcile_node_balance(respect_bounds=...)``.
         kkt_solver: решатель Newton-систем (``"auto"`` | ``"cholmod"`` |
             ``"scipy"``, см. ``gridstate.algorithms.kkt_solver``). ``auto``
             использует CHOLMOD при установленном cvxopt (×8-11 на крупных
@@ -240,7 +245,7 @@ def estimate(
     # согласованным режимом: gen_est − load_est ≡ p/q_inj_calc. Последним —
     # после всех правок *_estimated, до extract_output_tables.
     if reconcile_balance:
-        reconcile_stats = reconcile_node_balance(model)
+        reconcile_stats = reconcile_node_balance(model, respect_bounds=reconcile_respect_bounds)
         logger.debug("reconcile_node_balance: %s", reconcile_stats)
 
     result = SEResult(

@@ -41,6 +41,9 @@ def apply_voltage_range_filter(
     min_voltage_nominal_kv: float = 110.0,
     upper_fallback_factor: float = 1.4,
     action: str = "downweight",
+    deactivate_nonphysical: bool = False,
+    nonphysical_lower_factor: float = 0.5,
+    nonphysical_upper_factor: float = 1.5,
     detect_nominal_substitution: bool = False,
     nominal_substitution_eps: float = 0.001,
     questionable_sigma2_multiplier: float = 100.0,
@@ -78,6 +81,24 @@ def apply_voltage_range_filter(
             ``"downweight"`` (default) — увеличить variance × multiplier
             (мягко, WLS сам решит); ``"deactivate"`` — `status=False`
             (жёстко, может ухудшить если V-меры — единственный якорь).
+        deactivate_nonphysical: если True, физически невозможные как
+            напряжение V-меры (``V<=0``, ``V < V_ном·nonphysical_lower_factor``
+            или ``V > V_ном·nonphysical_upper_factor``) **деактивируются**
+            (``status=False``) вне зависимости от ``action``. Мотив:
+            ``downweight`` (σ×10) не гасит грубо-нефизичные значения — битый
+            U-датчик с ``V=2533`` кВ на шине 20 кВ (pu=127), отрицательный
+            ``V`` или ``V=0.2`` pu (глубокий коллапс/битый датчик) сохраняет
+            гигантский взвешенный остаток и рушит solve (J~1e8, коллапс узлов).
+            Мягкий out-of-range в [lo, hi] по-прежнему обрабатывается
+            ``action``. **Default False** (сохраняет прежнее поведение бит-в-бит).
+        nonphysical_lower_factor: нижний физический предел V как множитель
+            V_ном (default 0.5 = 50 % V_ном, совпадает с soft-floor ``half_nom``).
+            V ниже этого на запитанной шине не может быть валидным напряжением
+            (симметрично верхнему пределу). ``V<=0`` деактивируется всегда,
+            вне зависимости от значения фактора.
+        nonphysical_upper_factor: верхний физический предел V как множитель
+            V_ном для ``deactivate_nonphysical`` (default 1.5 = 150 % V_ном).
+            V выше этого не может быть валидным напряжением.
         detect_nominal_substitution: если True, V-измерения с
             ``|V_TI - V_ном| / V_ном < nominal_substitution_eps``
             помечаются как QUESTIONABLE (вероятная подстановка
@@ -92,7 +113,7 @@ def apply_voltage_range_filter(
             QUESTIONABLE measurements (default 100.0 = σ × 10).
 
     Returns:
-        ``{"checked": N, "out_of_range": N,
+        ``{"checked": N, "out_of_range": N, "hard_deactivated": N,
         "downweighted_nominal_substitution": N, "by_vnom": {kv: N}}``
     """
     # Енумы object/measurement-type резолвятся здесь (gridstate.constants),
@@ -109,6 +130,9 @@ def apply_voltage_range_filter(
         min_voltage_nominal_kv=min_voltage_nominal_kv,
         upper_fallback_factor=upper_fallback_factor,
         action=action,
+        deactivate_nonphysical=deactivate_nonphysical,
+        nonphysical_lower_factor=nonphysical_lower_factor,
+        nonphysical_upper_factor=nonphysical_upper_factor,
         detect_nominal_substitution=detect_nominal_substitution,
         nominal_substitution_eps=nominal_substitution_eps,
         questionable_sigma2_multiplier=questionable_sigma2_multiplier,
@@ -132,6 +156,9 @@ def _voltage_range_filter_on_arrays(
     detect_nominal_substitution: bool,
     nominal_substitution_eps: float,
     questionable_sigma2_multiplier: float,
+    deactivate_nonphysical: bool = False,
+    nonphysical_lower_factor: float = 0.5,
+    nonphysical_upper_factor: float = 1.5,
 ) -> dict:
     """ЯДРО: V-range filter над контрактными массивами.
 
@@ -145,6 +172,7 @@ def _voltage_range_filter_on_arrays(
     counters: dict[str, int] = {
         "checked": 0,
         "out_of_range": 0,
+        "hard_deactivated": 0,
         "downweighted_nominal_substitution": 0,
     }
     by_vnom: dict[int, int] = {}
@@ -162,6 +190,26 @@ def _voltage_range_filter_on_arrays(
         if v_nom <= 0 or v_nom < min_voltage_nominal_kv:
             continue
         v_meas = float(m["value"])
+
+        # Жёсткая деактивация ФИЗИЧЕСКИ НЕВОЗМОЖНЫХ V (nonphysical): V≤0,
+        # V < V_ном·lower_factor или V > V_ном·upper_factor. downweight (σ×10)
+        # их не гасит — битый U-датчик с pu=127 («2533 кВ» на шине 20 кВ),
+        # отрицательный V или V=0.2 pu (глубокий коллапс) сохраняет гигантский
+        # взвешенный остаток и рушит solve (J~1e8, коллапс). Такие значения не
+        # могут быть напряжением → status=False, а не downweight. Пределы
+        # симметричны (снизу и сверху), V≤0 деактивируется всегда.
+        if deactivate_nonphysical and (
+            v_meas <= 0
+            or v_meas < v_nom * nonphysical_lower_factor
+            or v_meas > v_nom * nonphysical_upper_factor
+        ):
+            counters["out_of_range"] += 1
+            counters["hard_deactivated"] += 1
+            v_nom_int = round(v_nom)
+            by_vnom[v_nom_int] = by_vnom.get(v_nom_int, 0) + 1
+            meas_arr[i]["status"] = False
+            continue
+
         if v_meas <= 0:
             # V≤0 на active-узле — деактивируем как заведомо невалидное.
             # apply_telemetry уже фильтрует V<50%Vn для TM-формул, но
@@ -227,6 +275,7 @@ def _voltage_range_filter_on_arrays(
     return {
         "checked": counters["checked"],
         "out_of_range": counters["out_of_range"],
+        "hard_deactivated": counters["hard_deactivated"],
         "downweighted_nominal_substitution": counters["downweighted_nominal_substitution"],
         "by_vnom": by_vnom,
     }

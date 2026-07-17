@@ -88,7 +88,7 @@ id_ed25519*
 # setuptools_scm generated version file
 gridstate/_version.py
 
-# Local settings and Claude memory (not committed)
+# Local tool settings (not committed)
 .claude/
 
 # One-off debug scripts

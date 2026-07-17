@@ -40,6 +40,8 @@ class TelemetryApplyConfig:
     """
 
     questionable_sigma2_multiplier: float = 100.0
+    v_sigma2_scale_by_node: dict[int, float] | None = None
+    flow_sigma2_scale_by_branch: dict[tuple[int, str], float] | None = None
     branch_p_sigma_frac: float = 0.02
     branch_q_sigma_frac: float = 0.07
     branch_q_sigma_charging_alpha: float = 0.10
@@ -63,6 +65,8 @@ def apply_telemetry_resolved(
     *,
     total_args: int,
     questionable_sigma2_multiplier: float = 100.0,
+    v_sigma2_scale_by_node: dict[int, float] | None = None,
+    flow_sigma2_scale_by_branch: dict[tuple[int, str], float] | None = None,
     branch_p_sigma_frac: float = 0.02,
     branch_q_sigma_frac: float = 0.07,
     branch_q_sigma_charging_alpha: float = 0.10,
@@ -87,6 +91,8 @@ def apply_telemetry_resolved(
     """
     config = TelemetryApplyConfig(
         questionable_sigma2_multiplier=questionable_sigma2_multiplier,
+        v_sigma2_scale_by_node=v_sigma2_scale_by_node,
+        flow_sigma2_scale_by_branch=flow_sigma2_scale_by_branch,
         branch_p_sigma_frac=branch_p_sigma_frac,
         branch_q_sigma_frac=branch_q_sigma_frac,
         branch_q_sigma_charging_alpha=branch_q_sigma_charging_alpha,
@@ -411,6 +417,24 @@ def _apply_measurement_loop(
         )
         if int(meas_arr[idx]["quality"]) == QUALITY_QUESTIONABLE:
             var *= config.questionable_sigma2_multiplier
+        # Точечный масштаб σ² V-меры узла из плана производителя данных
+        # ({node_id: factor}; factor<1 усиливает доверие к мере — «якорный»
+        # датчик, factor>1 ослабляет). Только узловые V (mt=2, ot=0).
+        if mt == 2 and ot == 0 and config.v_sigma2_scale_by_node:
+            scale = config.v_sigma2_scale_by_node.get(int(meas_arr[idx]["object_id"]))
+            if scale is not None:
+                var *= float(scale)
+                stats.setdefault("v_sigma2_scaled", 0)
+                stats["v_sigma2_scaled"] += 1
+        # Аналогичный план для потоковых мер ветвей: {(branch_id, kind): factor},
+        # kind ∈ PBEG/PEND/QBEG/QEND. factor>1 ослабляет доверие (мера-кандидат
+        # в дефектные по данным производителя), factor<1 усиливает.
+        if ot == 1 and config.flow_sigma2_scale_by_branch:
+            scale = config.flow_sigma2_scale_by_branch.get((int(obj_id), kind))
+            if scale is not None:
+                var *= float(scale)
+                stats.setdefault("flow_sigma2_scaled", 0)
+                stats["flow_sigma2_scaled"] += 1
         # Q-inconsistent на HV-ВЛ — downweight σ² × factor (loose якорь,
         # как в эталонном OC с low weight). Применяется после расчёта
         # default σ.
