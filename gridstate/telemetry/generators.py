@@ -71,7 +71,21 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
 
     Читает ``gen.{node_id,status,power_output,reactive_output,power_min,power_max,
     reactive_min,reactive_max}`` и ``node.id``; пишет ``node.{generation_p,
-    generation_q,generation_p_min,generation_p_max,generation_q_min,generation_q_max}``.
+    generation_q,generation_p_min,generation_p_max,generation_q_min,generation_q_max}``
+    и поднимает ``node.exist_gen``.
+
+    ``exist_gen`` обязателен: узел с работающей машиной генерацию имеет по
+    определению, а флаг — единственный вентиль box-переменной ``pgen``/``qgen``
+    в IPM (``preprocessing/ipm_setup._collect_box_sections``). Схема вправе
+    объявить генерацию отдельным объектом и не повторять её на узле: вывод
+    блока приходит с нулевым ``exist_gen`` и узким ящиком нагрузки (собственные
+    нужды), а способность машины лежит только записью каталога генераторов.
+    Без подъёма флага узловые границы заполнялись верно, но переменной под них
+    не заводилось, и измеренная выдача упиралась в ящик нагрузки: узел с
+    границей 1080 МВт и выдачей 1070 МВт отдавал в оценку нуль генерации, а
+    остаток инжекции, который разносу некуда деть, копился в
+    ``sum_unclosed_p_mw``. На схеме, где так объявлено большинство станций, это
+    занижало суммарную генерацию режима втрое.
 
     Лимиты: суммируются только **валидные** пары; если хотя бы один
     активный генератор узла несёт сентинел (|лимит| ≥ ``SENTINEL_ABS``,
@@ -93,6 +107,7 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
         "missing_node": 0,
         "sentinel_p_nodes": 0,
         "sentinel_q_nodes": 0,
+        "exist_gen_raised": 0,
     }
 
     # Сначала обнуляем gen-поля у всех узлов, чтобы повторный вызов
@@ -158,6 +173,9 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
         else:
             nodes_arr[i]["generation_q_min"] = agg["q_min"]
             nodes_arr[i]["generation_q_max"] = agg["q_max"]
+        if not bool(nodes_arr[i]["exist_gen"]):
+            nodes_arr[i]["exist_gen"] = 1
+            stats["exist_gen_raised"] += 1
         touched.add(nid)
 
     stats["updated_nodes"] = len(touched)
@@ -177,7 +195,12 @@ def aggregate_generators_to_node(model: Any) -> dict[str, int]:
     * ``power_min``       → ``node.generation_p_min``;
     * ``power_max``       → ``node.generation_p_max``;
     * ``reactive_min``    → ``node.generation_q_min``;
-    * ``reactive_max``    → ``node.generation_q_max``.
+    * ``reactive_max``    → ``node.generation_q_max``;
+
+    и поднимает ``node.exist_gen`` — узел с активной машиной генерацию имеет,
+    а без флага IPM не заводит под неё box-переменную (см.
+    ``_aggregate_generators_on_arrays``). Флаг только поднимается: узел, чьи
+    машины все сняты, сюда не попадает и сохраняет прежние значения.
 
     Off-генераторы исключаются из всех сумм (их Q-лимиты не объединяются
     в Q-диапазон узла). Узлы без active-генераторов остаются с теми
@@ -196,7 +219,7 @@ def aggregate_generators_to_node(model: Any) -> dict[str, int]:
 
     Returns:
         ``{"updated_nodes": N, "active_gens": N, "off_gens": N,
-        "missing_node": N}``.
+        "missing_node": N, "exist_gen_raised": N}``.
     """
     nodes_arr = model.nodes.to_numpy().copy()
     gens = model.generators.to_numpy()

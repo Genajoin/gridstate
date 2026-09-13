@@ -122,6 +122,7 @@ def test_aggregate_generators_core_sums_active_only():
         "missing_node": 1,
         "sentinel_p_nodes": 0,
         "sentinel_q_nodes": 0,
+        "exist_gen_raised": 1,
     }
     assert float(nodes[0]["generation_p"]) == 30.0  # 10+20, off-100 исключён
     assert float(nodes[0]["generation_q"]) == 3.0

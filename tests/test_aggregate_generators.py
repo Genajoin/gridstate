@@ -210,3 +210,85 @@ def test_missing_node_in_generators() -> None:
     stats = aggregate_generators_to_node(m)
     assert stats["missing_node"] == 1
     assert stats["updated_nodes"] == 0
+
+
+def test_exist_gen_raised_for_node_declaring_no_generation() -> None:
+    """Узел с ``exist_gen=0``, но с активной машиной, получает флаг.
+
+    Схема вправе объявить генерацию отдельным объектом и не повторять её на
+    узле: вывод блока приходит с нулевым ``exist_gen`` и узким ящиком нагрузки
+    (собственные нужды), а способность машины — только записью каталога. Без
+    флага IPM не заводит box-переменную генерации, и измеренная выдача упирается
+    в ящик нагрузки.
+    """
+    from gridstate.constants import NodeType
+    from gridstate.working import Working
+
+    m = Working.empty()
+    m.nodes.add(
+        {
+            "id": 1,
+            "voltage_nominal": 24.0,
+            "exist_gen": 0,
+            "exist_load": 1,
+            "load_p_min": 0.1,
+            "load_p_max": 55.0,
+            "status": True,
+            "node_type": int(NodeType.PQ),
+        }
+    )
+    m.generators.add(
+        {
+            "id": 11,
+            "node_id": 1,
+            "power_output": 1070.0,
+            "reactive_output": 120.0,
+            "power_min": 0.0,
+            "power_max": 1080.0,
+            "reactive_min": -380.0,
+            "reactive_max": 700.0,
+            "status": True,
+        }
+    )
+
+    stats = aggregate_generators_to_node(m)
+
+    assert stats["exist_gen_raised"] == 1
+    n1 = m.nodes.get_by_id(1)
+    assert bool(n1.exist_gen)
+    assert n1.generation_p_max == pytest.approx(1080.0)
+    # Ящик нагрузки не тронут: узел остаётся и потребителем собственных нужд.
+    assert n1.load_p_max == pytest.approx(55.0)
+
+
+def test_exist_gen_not_raised_when_all_generators_off() -> None:
+    """Все машины сняты — узел не трогается, флаг не поднимается."""
+    from gridstate.constants import NodeType
+    from gridstate.working import Working
+
+    m = Working.empty()
+    m.nodes.add(
+        {
+            "id": 1,
+            "voltage_nominal": 24.0,
+            "exist_gen": 0,
+            "exist_load": 1,
+            "status": True,
+            "node_type": int(NodeType.PQ),
+        }
+    )
+    m.generators.add(
+        {
+            "id": 11,
+            "node_id": 1,
+            "power_output": 0.0,
+            "power_min": 0.0,
+            "power_max": 1080.0,
+            "status": False,
+        }
+    )
+
+    stats = aggregate_generators_to_node(m)
+
+    assert stats["exist_gen_raised"] == 0
+    assert not bool(m.nodes.get_by_id(1).exist_gen)
