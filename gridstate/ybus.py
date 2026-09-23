@@ -12,14 +12,29 @@
     Yc_from = (g_from + j·b_from) + (g + j·b)/2     # суммарный шунт «от»
     Yc_to   = (g_to   + j·b_to  ) + (g + j·b)/2     # суммарный шунт «до»
     t       = tap_ratio · exp(j·phase_shift)        # комплексный коэф.
+    Ys      = Ysf · |t|²               # см. ниже про сторону сопротивления
 
-    Yff = (Ysf + Yc_from) / (t · conj(t))
-    Yft = − Ysf / conj(t)
-    Ytf = − Ysf / t
-    Ytt = Ysf + Yc_to
+    Yff = (Ys + Yc_from) / (t · conj(t))  = Ysf + Yc_from / |t|²
+    Yft = − Ys / conj(t)                  = − Ysf · t
+    Ytf = − Ys / t                        = − Ysf · conj(t)
+    Ytt = Ys + Yc_to                      = Ysf · |t|² + Yc_to
 
-Шунты узлов добавляются на диагональ ``Ybus``. Конвенция совпадает с
-pandapower (``pandapower/pypower/makeYbus.py``); параллельные ветви
+Сторона сопротивления. Во входном формате ``resistance``/``reactance``
+трансформатора — Омы на стороне «от»: сопротивление включено у начала ветви,
+идеальный трансформатор — у конца. Формулы выше записаны для сопротивления,
+стоящего за идеальным трансформатором (вид ``makeYbus``), поэтому в них
+подставлена проводимость, приведённая к стороне «до» фактическим (а не
+номинальным) коэффициентом: ``Ys = Ysf·|t|²``. Приведение номинальным
+коэффициентом искажало бы эффективное сопротивление в ``1/|t|²`` раз
+(``t`` — коэффициент в p.u., см. ``units.model_to_pu``), причём ошибка
+менялась бы вместе с отпайкой РПН. У линий и трансформаторов с номинальным
+коэффициентом ``|t| = 1`` приведения нет: ``Ys = Ysf``.
+
+Шунт «от» делится на ``|t|²`` (его зависимость от отпайки
+учитывает пересчёт шунта при применении РПН,
+``telemetry.rpn._apply_tap_steps_on_arrays``).
+
+Шунты узлов добавляются на диагональ ``Ybus``; параллельные ветви
 суммируются автоматически через ``coo_matrix``-сборку с одинаковыми
 индексами.
 """
@@ -34,6 +49,17 @@ from scipy.sparse import coo_matrix, csr_matrix
 
 if TYPE_CHECKING:
     from gridstate.units import NetworkPU
+
+
+def series_admittance(network_pu: NetworkPU) -> np.ndarray:
+    """Последовательная проводимость ветвей за идеальным трансформатором, p.u.
+
+    ``Ys = |t|² / (r + j·x)``: сопротивление задано на стороне «от» и
+    приводится к стороне «до» фактическим коэффициентом ``|t| = tap_ratio``
+    (p.u.). У ветвей с ``|t| = 1`` — просто ``1 / (r + j·x)``.
+    """
+    z = network_pu.branch_r + 1j * network_pu.branch_x
+    return cast("np.ndarray", network_pu.tap_ratio**2 / z)
 
 
 def build_ybus(
@@ -78,7 +104,6 @@ def build_ybus(
             "Исключите их через status=False или замените малым R/X."
         )
 
-    ysf = 1.0 / z
     yc_from = (
         network_pu.branch_g_from
         + 1j * network_pu.branch_b_from
@@ -91,11 +116,14 @@ def build_ybus(
     )
 
     tap = network_pu.tap_ratio * np.exp(1j * network_pu.phase_shift)
+    # Сопротивление задано на стороне «от»: приводим его за идеальный
+    # трансформатор фактическим коэффициентом, см. docstring модуля.
+    ys = series_admittance(network_pu)
 
-    yff = (ysf + yc_from) / (tap * np.conj(tap))
-    yft = -ysf / np.conj(tap)
-    ytf = -ysf / tap
-    ytt = ysf + yc_to
+    yff = (ys + yc_from) / (tap * np.conj(tap))
+    yft = -ys / np.conj(tap)
+    ytf = -ys / tap
+    ytt = ys + yc_to
 
     f = network_pu.from_idx
     t = network_pu.to_idx

@@ -120,15 +120,26 @@ class TestTransformer:
         line_no_t = build_ybus(_toy_two_bus(x=0.5))[0].toarray()
         np.testing.assert_allclose(line, line_no_t)
 
-    def test_step_down_tap_yff_scaled(self) -> None:
-        # tap=2.0 → Yff = Ys/4 = -0.5j; Yft = -Ys/2 = j; Ytf = -Ys/2 = j; Ytt = Ys = -2j
+    def test_step_down_tap_impedance_on_from_side(self) -> None:
+        # Сопротивление на стороне «от», tap=2.0, Ysf = -2j:
+        # Yff = Ysf = -2j; Yft = Ytf = -Ysf·t = 4j; Ytt = Ysf·|t|² = -8j.
         net = _toy_two_bus(x=0.5, tap=2.0)
         ybus, _, _ = build_ybus(net)
         d = ybus.toarray()
-        np.testing.assert_allclose(d[0, 0], -0.5j, atol=1e-12)
-        np.testing.assert_allclose(d[0, 1], 1.0j, atol=1e-12)
-        np.testing.assert_allclose(d[1, 0], 1.0j, atol=1e-12)
-        np.testing.assert_allclose(d[1, 1], -2.0j, atol=1e-12)
+        np.testing.assert_allclose(d[0, 0], -2.0j, atol=1e-12)
+        np.testing.assert_allclose(d[0, 1], 4.0j, atol=1e-12)
+        np.testing.assert_allclose(d[1, 0], 4.0j, atol=1e-12)
+        np.testing.assert_allclose(d[1, 1], -8.0j, atol=1e-12)
+
+    def test_series_current_through_from_side_impedance(self) -> None:
+        # Ток «от» — через сопротивление стороны «от»: I = (V_f − t·V_t)/z.
+        # Не зависит от того, насколько коэффициент ушёл от номинала.
+        z = 0.02 + 0.5j
+        v = np.array([1.02, 0.95 * np.exp(-0.08j)], dtype=complex)
+        for tap in (0.9, 1.0, 1.196):
+            net = _toy_two_bus(r=z.real, x=z.imag, tap=tap)
+            _, yf, _ = build_ybus(net)
+            np.testing.assert_allclose((yf @ v)[0], (v[0] - tap * v[1]) / z, rtol=1e-12)
 
     def test_phase_shift_only(self) -> None:
         # tap=1.0, shift=π/6: |tap|²=1, conj(tap)=exp(−jπ/6).
@@ -242,13 +253,13 @@ class TestYfYtConsistency:
         i_from = yf @ v
         i_to = yt @ v
 
-        # Прямой расчёт
+        # Прямой расчёт: сопротивление на стороне «от», шунт «от» / |t|².
         ysf = 1 / (0.0 + 0.5j)
         yc_from = 0.05j  # b_from
         tap_c = 1.5 * np.exp(0.1j)
-        yff = (ysf + yc_from) / (tap_c * np.conj(tap_c))
-        yft = -ysf / np.conj(tap_c)
-        ytf = -ysf / tap_c
-        ytt = ysf + 0.0  # без to-шунта
+        yff = ysf + yc_from / (tap_c * np.conj(tap_c))
+        yft = -ysf * tap_c
+        ytf = -ysf * np.conj(tap_c)
+        ytt = ysf * abs(tap_c) ** 2 + 0.0  # без to-шунта
         np.testing.assert_allclose(i_from[0], yff * v[0] + yft * v[1], rtol=1e-12)
         np.testing.assert_allclose(i_to[0], ytf * v[0] + ytt * v[1], rtol=1e-12)
