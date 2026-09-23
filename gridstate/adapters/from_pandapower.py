@@ -323,6 +323,18 @@ def _build_branches(net: Any, f_hz: float) -> np.ndarray:
             tap_factor = (1.0 + delta) if tap_side == "hv" else 1.0 / (1.0 + delta)
         tap_ratio = (vn_hv / vn_lv) * tap_factor
 
+        # pandapower держит сопротивление ЗА идеальным трансформатором, входной
+        # формат — на стороне «от» (см. gridstate.ybus). Переносим его на
+        # сторону ВН фактическим коэффициентом в p.u. — тем же, что получит
+        # ``model_to_pu``, чтобы build_ybus собрал ту же сеть.
+        vn_hv_bus = float(net.bus.at[tr.hv_bus, "vn_kv"])
+        vn_lv_bus = float(net.bus.at[tr.lv_bus, "vn_kv"])
+        tap_pu = tap_ratio
+        if vn_hv_bus > 0 and vn_lv_bus > 0 and not math.isclose(vn_hv_bus, vn_lv_bus):
+            tap_pu = tap_ratio / (vn_hv_bus / vn_lv_bus)
+        r_ohm *= tap_pu * tap_pu
+        x_ohm *= tap_pu * tap_pu
+
         shift = float(tr.shift_degree) if not pd.isna(tr.shift_degree) else 0.0
 
         _set_row(

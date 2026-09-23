@@ -13,7 +13,8 @@ p.u.-представление SE.
 - Базовый импеданс ``Z_base = V_base² / S_base`` (Ом).
 - Базовый ток ``I_base = S_base · 1000 / (√3 · V_base)`` (А).
 - Импедансы и проводимости ветвей трактуются как заданные на стороне «от»
-  (``from_node``), что соответствует pandapower-конвенции.
+  (``from_node``): у трансформатора сопротивление включено у начала ветви,
+  идеальный трансформатор — у конца (см. ``gridstate.ybus``).
 
 Для алгоритмов SE используются *позиционные* индексы шин (``0..n_bus−1``);
 оригинальные ``id`` из ``NODE_DTYPE`` сохраняются в ``NetworkPU.bus_ids`` —
@@ -211,7 +212,8 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
         from_idx[i] = f_pos
         to_idx[i] = t_pos
 
-        # Импеданс приведён к стороне «от» (pandapower-конвенция)
+        # Импеданс задан в Омах на стороне «от»; за идеальный трансформатор
+        # его приводит build_ybus фактическим коэффициентом.
         zb = float(z_base[f_pos])
         branch_r[i] = float(b["resistance"]) / zb
         branch_x[i] = float(b["reactance"]) / zb

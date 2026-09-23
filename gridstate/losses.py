@@ -28,8 +28,8 @@
 .. code::
 
     V_f, V_t — комплексные напряжения узлов (V_pu·exp(jδ));
-    y_ser = 1/(r + j·x);
     t     = tap_ratio_pu · exp(j·phase_shift);
+    y_ser = |t|²/(r + j·x);   # сопротивление за идеальным трансформатором
 
     # Поток на стороне «от»/«до» — те же формулы, что в build_ybus:
     S_from = V_f · conj(Y_ff · V_f + Y_ft · V_t);
@@ -37,7 +37,7 @@
 
     # Серийные потери (R+jX часть, без шунта Π-схемы):
     I_ser = (V_f / t  − V_t) · y_ser;
-    S_series = |I_ser|² · (r + j·x);
+    S_series = |I_ser|² · (r + j·x)/|t|²;
 
     # Общие потери ветви (включая шунт):
     S_loss_total = S_from + S_to;
@@ -97,7 +97,7 @@ import numpy as np
 
 from gridstate.units import BASE_MVA, model_to_pu
 from gridstate.utils import id_to_pos_map
-from gridstate.ybus import build_ybus
+from gridstate.ybus import build_ybus, series_admittance
 
 
 if TYPE_CHECKING:
@@ -275,7 +275,9 @@ def compute_system_losses(
     z_ser = network_pu.branch_r + 1j * network_pu.branch_x
     if np.any(z_ser == 0):
         raise ValueError("Ветви с r=x=0 в active set; должны быть отключены до SE.")
-    y_ser = 1.0 / z_ser
+    # Сопротивление, приведённое за идеальный трансформатор (как в build_ybus).
+    y_ser = series_admittance(network_pu)
+    z_ser = z_ser / network_pu.tap_ratio**2
     tap_complex = network_pu.tap_ratio * np.exp(1j * network_pu.phase_shift)
     v_f = v_complex[network_pu.from_idx]
     v_t = v_complex[network_pu.to_idx]
