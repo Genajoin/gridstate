@@ -32,7 +32,7 @@ from gridstate.algebra.base import (
     SIDE_TO,
     BaseAlgebra,
 )
-from gridstate.bounds import resolve_bounds
+from gridstate.bounds import is_reactive_only_generation, resolve_bounds
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.units import BASE_MVA, NetworkPU
 from gridstate.utils import id_to_pos_map
@@ -516,6 +516,14 @@ def reconcile_node_balance(
             }
             if respect_bounds:
                 gp_lo, gp_hi = resolve_bounds(row["generation_p_min"], row["generation_p_max"])
+                if is_reactive_only_generation(
+                    row["generation_p_min"],
+                    row["generation_p_max"],
+                    row["generation_q_min"],
+                    row["generation_q_max"],
+                ):
+                    # Компенсатор: активной мощности нет, пара [0, 0] — данные.
+                    gp_lo, gp_hi = 0.0, 0.0
                 gq_lo, gq_hi = resolve_bounds(row["generation_q_min"], row["generation_q_max"])
                 gp = _clip(update["generation_p_estimated"], gp_lo, gp_hi)
                 gq = _clip(update["generation_q_estimated"], gq_lo, gq_hi)

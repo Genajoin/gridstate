@@ -349,3 +349,33 @@ def test_ipm_real_bus_equiv_still_gets_prior():
     n_balance = 2 * 2
     # Одна prior-строка на pgen (width 425 p.u. > 100) — bus-equiv tight.
     assert setup.z.shape[0] == n_balance + 1
+
+
+# ---------------------------------------------------------------------------
+# Компенсаторы: P ровно [0, 0] при заданном Q — данные, а не «не задано»
+# ---------------------------------------------------------------------------
+
+
+def test_reactive_only_generation_detection():
+    from gridstate.bounds import is_reactive_only_generation
+
+    assert is_reactive_only_generation(0.0, 0.0, -63.0, 0.0)  # УШР
+    assert is_reactive_only_generation(0.0, 0.0, -66.0, 66.0)  # статком
+    assert not is_reactive_only_generation(0.0, 100.0, -50.0, 50.0)  # машина
+    assert not is_reactive_only_generation(0.0, 0.0, 0.0, 0.0)  # ничего не задано
+    assert not is_reactive_only_generation(0.0, 0.0, 9999.0, -9999.0)  # сентинелы
+
+
+def test_ipm_compensator_gets_no_active_power_box():
+    """УШР (P [0, 0], Q [-63, 0]): P-переменной нет, Q-переменная в своём ящике."""
+    setup = _ipm_setup_for(
+        {
+            "exist_gen": 1,
+            "generation_q_min": -63.0,
+            "generation_q_max": 0.0,
+        }
+    )
+    assert setup.layout.pgen_node_pos.size == 0
+    assert setup.layout.qgen_node_pos.size == 1
+    assert setup.box_lo[0] == -0.63
+    assert setup.box_hi[0] == 0.0

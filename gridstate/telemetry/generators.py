@@ -108,6 +108,7 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
         "sentinel_p_nodes": 0,
         "sentinel_q_nodes": 0,
         "exist_gen_raised": 0,
+        "closed_nodes": 0,
     }
 
     # Сначала обнуляем gen-поля у всех узлов, чтобы повторный вызов
@@ -118,11 +119,15 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
     p_unknown: set[int] = set()
     q_unknown: set[int] = set()
 
+    # Узлы с генераторами в каталоге — чтобы закрыть генерацию тех, у кого
+    # все машины выключены (см. ниже).
+    with_gens: set[int] = set()
     for i in range(len(gens_arr)):
         nid = int(gens_arr[i]["node_id"])
         if nid not in node_pos:
             stats["missing_node"] += 1
             continue
+        with_gens.add(nid)
         if not bool(gens_arr[i]["status"]):
             stats["off_gens"] += 1
             continue
@@ -178,6 +183,25 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
             stats["exist_gen_raised"] += 1
         touched.add(nid)
 
+    # Генерация узла с каталогом генераторов = сумма его машин. Если все они
+    # выключены (формулой состояния или каскадом от узла), генерации у узла
+    # нет: без этого он сохранял ящик и exist_gen из схемы, и оценка выдавала
+    # на нём генерацию машин, которые не работают.
+    for nid in with_gens - set(aggregates):
+        i = node_pos[nid]
+        for col in (
+            "generation_p",
+            "generation_q",
+            "generation_p_min",
+            "generation_p_max",
+            "generation_q_min",
+            "generation_q_max",
+        ):
+            nodes_arr[i][col] = 0.0
+        if bool(nodes_arr[i]["exist_gen"]):
+            nodes_arr[i]["exist_gen"] = 0
+            stats["closed_nodes"] += 1
+
     stats["updated_nodes"] = len(touched)
     stats["sentinel_p_nodes"] = len(p_unknown)
     stats["sentinel_q_nodes"] = len(q_unknown)
@@ -203,9 +227,8 @@ def aggregate_generators_to_node(model: Any) -> dict[str, int]:
     машины все сняты, сюда не попадает и сохраняет прежние значения.
 
     Off-генераторы исключаются из всех сумм (их Q-лимиты не объединяются
-    в Q-диапазон узла). Узлы без active-генераторов остаются с теми
-    значениями generation_p_min/max и generation_q_min/max что были до
-    вызова (NODE_DTYPE-default = 0). Сентинельные лимиты (±9999, «нет
+    в Q-диапазон узла). Узлы, у которых генераторов в каталоге нет вовсе,
+    остаются с прежними generation_* (генерация объявлена на самом узле). Сентинельные лимиты (±9999, «нет
     данных») не суммируются: узел с хотя бы одним таким генератором
     получает сентинельную пару — «диапазон неизвестен» (см.
     ``_aggregate_generators_on_arrays``).

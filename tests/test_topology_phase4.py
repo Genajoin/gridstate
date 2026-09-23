@@ -18,6 +18,7 @@ import numpy as np
 from gridstate.contract import SE_INPUT
 from gridstate.topology import (
     _disconnected_nodes_to_disable,
+    _gen_nodes_to_demote,
     _gen_nodes_to_promote,
     _isolated_nodes_to_disable,
     _orphan_branches_to_disable,
@@ -184,7 +185,7 @@ def test_adapter_effect_matches_core_plan():
     # gen→PV (после refine_slack, как в pipeline)
     plan = _gen_nodes_to_promote(m.nodes.to_numpy(), m.generators.to_numpy(), None)
     n = refine_node_types_from_generators(m)
-    assert n == {"promoted": len(plan)}
+    assert n["promoted"] == len(plan)
     types = {int(r["id"]): int(r["node_type"]) for r in m.nodes.to_numpy()}
     for nid in plan:
         assert types[nid] == 1  # PV
@@ -209,3 +210,31 @@ def test_adapter_effect_matches_core_plan():
     plan = _isolated_nodes_to_disable(m.nodes.to_numpy(), m.branches.to_numpy())
     n = disable_isolated_nodes(m)
     assert n == {"disabled": len(plan)}
+
+
+def test_gen_demote_core_pv_without_active_generator():
+    """PV-узел, чьи генераторы все выключены, возвращается в PQ; PV без каталога — нет."""
+    nodes = np.zeros(3, dtype=SE_INPUT.nodes.input_dtype())
+    nodes["id"] = [10, 20, 30]
+    nodes["node_type"] = 1  # PV
+    nodes["status"] = True
+    gens = np.zeros(3, dtype=SE_INPUT.generators.input_dtype())
+    gens["id"] = [1, 2, 3]
+    gens["node_id"] = [10, 20, 20]
+    gens["status"] = [False, False, True]
+    # 10: единственный ген off → PQ; 20: один ген активен → остаётся PV;
+    # 30: генераторов нет вовсе (PV из входа) → не трогается.
+    assert _gen_nodes_to_demote(nodes, gens) == [10]
+
+
+def test_refine_node_types_order_independent():
+    """Тип узла не зависит от того, выключен ген во входе или каскадом позже."""
+    m = _build_model()
+    refine_slack_to_one(m)
+    refine_node_types_from_generators(m)  # первый проход: ген активен → PV
+    arr = m.generators.to_numpy().copy()
+    arr["status"] = False  # каскад выключил все машины
+    m.generators.update_from_array(arr)
+    stats = refine_node_types_from_generators(m)  # второй проход
+    assert stats["demoted"] >= 1
+    assert all(int(r["node_type"]) != 1 for r in m.nodes.to_numpy())

@@ -226,6 +226,30 @@ def _gen_nodes_to_promote(
     return to_promote
 
 
+def _gen_nodes_to_demote(nodes_arr: Any, generators_arr: Any) -> list[int]:
+    """PV-узлы, у которых генераторы есть, но ни один не активен → план PV→PQ.
+
+    Пара к :func:`_gen_nodes_to_promote`: первый проход типов идёт до каскада
+    ``node off ⇒ gen off`` и повышает узел по генератору, который затем
+    гаснет. Понижаем только узлы с записями генераторов — PV, пришедший из
+    входа без каталога генераторов, не трогаем.
+    """
+    has_gen: set[int] = set()
+    has_active_gen: set[int] = set()
+    for r in generators_arr:
+        nid = int(r["node_id"])
+        has_gen.add(nid)
+        if r["status"]:
+            has_active_gen.add(nid)
+    return [
+        int(r["id"])
+        for r in nodes_arr
+        if int(r["node_type"]) == _PV_NODE_TYPE
+        and int(r["id"]) in has_gen
+        and int(r["id"]) not in has_active_gen
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Публичные адаптеры: массивы из модели → ядро → применить план через .update()
 # ---------------------------------------------------------------------------
@@ -335,6 +359,10 @@ def refine_node_types_from_generators(
 ) -> dict[str, int]:
     """Пометить узлы с активными генераторами как PV (``node_type=1``).
 
+    Узел, у которого все генераторы выключены, из PV возвращается в PQ —
+    иначе тип зависел бы от того, выключены машины во входе или каскадом
+    пайплайна после первого прохода.
+
     Входной формат **не классифицирует PV-узлы** — все кроме SLACK помечены PQ.
     JSON-loader использует tip входного формата (``tip=2/3/4 → PV``), эквивалент
     ``exist_gen AND vzd>0``. Эта функция воспроизводит ту же семантику.
@@ -347,14 +375,17 @@ def refine_node_types_from_generators(
     Применять **после** ``refine_slack_to_one``.
 
     Returns:
-        Статистика шага ``{"promoted": <число узлов PQ→PV>}``.
+        Статистика шага ``{"promoted": <PQ→PV>, "demoted": <PV→PQ>}``.
     """
-    to_promote = _gen_nodes_to_promote(
-        model.nodes.to_numpy(), model.generators.to_numpy(), node_load_props
-    )
+    nodes_arr = model.nodes.to_numpy()
+    gens_arr = model.generators.to_numpy()
+    to_demote = _gen_nodes_to_demote(nodes_arr, gens_arr)
+    to_promote = _gen_nodes_to_promote(nodes_arr, gens_arr, node_load_props)
+    for nid in to_demote:
+        model.nodes.update(nid, {"node_type": _PQ_NODE_TYPE})
     for nid in to_promote:
         model.nodes.update(nid, {"node_type": _PV_NODE_TYPE})
-    return {"promoted": len(to_promote)}
+    return {"promoted": len(to_promote), "demoted": len(to_demote)}
 
 
 __all__ = [
