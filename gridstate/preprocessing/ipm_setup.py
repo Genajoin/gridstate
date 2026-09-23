@@ -177,7 +177,7 @@ def _collect_box_sections(
             return hi - margin
         return value_pu
 
-    def _is_reactive_only(row) -> bool:
+    def _is_reactive_only(row: np.void) -> bool:
         """Генерирующий узел только с реактивной мощностью: ``P ∈ [0, 0]``,
         ``P = 0`` и заданный невырожденный диапазон Q."""
         return float(row["generation_p"]) == 0.0 and is_reactive_only_generation(
