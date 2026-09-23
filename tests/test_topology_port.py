@@ -118,7 +118,7 @@ def test_refine_node_types_with_props_vzd_gate():
     cs.refine_slack_to_one(a)
     props = {4: {"vzd": 0.0, "exist_gen": True}, 8: {"vzd": 1.0, "exist_gen": True}}
     ra = cs.refine_node_types_from_generators(a, node_load_props=props)
-    assert ra == {"promoted": 0}  # узел 4 имеет ген, но vzd=0 → не PV; 8 без гена
+    assert ra["promoted"] == 0  # узел 4 имеет ген, но vzd=0 → не PV; 8 без гена
     node_state = _node_state(a)
     assert node_state[4][1] != int(NodeType.PV)
 
