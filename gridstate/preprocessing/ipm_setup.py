@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from gridstate.bounds import resolve_bounds
+from gridstate.bounds import is_reactive_only_generation, resolve_bounds
 from gridstate.state import StateLayout
 from gridstate.units import BASE_MVA
 from gridstate.utils import id_to_pos_map
@@ -177,6 +177,16 @@ def _collect_box_sections(
             return hi - margin
         return value_pu
 
+    def _is_reactive_only(row) -> bool:
+        """Генерирующий узел только с реактивной мощностью: ``P ∈ [0, 0]``,
+        ``P = 0`` и заданный невырожденный диапазон Q."""
+        return float(row["generation_p"]) == 0.0 and is_reactive_only_generation(
+            row["generation_p_min"],
+            row["generation_p_max"],
+            row["generation_q_min"],
+            row["generation_q_max"],
+        )
+
     sections = [
         _BoxSection(
             "exist_gen",
@@ -238,6 +248,12 @@ def _collect_box_sections(
         # ``write_node_estimates`` заполнит все 4 ``*_estimated`` поля.
         for sec in sections:
             if not exist_flags[sec.exist_col]:
+                continue
+            if sec.min_col == "generation_p_min" and _is_reactive_only(row):
+                # Компенсатор (УШР, СТК, СК): активной мощности нет. Пара
+                # [0, 0] иначе читается как «границы не заданы» и получает
+                # широкий дефолтный ящик — оценка выдаёт на устройстве
+                # фантомную активную генерацию.
                 continue
             lo, hi, dflt = _bound_pair(
                 float(row[sec.min_col]),

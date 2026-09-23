@@ -164,3 +164,30 @@ def test_respect_bounds_default_off_is_legacy() -> None:
     reconcile_node_balance(m)
     # r = 25 − (0 − 10) = 35; load = 10 − 35 = −25 (нарушает lo=0 — легаси).
     assert abs(m.nodes.get_by_id(2).load_p_estimated - (-25.0)) < 1e-12
+
+
+def test_reconcile_respect_bounds_keeps_compensator_without_active_power() -> None:
+    """Остаток P на узле-компенсаторе не превращается в активную генерацию."""
+    from gridstate.constants import NodeType
+
+    m = Working.empty()
+    m.nodes.add(
+        {
+            "id": 1,
+            "voltage_nominal": 220.0,
+            "voltage_magnitude": 220.0,
+            "status": True,
+            "node_type": int(NodeType.PQ),
+            "exist_gen": 1,
+            "generation_q_min": -63.0,
+            "generation_q_max": 0.0,
+            "solved": True,
+            "p_inj_calc": -20.0,
+            "q_inj_calc": -30.0,
+        }
+    )
+    stats = reconcile_node_balance(m, respect_bounds=True)
+    row = m.nodes.get_by_id(1)
+    assert row.generation_p_estimated == 0.0
+    assert row.generation_q_estimated == -30.0
+    assert stats["sum_unclosed_p_mw"] == 20.0

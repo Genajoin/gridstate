@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 
-__all__ = ["SENTINEL_VALUE", "is_sentinel", "resolve_bounds"]
+__all__ = ["SENTINEL_VALUE", "is_reactive_only_generation", "is_sentinel", "resolve_bounds"]
 
 #: Точное значение-сентинел «нет данных» (контрактная конвенция ±9999).
 SENTINEL_VALUE = 9999.0
@@ -43,7 +43,9 @@ def resolve_bounds(lo_raw: float, hi_raw: float) -> tuple[float, float]:
 
     * обе стороны ≈0 → ``(-inf, +inf)`` — пара не заполнялась
       (numpy-default); реальный диапазон «ровно [0, 0]» у активного
-      узла не встречается — такой узел не несёт ``exist_*``;
+      узла не встречается — такой узел не несёт ``exist_*``. Исключение —
+      генерация компенсатора (УШР, СТК, СК): P ровно [0, 0] при заданном
+      Q-диапазоне, см. :func:`is_reactive_only_generation`;
     * ОБЕ стороны — сентинелы (точное ±9999) → пара не задана →
       ``(-inf, +inf)``. Полусентинельная пара сохраняется **как есть**
       (вторая сторона — данные);
@@ -63,3 +65,17 @@ def resolve_bounds(lo_raw: float, hi_raw: float) -> tuple[float, float]:
     if lo > hi:
         return (float("-inf"), float("inf"))
     return (lo, hi)
+
+
+def is_reactive_only_generation(p_min: float, p_max: float, q_min: float, q_max: float) -> bool:
+    """Генерация только реактивная: ``P ∈ [0, 0]`` при заданном невырожденном Q.
+
+    Так схемы задают компенсаторы (УШР, СТК, статкомы, СК) — генераторами без
+    активной мощности. Их пара P [0, 0] — данные, а не «границы не заданы»:
+    трактовка по :func:`resolve_bounds` открывала бы устройству активную
+    мощность.
+    """
+    if float(p_min) != 0.0 or float(p_max) != 0.0:
+        return False
+    q_lo, q_hi = resolve_bounds(q_min, q_max)
+    return q_lo != float("-inf") and q_hi != float("inf") and q_hi > q_lo

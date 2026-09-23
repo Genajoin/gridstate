@@ -123,12 +123,34 @@ def test_aggregate_generators_core_sums_active_only():
         "sentinel_p_nodes": 0,
         "sentinel_q_nodes": 0,
         "exist_gen_raised": 1,
+        "closed_nodes": 0,
     }
     assert float(nodes[0]["generation_p"]) == 30.0  # 10+20, off-100 исключён
     assert float(nodes[0]["generation_q"]) == 3.0
     assert float(nodes[0]["generation_p_max"]) == 40.0  # 15+25
     assert float(nodes[0]["generation_q_min"]) == -12.0
     assert float(nodes[1]["generation_p"]) == 0.0  # узел 2 без генов
+
+
+def test_aggregate_generators_closes_node_whose_generators_are_all_off():
+    """Узел с каталогом генераторов, где все машины выключены, генерации не имеет.
+
+    Узел 3 без каталога сохраняет генерацию, объявленную на самом узле.
+    """
+    nodes = _nodes([{"id": 1}, {"id": 3}])
+    for i in range(2):
+        nodes[i]["exist_gen"] = 1
+        nodes[i]["generation_p_max"] = 30.0
+        nodes[i]["generation_q_min"] = -10.0
+        nodes[i]["generation_q_max"] = 20.0
+    gens = _gens([{"id": 10, "node_id": 1, "status": False, "power_max": 30.0}])
+    stats = _aggregate_generators_on_arrays(nodes, gens)
+    assert stats["closed_nodes"] == 1
+    assert int(nodes[0]["exist_gen"]) == 0
+    assert float(nodes[0]["generation_p_max"]) == 0.0
+    assert float(nodes[0]["generation_q_min"]) == 0.0
+    assert int(nodes[1]["exist_gen"]) == 1
+    assert float(nodes[1]["generation_p_max"]) == 30.0
 
 
 # ---------------------------------------------------------------------------
