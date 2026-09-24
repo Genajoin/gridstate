@@ -61,8 +61,10 @@ from gridstate.telemetry import (
 )
 from gridstate.telemetry.apply_resolved import apply_materialize_resolved, apply_telemetry_resolved
 from gridstate.telemetry.load_only_injection import (
+    generation_only_injection_nodes,
     load_only_injection_nodes,
     release_load_only_injections,
+    widen_generation_only_injections,
 )
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.rpn import apply_rpn_resolved
@@ -250,6 +252,17 @@ class PipelineConfig:
             "release_load_only_injections: a node injection built from the load "
             "component only (PN without PG, QN without QG) is dropped on nodes "
             "with generation; the generation stays free within its range."
+        ),
+    )
+    widen_generation_only_injections: bool = _toggle(
+        True,
+        group=_G_XML,
+        label="Учесть ящик нагрузки в инжекции из генерации",
+        help=(
+            "widen_generation_only_injections: a node injection built from the "
+            "generation component only (PG without PN, QG without QN) on a node "
+            "with a load box is shifted by the box centre and its variance grows "
+            "by (hi - lo)^2 / 12, so the load can settle within its box."
         ),
     )
     apply_gen_v_calibration: bool = _toggle(
@@ -950,6 +963,15 @@ def _s_release_load_only_injections(ctx: _Ctx) -> dict:
     return stats
 
 
+def _s_widen_generation_only_injections(ctx: _Ctx) -> dict:
+    assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
+    assert ctx.derived.telemetry_arg_keys is not None
+    gen_only = generation_only_injection_nodes(
+        ctx.derived.telemetry_resolved, ctx.derived.telemetry_arg_keys
+    )
+    return widen_generation_only_injections(ctx.model, gen_only)
+
+
 def _s_gen_v_calibration(ctx: _Ctx) -> dict:
     return dict(apply_voltage_meas_calibration_for_gen_nodes(ctx.model) or {})
 
@@ -1346,6 +1368,16 @@ STEPS: list[Step] = [
         "with generation is not a net injection.",
         _s_release_load_only_injections,
         toggle="release_load_only_injections",
+        needs_derived=True,
+    ),
+    Step(
+        "widen_generation_only_injections",
+        "Учесть ящик нагрузки в инжекции из генерации",
+        _G_XML,
+        "widen_generation_only_injections: PG without PN (QG without QN) on a node "
+        "with a load box constrains PG - load, load within the box.",
+        _s_widen_generation_only_injections,
+        toggle="widen_generation_only_injections",
         needs_derived=True,
     ),
     Step(
