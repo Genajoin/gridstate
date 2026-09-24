@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.bounds import resolve_bounds
 from gridstate.constants import NodeType
 from gridstate.preprocessing._scan import (
     node_degree_map,
@@ -71,6 +72,18 @@ class PseudoMeasConfig:
     unobservable_v_exclude_real_v_neighbor: bool = True
     unobservable_v_exclude_incident_flow: bool = False
     unobservable_v_min_vm_deviation: float = 0.0
+    # Nodes whose load-only injection measurement was released: generation is
+    # unmeasured there, so the P/Q injection prior spans the generation range.
+    unmeasured_gen_p_nodes: frozenset[int] = frozenset()
+    unmeasured_gen_q_nodes: frozenset[int] = frozenset()
+
+
+def _generation_range_variance(row: np.void, lo_col: str, hi_col: str, fallback: float) -> float:
+    """Squared half-width of the node generation range; ``fallback`` if unset."""
+    lo, hi = resolve_bounds(float(row[lo_col]), float(row[hi_col]))
+    if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+        return max(fallback, (0.5 * (hi - lo)) ** 2)
+    return fallback * 100.0
 
 
 def _detect_empty_model(nodes_arr: np.ndarray) -> bool:
@@ -339,6 +352,14 @@ def _build_pseudo_rows(
             ):
                 var_p = min(var_p, config.zero_inj_variance)
             var_q = var_p
+            if nid in config.unmeasured_gen_p_nodes:
+                var_p = _generation_range_variance(
+                    row, "generation_p_min", "generation_p_max", var_p
+                )
+            if nid in config.unmeasured_gen_q_nodes:
+                var_q = _generation_range_variance(
+                    row, "generation_q_min", "generation_q_max", var_q
+                )
             # Boundary-узлы — большая σ² (см. docstring и
             # docs/audit/audit_se_boundary_nodes.md).
             if nid in boundary:
@@ -448,6 +469,8 @@ def add_pseudo_measurements(
     unobservable_v_exclude_real_v_neighbor: bool = True,
     unobservable_v_exclude_incident_flow: bool = False,
     unobservable_v_min_vm_deviation: float = 0.0,
+    unmeasured_gen_p_nodes: frozenset[int] = frozenset(),
+    unmeasured_gen_q_nodes: frozenset[int] = frozenset(),
 ) -> dict:
     """Дополнить модель псевдо-измерениями для устранения недонаблюдаемости.
 
@@ -524,6 +547,11 @@ def add_pseudo_measurements(
             prior>2% от эталонной SE) →
             жёсткий якорь к номиналу регрессирует медиану. Порог >0 якорит
             только узлы с нетривиальным before_OC V.
+        unmeasured_gen_p_nodes / unmeasured_gen_q_nodes: nodes whose load-only
+            injection measurement was released (see
+            :mod:`gridstate.telemetry.load_only_injection`). Their generation is
+            unmeasured, so the P (Q) injection prior gets the variance of the
+            generation range half-width instead of pulling it to ``pg - pn``.
 
     Returns:
         ``{"v_priors_added": N, "zero_inj_added": N, "boundary_nodes": N}``
@@ -558,6 +586,8 @@ def add_pseudo_measurements(
         unobservable_v_exclude_real_v_neighbor=unobservable_v_exclude_real_v_neighbor,
         unobservable_v_exclude_incident_flow=unobservable_v_exclude_incident_flow,
         unobservable_v_min_vm_deviation=unobservable_v_min_vm_deviation,
+        unmeasured_gen_p_nodes=frozenset(unmeasured_gen_p_nodes),
+        unmeasured_gen_q_nodes=frozenset(unmeasured_gen_q_nodes),
     )
 
     new_rows, stats = _add_pseudo_measurements_on_arrays(
