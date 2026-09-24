@@ -60,6 +60,10 @@ from gridstate.telemetry import (
     resolve_merged_measurement_conflicts,
 )
 from gridstate.telemetry.apply_resolved import apply_materialize_resolved, apply_telemetry_resolved
+from gridstate.telemetry.load_only_injection import (
+    load_only_injection_nodes,
+    release_load_only_injections,
+)
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.rpn import apply_rpn_resolved
 from gridstate.telemetry.voltage_nominal import apply_voltage_nominal_resolved
@@ -237,6 +241,16 @@ class PipelineConfig:
         group=_G_XML,
         label="Агрегировать генераторы к узлу",
         help="aggregate_generators_to_node: multi-gen → узловая генерация.",
+    )
+    release_load_only_injections: bool = _toggle(
+        True,
+        group=_G_XML,
+        label="Снять неполные инжекции ген-узлов",
+        help=(
+            "release_load_only_injections: a node injection built from the load "
+            "component only (PN without PG, QN without QG) is dropped on nodes "
+            "with generation; the generation stays free within its range."
+        ),
     )
     apply_gen_v_calibration: bool = _toggle(
         True,
@@ -720,6 +734,8 @@ class _Ctx:
     cfg: PipelineConfig
     derived: DerivedInputs | None = None
     result: SEResult | None = None
+    # Nodes whose load-only injection was released: {"P": ..., "Q": ...}.
+    released_injections: dict[str, frozenset[int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -924,6 +940,16 @@ def _s_aggregate_generators(ctx: _Ctx) -> dict:
     return dict(aggregate_generators_to_node(ctx.model) or {})
 
 
+def _s_release_load_only_injections(ctx: _Ctx) -> dict:
+    assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
+    assert ctx.derived.telemetry_arg_keys is not None
+    load_only = load_only_injection_nodes(
+        ctx.derived.telemetry_resolved, ctx.derived.telemetry_arg_keys
+    )
+    stats, ctx.released_injections = release_load_only_injections(ctx.model, load_only)
+    return stats
+
+
 def _s_gen_v_calibration(ctx: _Ctx) -> dict:
     return dict(apply_voltage_meas_calibration_for_gen_nodes(ctx.model) or {})
 
@@ -955,6 +981,8 @@ def _s_add_pseudo(ctx: _Ctx) -> dict:
             ctx.model,
             unobservable_v_sigma_frac=ctx.cfg.unobservable_v_sigma_frac,
             unobservable_v_min_vm_deviation=ctx.cfg.unobservable_v_min_vm_deviation,
+            unmeasured_gen_p_nodes=ctx.released_injections.get("P", frozenset()),
+            unmeasured_gen_q_nodes=ctx.released_injections.get("Q", frozenset()),
         )
         or {}
     )
@@ -1309,6 +1337,16 @@ STEPS: list[Step] = [
         "aggregate_generators_to_node.",
         _s_aggregate_generators,
         toggle="aggregate_generators",
+    ),
+    Step(
+        "release_load_only_injections",
+        "Снять неполные инжекции ген-узлов",
+        _G_XML,
+        "release_load_only_injections: PN without PG (QN without QG) on a node "
+        "with generation is not a net injection.",
+        _s_release_load_only_injections,
+        toggle="release_load_only_injections",
+        needs_derived=True,
     ),
     Step(
         "gen_v_calibration",
