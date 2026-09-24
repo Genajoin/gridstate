@@ -117,6 +117,14 @@ def test_releases_load_only_injection_on_generating_node():
         assert row["filter_flag"] == int(FilterFlag.LOAD_ONLY_INJECTION)
 
 
+def test_releases_on_pumped_storage_ranges():
+    """Pumped storage: pumping-only ``[-200, 0]`` and reversible ranges count."""
+    for p_range in ((-200.0, 0.0), (-1200.0, 1200.0)):
+        m = _model(p_range=p_range)
+        stats, _ = release_load_only_injections(m, {"P": frozenset({2}), "Q": frozenset()})
+        assert stats == {"released_p": 1, "released_q": 0}
+
+
 def test_keeps_injection_without_declared_generation_range():
     """``exist_gen`` with an unset [0, 0] range (equivalent, compensator): kept."""
     m = _model(p_range=(0.0, 0.0))

@@ -76,21 +76,23 @@ def release_load_only_injections(
 
     Must run after the generator aggregation: ``exist_gen`` and the generation
     ranges of a node declared only through its generator catalogue are filled
-    there. Only nodes with a declared active generation range are touched.
+    there. Only nodes with a declared active generation range (any sign) are
+    touched.
 
     Returns ``(stats, released)``: counts ``released_p``/``released_q`` and the
     released node sets ``{"P": ..., "Q": ...}`` (for the pseudo-injection prior).
     """
-    # Generation counts only with a declared active range (``p_max > 0``). A node
-    # flagged ``exist_gen`` with an unset ``[0, 0]`` range (boundary equivalents,
-    # compensators) is left alone: its load-only measurement is kept as is.
+    # Generation counts only with a declared, non-degenerate active range of any
+    # sign: pumped storage may be declared ``[-200, 0]`` (pumping only) or
+    # ``[-1200, 1200]``. A node flagged ``exist_gen`` with an unset range
+    # (``[0, 0]`` or sentinels: boundary equivalents, compensators) is left alone.
     nodes = model.nodes.to_numpy()
     gen_nodes: set[int] = set()
     for row in nodes:
         if not bool(row["status"]) or not bool(row["exist_gen"]):
             continue
         lo, hi = resolve_bounds(float(row["generation_p_min"]), float(row["generation_p_max"]))
-        if np.isfinite(hi) and hi > 0.0 and hi > lo:
+        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
             gen_nodes.add(int(row["id"]))
 
     targets = {
