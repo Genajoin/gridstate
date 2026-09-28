@@ -76,6 +76,9 @@ class PseudoMeasConfig:
     # unmeasured there, so the P/Q injection prior spans the generation range.
     unmeasured_gen_p_nodes: frozenset[int] = frozenset()
     unmeasured_gen_q_nodes: frozenset[int] = frozenset()
+    # Loosen the P/Q injection prior of a node with load but no load data (no
+    # box, nothing materialized) when the injection is fixed by measurements.
+    loosen_unknown_load: bool = False
 
 
 def _generation_range_variance(row: np.void, lo_col: str, hi_col: str, fallback: float) -> float:
@@ -219,6 +222,73 @@ def _observability_sets(
     return real_v_neighbor, incident_real_flow
 
 
+def _unknown_load_determined_nodes(
+    nodes_arr: np.ndarray,
+    branches_arr: np.ndarray,
+    meas_arr: np.ndarray,
+) -> tuple[set[int], set[int]]:
+    """Nodes whose unknown load is fixed by measurements: ``(for_p, for_q)``.
+
+    A node qualifies when it has load (``exist_load``), no load box (unset per
+    :func:`gridstate.bounds.resolve_bounds`) and nothing materialized for that
+    component: the zero injection prior there is an absence of data, not data.
+    Such a prior is loosened only where the injection is determined anyway:
+
+    * P: every active incident branch carries a real P flow measurement;
+    * Q: every active incident branch carries a real Q flow measurement or
+      real V measurements at both ends.
+    """
+    names = meas_arr.dtype.names or ()
+    real = meas_arr["status"].astype(bool)
+    if "is_pseudo" in names:
+        real &= ~meas_arr["is_pseudo"].astype(bool)
+    on_branch = real & (meas_arr["object_type"] == OBJ_BRANCH)
+    flow_p = set(
+        meas_arr["object_id"][on_branch & (meas_arr["measurement_type"] == KIND_POWER_P)].tolist()
+    )
+    flow_q = set(
+        meas_arr["object_id"][on_branch & (meas_arr["measurement_type"] == KIND_POWER_Q)].tolist()
+    )
+    real_v = set(
+        meas_arr["object_id"][
+            real
+            & (meas_arr["object_type"] == OBJ_NODE)
+            & (meas_arr["measurement_type"] == KIND_VOLTAGE)
+        ].tolist()
+    )
+
+    incident: dict[int, list[int]] = {}
+    covered_q = set(flow_q)
+    for r in branches_arr:
+        if not r["status"]:
+            continue
+        bid, f, t = int(r["id"]), int(r["from_node"]), int(r["to_node"])
+        incident.setdefault(f, []).append(bid)
+        incident.setdefault(t, []).append(bid)
+        if f in real_v and t in real_v:
+            covered_q.add(bid)
+
+    for_p: set[int] = set()
+    for_q: set[int] = set()
+    for r in nodes_arr:
+        if not r["status"] or not r["exist_load"]:
+            continue
+        nid = int(r["id"])
+        branches = incident.get(nid)
+        if not branches:
+            continue
+        for lo_col, hi_col, val_col, covered, out in (
+            ("load_p_min", "load_p_max", "load_p", flow_p, for_p),
+            ("load_q_min", "load_q_max", "load_q", covered_q, for_q),
+        ):
+            lo, hi = resolve_bounds(float(r[lo_col]), float(r[hi_col]))
+            if np.isfinite(lo) or np.isfinite(hi) or abs(float(r[val_col])) > 1e-6:
+                continue
+            if all(b in covered for b in branches):
+                out.add(nid)
+    return for_p, for_q
+
+
 def _build_pseudo_rows(
     nodes_arr: np.ndarray,
     node_load_props: dict[int, dict] | None,
@@ -233,6 +303,8 @@ def _build_pseudo_rows(
     real_v_neighbor: set[int],
     incident_real_flow: set[int],
     node_degree: dict[int, int],
+    unknown_load_p: set[int] | None = None,
+    unknown_load_q: set[int] | None = None,
 ) -> tuple[list[dict], dict]:
     """Основной цикл: построить pseudo V/P_inj/Q_inj-строки по активным узлам.
 
@@ -245,6 +317,7 @@ def _build_pseudo_rows(
     n_zinj_added = 0
     n_block_bus_v = 0
     n_unobs_v = 0
+    n_unknown_load = 0
 
     new_rows: list[dict] = []
     for row in nodes_arr:
@@ -365,6 +438,13 @@ def _build_pseudo_rows(
             if nid in boundary:
                 var_p *= config.boundary_inj_loose_factor
                 var_q *= config.boundary_inj_loose_factor
+            # Load without data, injection fixed by measurements: the prior
+            # value is an absence of data, keep it out of the estimate.
+            if unknown_load_p and nid in unknown_load_p:
+                var_p *= config.boundary_inj_loose_factor
+                n_unknown_load += 1
+            if unknown_load_q and nid in unknown_load_q:
+                var_q *= config.boundary_inj_loose_factor
             new_rows.append(
                 pseudo_node_measurement(
                     mid, nid, KIND_POWER_INJECTION_P, float(p_inj_prior), float(var_p)
@@ -387,6 +467,7 @@ def _build_pseudo_rows(
         "block_buses": len(block_buses),
         "block_bus_v_loose": n_block_bus_v,
         "unobservable_v_tight": n_unobs_v,
+        "unknown_load_loose": n_unknown_load,
     }
     return new_rows, stats
 
@@ -432,6 +513,13 @@ def _add_pseudo_measurements_on_arrays(
     # Степень узла (активные ветви) — для terminal_inj_tight_degree.
     node_degree = node_degree_map(branches_arr) if config.terminal_inj_tight_degree > 0 else {}
 
+    unknown_load_p: set[int] = set()
+    unknown_load_q: set[int] = set()
+    if config.loosen_unknown_load:
+        unknown_load_p, unknown_load_q = _unknown_load_determined_nodes(
+            nodes_arr, branches_arr, meas_arr
+        )
+
     return _build_pseudo_rows(
         nodes_arr,
         node_load_props,
@@ -445,6 +533,8 @@ def _add_pseudo_measurements_on_arrays(
         real_v_neighbor=real_v_neighbor,
         incident_real_flow=incident_real_flow,
         node_degree=node_degree,
+        unknown_load_p=unknown_load_p,
+        unknown_load_q=unknown_load_q,
     )
 
 
@@ -471,6 +561,7 @@ def add_pseudo_measurements(
     unobservable_v_min_vm_deviation: float = 0.0,
     unmeasured_gen_p_nodes: frozenset[int] = frozenset(),
     unmeasured_gen_q_nodes: frozenset[int] = frozenset(),
+    loosen_unknown_load: bool = False,
 ) -> dict:
     """Дополнить модель псевдо-измерениями для устранения недонаблюдаемости.
 
@@ -552,6 +643,13 @@ def add_pseudo_measurements(
             :mod:`gridstate.telemetry.load_only_injection`). Their generation is
             unmeasured, so the P (Q) injection prior gets the variance of the
             generation range half-width instead of pulling it to ``pg - pn``.
+        loosen_unknown_load: a node with load but no load data (no box, nothing
+            materialized) gets a zero injection prior that states the absence of
+            data, not a value. Where the injection is fixed by measurements anyway
+            (P: real P flows on every incident branch; Q: real Q flows or real V
+            at both ends of every incident branch) that prior's variance is
+            multiplied by ``boundary_inj_loose_factor``. Typical nodes: cut ends of
+            lines leaving the model and substations of neighbouring systems.
 
     Returns:
         ``{"v_priors_added": N, "zero_inj_added": N, "boundary_nodes": N}``
@@ -588,6 +686,7 @@ def add_pseudo_measurements(
         unobservable_v_min_vm_deviation=unobservable_v_min_vm_deviation,
         unmeasured_gen_p_nodes=frozenset(unmeasured_gen_p_nodes),
         unmeasured_gen_q_nodes=frozenset(unmeasured_gen_q_nodes),
+        loosen_unknown_load=loosen_unknown_load,
     )
 
     new_rows, stats = _add_pseudo_measurements_on_arrays(
