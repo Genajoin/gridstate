@@ -44,11 +44,17 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "RELAX_SIGMA",
     "generation_only_injection_nodes",
     "load_only_injection_nodes",
+    "relax_generation_min_to_injection",
     "release_load_only_injections",
     "widen_generation_only_injections",
 ]
+
+#: Margin, in measurement sigmas, by which a P injection reading must miss the
+#: minimum generation of a node before that minimum is dropped.
+RELAX_SIGMA = 3.0
 
 
 def _kind_base(kind: str) -> str:
@@ -161,6 +167,67 @@ def release_load_only_injections(
     nodes_p = frozenset(released[_INJ_MT["P"]])
     nodes_q = frozenset(released[_INJ_MT["Q"]])
     return {"released_p": len(nodes_p), "released_q": len(nodes_q)}, {"P": nodes_p, "Q": nodes_q}
+
+
+def relax_generation_min_to_injection(
+    model: Working,
+    gen_only: dict[str, frozenset[int]],
+) -> dict:
+    """Drop a minimum generation that the node's P injection reading rules out.
+
+    The generation box ``[p_min, p_max]`` of an active node comes from its
+    generator catalogue. A unit that is switched on but runs below its technical
+    minimum (starting up, shutting down, or a stale on/off signal) still gets
+    ``pgen >= p_min`` as a hard bound, and the estimator pushes the surplus into
+    whatever it can: on a radial auxiliary bus behind the unit transformer this
+    gives a collapsed voltage and a reversed angle.
+
+    The reading bounds the generation from above: ``gen = inj + load`` with the
+    load in its box, so ``gen <= z + load_hi + k * sigma`` (``load = 0`` for an
+    injection built from generation components only, see
+    :func:`generation_only_injection_nodes`). When that bound is below
+    ``p_min`` the minimum is replaced by ``min(0, z + load_lo - k * sigma)``,
+    the lowest generation consistent with the reading. Nodes with an unknown
+    load box or generation range are left alone.
+    """
+    nodes = model.nodes.to_numpy()
+    meas = model.measurements.to_numpy()
+    sel = (
+        meas["status"].astype(bool)
+        & ~meas["is_pseudo"].astype(bool)
+        & (meas["object_type"] == 0)
+        & (meas["measurement_type"] == _INJ_MT["P"])
+    )
+    reading: dict[int, tuple[float, float]] = {}
+    for k in np.flatnonzero(sel):
+        reading.setdefault(
+            int(meas["object_id"][k]),
+            (float(meas["value"][k]), float(np.sqrt(meas["variance"][k]))),
+        )
+
+    gen_only_p = gen_only.get("P", frozenset())
+    relaxed = 0
+    for i, row in enumerate(nodes):
+        nid = int(row["id"])
+        if not bool(row["status"]) or not bool(row["exist_gen"]) or nid not in reading:
+            continue
+        p_min, _ = resolve_bounds(float(row["generation_p_min"]), float(row["generation_p_max"]))
+        if not np.isfinite(p_min) or p_min <= 0.0:
+            continue
+        if nid in gen_only_p or not bool(row["exist_load"]):
+            load_lo = load_hi = 0.0
+        else:
+            load_lo, load_hi = resolve_bounds(float(row["load_p_min"]), float(row["load_p_max"]))
+            if not (np.isfinite(load_lo) and np.isfinite(load_hi)):
+                continue
+        z, sigma = reading[nid]
+        if z + load_hi + RELAX_SIGMA * sigma >= p_min:
+            continue
+        nodes[i]["generation_p_min"] = min(0.0, z + load_lo - RELAX_SIGMA * sigma)
+        relaxed += 1
+    if relaxed:
+        model.nodes.update_from_array(nodes)
+    return {"relaxed_p_min": relaxed}
 
 
 def widen_generation_only_injections(
