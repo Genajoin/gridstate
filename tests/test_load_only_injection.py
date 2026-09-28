@@ -225,3 +225,59 @@ def test_keeps_generation_only_injection_without_load_box():
         "widened_p": 0,
         "widened_q": 0,
     }
+
+
+def _gen_min_model(*, z: float, load_p: tuple[float, float] = (0.0, 0.0)):
+    """Unit node(2): generation [60, 145], P injection reading ``z`` with sigma 2."""
+    m = _model(p_range=(60.0, 145.0))
+    nodes = m.nodes.to_numpy().copy()
+    sel = nodes["id"] == 2
+    nodes["load_p_min"][sel], nodes["load_p_max"][sel] = load_p
+    m.nodes.update_from_array(nodes)
+    meas = m.measurements.to_numpy().copy()
+    meas["value"][meas["measurement_type"] == 4] = z
+    m.measurements.update_from_array(meas)
+    return m
+
+
+def _gen_min(m: Working) -> float:
+    nodes = m.nodes.to_numpy()
+    return float(nodes["generation_p_min"][nodes["id"] == 2][0])
+
+
+def test_relaxes_generation_min_below_generation_only_reading():
+    """A unit on at -2 MW against a 60 MW minimum: the minimum follows the reading."""
+    from gridstate.telemetry.load_only_injection import relax_generation_min_to_injection
+
+    m = _gen_min_model(z=-2.0)
+    stats = relax_generation_min_to_injection(m, {"P": frozenset({2}), "Q": frozenset()})
+    assert stats == {"relaxed_p_min": 1}
+    assert math.isclose(_gen_min(m), -2.0 - 3.0 * 2.0)
+
+
+def test_relaxes_generation_min_with_load_box():
+    """Net injection: gen <= z + load_hi + 3 sigma; new minimum z + load_lo - 3 sigma."""
+    from gridstate.telemetry.load_only_injection import relax_generation_min_to_injection
+
+    m = _gen_min_model(z=-40.0, load_p=(5.0, 20.0))
+    assert relax_generation_min_to_injection(m, {"P": frozenset(), "Q": frozenset()}) == {
+        "relaxed_p_min": 1
+    }
+    assert math.isclose(_gen_min(m), -40.0 + 5.0 - 3.0 * 2.0)
+
+
+def test_keeps_generation_min_when_reading_allows_it():
+    """Within 3 sigma of the minimum, or with an unknown load box, nothing changes."""
+    from gridstate.telemetry.load_only_injection import relax_generation_min_to_injection
+
+    m = _gen_min_model(z=55.0)
+    assert relax_generation_min_to_injection(m, {"P": frozenset({2}), "Q": frozenset()}) == {
+        "relaxed_p_min": 0
+    }
+    assert _gen_min(m) == 60.0
+
+    m = _gen_min_model(z=-40.0)  # load box unset: the load may absorb anything
+    assert relax_generation_min_to_injection(m, {"P": frozenset(), "Q": frozenset()}) == {
+        "relaxed_p_min": 0
+    }
+    assert _gen_min(m) == 60.0

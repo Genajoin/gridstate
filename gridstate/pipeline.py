@@ -63,6 +63,7 @@ from gridstate.telemetry.apply_resolved import apply_materialize_resolved, apply
 from gridstate.telemetry.load_only_injection import (
     generation_only_injection_nodes,
     load_only_injection_nodes,
+    relax_generation_min_to_injection,
     release_load_only_injections,
     widen_generation_only_injections,
 )
@@ -252,6 +253,16 @@ class PipelineConfig:
             "release_load_only_injections: a node injection built from the load "
             "component only (PN without PG, QN without QG) is dropped on nodes "
             "with generation; the generation stays free within its range."
+        ),
+    )
+    relax_generation_min_to_injection: bool = _toggle(
+        False,
+        group=_G_XML,
+        label="Снять Pmin, противоречащий инжекции",
+        help=(
+            "relax_generation_min_to_injection: when the P injection reading of a "
+            "generating node, plus its load box and 3 sigma, stays below the minimum "
+            "generation, the minimum is lowered to the reading."
         ),
     )
     widen_generation_only_injections: bool = _toggle(
@@ -963,6 +974,15 @@ def _s_release_load_only_injections(ctx: _Ctx) -> dict:
     return stats
 
 
+def _s_relax_generation_min_to_injection(ctx: _Ctx) -> dict:
+    assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
+    assert ctx.derived.telemetry_arg_keys is not None
+    gen_only = generation_only_injection_nodes(
+        ctx.derived.telemetry_resolved, ctx.derived.telemetry_arg_keys
+    )
+    return relax_generation_min_to_injection(ctx.model, gen_only)
+
+
 def _s_widen_generation_only_injections(ctx: _Ctx) -> dict:
     assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
     assert ctx.derived.telemetry_arg_keys is not None
@@ -1368,6 +1388,16 @@ STEPS: list[Step] = [
         "with generation is not a net injection.",
         _s_release_load_only_injections,
         toggle="release_load_only_injections",
+        needs_derived=True,
+    ),
+    Step(
+        "relax_generation_min_to_injection",
+        "Снять Pmin, противоречащий инжекции",
+        _G_XML,
+        "relax_generation_min_to_injection: a minimum generation above what the "
+        "node P injection reading allows is lowered to the reading.",
+        _s_relax_generation_min_to_injection,
+        toggle="relax_generation_min_to_injection",
         needs_derived=True,
     ),
     Step(
