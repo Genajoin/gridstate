@@ -273,7 +273,8 @@ class PipelineConfig:
             "widen_generation_only_injections: a node injection built from the "
             "generation component only (PG without PN, QG without QN) on a node "
             "with a load box is shifted by the box centre and its variance grows "
-            "by (hi - lo)^2 / 12, so the load can settle within its box."
+            "by (hi - lo)^2 / 12, so the load can settle within its box; with "
+            "load but no box the load is unknown and the measurement is dropped."
         ),
     )
     apply_gen_v_calibration: bool = _toggle(

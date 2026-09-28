@@ -197,7 +197,7 @@ def test_widens_generation_only_injection_by_load_box():
 
     m = _load_node_model(load_p=(0.0, 60.0), load_q=(10.0, 30.0))
     stats = widen_generation_only_injections(m, {"P": frozenset({2}), "Q": frozenset({2})})
-    assert stats == {"widened_p": 1, "widened_q": 1}
+    assert stats == {"widened_p": 1, "widened_q": 1, "released_p": 0, "released_q": 0}
     p = _meas(m, 4)[0]
     q = _meas(m, 5)[0]
     assert math.isclose(p["value"], 100.0 - 30.0)
@@ -208,23 +208,35 @@ def test_widens_generation_only_injection_by_load_box():
     assert p["status"] and q["status"]
 
 
-def test_keeps_generation_only_injection_without_load_box():
-    """Unset load box ([0, 0]) or no load on the node: measurement unchanged."""
+def test_releases_generation_only_injection_with_unknown_load():
+    """Load without a box ([0, 0]): the load is unknown, the measurement is dropped."""
+    from gridstate.constants import FilterFlag
     from gridstate.telemetry.load_only_injection import widen_generation_only_injections
 
-    m = _load_node_model(load_p=(0.0, 0.0))
+    m = _load_node_model(load_p=(0.0, 0.0), load_q=(-9999.0, 9999.0))
     stats = widen_generation_only_injections(m, {"P": frozenset({2}), "Q": frozenset({2})})
-    assert stats == {"widened_p": 0, "widened_q": 0}
-    assert _meas(m, 4)[0]["value"] == 100.0
+    assert stats == {"widened_p": 0, "widened_q": 0, "released_p": 1, "released_q": 1}
+    for mt in (4, 5):
+        row = _meas(m, mt)[0]
+        assert not row["status"]
+        assert row["filter_flag"] == int(FilterFlag.GENERATION_ONLY_INJECTION)
+        assert row["value"] == (100.0 if mt == 4 else 20.0)
+
+
+def test_keeps_generation_only_injection_on_node_without_load():
+    from gridstate.telemetry.load_only_injection import widen_generation_only_injections
 
     m = _load_node_model(load_p=(0.0, 60.0))
     nodes = m.nodes.to_numpy().copy()
     nodes["exist_load"][nodes["id"] == 2] = False
     m.nodes.update_from_array(nodes)
-    assert widen_generation_only_injections(m, {"P": frozenset({2}), "Q": frozenset()}) == {
+    assert widen_generation_only_injections(m, {"P": frozenset({2}), "Q": frozenset({2})}) == {
         "widened_p": 0,
         "widened_q": 0,
+        "released_p": 0,
+        "released_q": 0,
     }
+    assert all(_meas(m, mt)[0]["status"] for mt in (4, 5))
 
 
 def _gen_min_model(*, z: float, load_p: tuple[float, float] = (0.0, 0.0)):
