@@ -21,8 +21,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.bounds import is_sentinel
 from gridstate.constants import (
     MeasurementObjectType,
+    MeasurementQuality,
     MeasurementType,
     NodeType,
 )
@@ -286,37 +288,32 @@ def apply_voltage_meas_calibration_for_gen_nodes(
     *,
     sigma2: float = 0.1,
 ) -> dict:
-    """Override σ² для V-измерений на узлах с активной генерацией + slack.
+    """Tighten σ² of V measurements on generating and slack nodes.
 
-    На реальных XML-моделях V-измерения на узлах подключения
-    генерации (генераторные шины 110-750 кВ) имеют существенно более
-    высокую достоверность чем на пассивных нагрузочных узлах:
+    Voltage transducers on generator buses (110-750 kV) are far more accurate
+    than on passive load buses (σ_V of tenths of a kV against several kV).
+    Without this step the default variance leaves the V measurement a weak
+    anchor; on 750 kV clusters of nuclear plants that gave a systematic
+    voltage sag of a few percent.
 
-    * на gen-узлах стоят АЦП класса 0.1-0.2 → σ_V ≈ 0.2-0.4 кВ;
-    * на нагрузочных σ исчисляется в процентах от Vnom (несколько кВ).
+    Targets:
 
-    Без отдельной калибровки наш default σ² (через ``Sens_Err_U_proc`` в
-    ``apply_voltage_range_filter``) даёт mean σ² ≈ 50 кВ², что делает
-    V-меру слабым якорем. На 750-кВ кластерах АЭС это давало
-    систематическую просадку V на единицы процентов. Эталонный OC
-    использует tight σ² на gen-шинах через свою калибровку; этот
-    фильтр воспроизводит то же поведение.
+    * active nodes with ``generation_p_max`` set after
+      :func:`aggregate_generators_to_node`. The ±9999 sentinel means "no
+      data" (:func:`gridstate.bounds.is_sentinel`), not generation, so such
+      nodes are skipped;
+    * slack nodes (``node_type == NodeType.SLACK``).
 
-    Применяется к:
-    * узлам с ``generation_p_max != 0`` после
-      :func:`aggregate_generators_to_node` (= узлы с активными ген.);
-    * slack-узлам (``node_type == NodeType.SLACK``) — они почти всегда
-      сборные шины с эталонным V-meas.
-
-    При σ²=0.1 ΔV p50/p95 заметно улучшается, особенно для 750-кВ
-    хвостов.
+    Only measurements of ``quality == GOOD`` are tightened. A measurement an
+    earlier stage marked QUESTIONABLE (telemetry quality, the voltage range
+    filter) keeps its inflated variance: tightening it would turn a suspect
+    reading into the strongest anchor of the estimate.
 
     Args:
-        model: ``Working`` после aggregate_generators_to_node
-            и apply_voltage_range_filter.
-        sigma2: целевая σ² для V-меры (p.u. или kV² — единицы как у
-            существующих V-measurements в model). Default 0.1
-            (≈ σ=0.32 кВ для kV-units).
+        model: ``Working`` after aggregate_generators_to_node
+            and apply_voltage_range_filter.
+        sigma2: target σ² of the V measurement, in the units of the model's
+            V measurements. Default 0.1 (σ ≈ 0.32 kV).
 
     Returns:
         ``{"updated_meas": N, "target_nodes": N}``.
@@ -344,21 +341,25 @@ def _voltage_meas_calibration_on_arrays(
     mt_v: int,
     sigma2: float,
 ) -> dict:
-    """ЯДРО: tight σ² для V-мер на gen/slack-узлах над контрактом.
+    """Core of :func:`apply_voltage_meas_calibration_for_gen_nodes` on arrays.
 
-    Цели — узлы с ``generation_p_max != 0`` или ``node_type == SLACK`` (енумы
-    готовыми int из адаптера). Мутирует ``meas_arr`` (``variance``/``weight``)
-    in place, читает ``nodes_arr``. БЕЗ внешних зависимостей и XML.
+    Targets are active nodes with a non-zero, non-sentinel
+    ``generation_p_max`` or ``node_type == SLACK`` (enum values as ints).
+    Mutates ``variance``/``weight`` of GOOD measurements in ``meas_arr`` in
+    place; reads ``nodes_arr``.
     """
+    has_gen_max = "generation_p_max" in (nodes_arr.dtype.names or ())
     target_ids: set[int] = set()
     for n in nodes_arr:
         if not bool(n["status"]):
             continue
-        if int(n["node_type"]) == slack_type or (
-            "generation_p_max" in (nodes_arr.dtype.names or ())
-            and float(n["generation_p_max"]) != 0.0
-        ):
+        if int(n["node_type"]) == slack_type:
             target_ids.add(int(n["id"]))
+            continue
+        if has_gen_max:
+            p_max = float(n["generation_p_max"])
+            if p_max != 0.0 and not is_sentinel(p_max):
+                target_ids.add(int(n["id"]))
 
     n_updated = 0
     for i in range(len(meas_arr)):
@@ -369,6 +370,8 @@ def _voltage_meas_calibration_on_arrays(
         if int(meas_arr[i]["measurement_type"]) != mt_v:
             continue
         if int(meas_arr[i]["object_id"]) not in target_ids:
+            continue
+        if int(meas_arr[i]["quality"]) != int(MeasurementQuality.GOOD):
             continue
         meas_arr[i]["variance"] = float(sigma2)
         meas_arr[i]["weight"] = 1.0 / float(sigma2) if sigma2 > 0 else 0.0
