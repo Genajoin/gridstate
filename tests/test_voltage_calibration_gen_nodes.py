@@ -275,3 +275,48 @@ def test_inactive_node_not_in_targets() -> None:
 
     assert stats["target_nodes"] == 0
     assert stats["updated_meas"] == 0
+
+
+def test_sentinel_generation_bound_not_calibrated() -> None:
+    """A ±9999 "no data" generation bound does not make a node a generator."""
+    from gridstate.constants import NodeType
+    from gridstate.working import Working
+
+    m = Working.empty()
+    m.nodes.add(
+        {
+            "id": 8,
+            "voltage_nominal": 500.0,
+            "exist_gen": 0,
+            "exist_load": 0,
+            "status": True,
+            "node_type": int(NodeType.PQ),
+            "generation_p_min": -9999.0,
+            "generation_p_max": 9999.0,
+        }
+    )
+    _add_voltage_meas(m, 8, 352.0, variance=50.0, mid=1)
+    stats = apply_voltage_meas_calibration_for_gen_nodes(m, sigma2=0.1)
+
+    assert stats["target_nodes"] == 0
+    assert stats["updated_meas"] == 0
+    assert m.measurements.to_numpy()[0]["variance"] == pytest.approx(50.0)
+
+
+def test_questionable_measurement_keeps_its_variance() -> None:
+    """A measurement marked QUESTIONABLE upstream is not tightened."""
+    from gridstate.constants import MeasurementQuality
+
+    m = _build_model_three_node_types()
+    aggregate_generators_to_node(m)
+    me_arr = m.measurements.to_numpy().copy()
+    me_arr["quality"][me_arr["id"] == 2] = int(MeasurementQuality.QUESTIONABLE)
+    me_arr["variance"][me_arr["id"] == 2] = 5000.0
+    m.measurements.update_from_array(me_arr)
+
+    stats = apply_voltage_meas_calibration_for_gen_nodes(m, sigma2=0.1)
+
+    me_by_id = {int(r["id"]): r for r in m.measurements.to_numpy()}
+    assert me_by_id[2]["variance"] == pytest.approx(5000.0)
+    assert me_by_id[1]["variance"] == pytest.approx(0.1)
+    assert stats["updated_meas"] == 1
