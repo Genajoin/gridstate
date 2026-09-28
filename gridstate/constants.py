@@ -75,6 +75,7 @@ class FilterFlag(IntEnum):
     V_BELOW_HALF_NOMINAL = 4
     P_SIGN_INCONSISTENCY = 5
     LOAD_ONLY_INJECTION = 6
+    GENERATION_ONLY_INJECTION = 7
 
 
 class MeasurementObjectType(IntEnum):

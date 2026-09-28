@@ -25,6 +25,11 @@ box centre and the variance grows by that of a load uniform in the box,
 ``(hi - lo)**2 / 12``. Both algorithms use it as is: WLS gets an honest net
 injection, IPM lets the load settle within its box while the generation reading
 still holds.
+
+When the node has load but no load box (``[0, 0]`` or sentinels), the load is
+unknown and the generation-only reading says nothing about the net injection:
+it would pin the load to zero. Such a measurement is deactivated, like the
+load-only one above.
 """
 
 from __future__ import annotations
@@ -238,11 +243,14 @@ def widen_generation_only_injections(
 
     On an active node with load and a declared load box ``[lo, hi]`` the P (Q)
     injection built from generation alone gets ``value -= (lo + hi) / 2`` and
-    ``variance += (hi - lo)**2 / 12``. Nodes without load or with an unset box
-    (``[0, 0]``, sentinels) are left alone.
+    ``variance += (hi - lo)**2 / 12``. On an active node with load and an unset
+    box (``[0, 0]``, sentinels) the load is unknown, so the measurement is
+    deactivated (``FilterFlag.GENERATION_ONLY_INJECTION``). Nodes without load
+    are left alone.
     """
     nodes = model.nodes.to_numpy()
     box: dict[tuple[int, int], tuple[float, float]] = {}
+    unknown: set[tuple[int, int]] = set()
     for row in nodes:
         if not bool(row["status"]) or not bool(row["exist_load"]):
             continue
@@ -256,9 +264,12 @@ def widen_generation_only_injections(
             lo, hi = resolve_bounds(float(row[lo_col]), float(row[hi_col]))
             if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
                 box[(nid, _INJ_MT[pq])] = (lo, hi)
+            elif not (np.isfinite(lo) or np.isfinite(hi)):
+                unknown.add((nid, _INJ_MT[pq]))
 
     counts = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
-    if box:
+    released = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
+    if box or unknown:
         meas = model.measurements.to_numpy().copy()
         sel = (
             meas["status"].astype(bool)
@@ -268,7 +279,13 @@ def widen_generation_only_injections(
         )
         for k in np.flatnonzero(sel):
             mt = int(meas["measurement_type"][k])
-            bounds = box.get((int(meas["object_id"][k]), mt))
+            key = (int(meas["object_id"][k]), mt)
+            if key in unknown:
+                meas["status"][k] = False
+                meas["filter_flag"][k] = int(FilterFlag.GENERATION_ONLY_INJECTION)
+                released[mt] += 1
+                continue
+            bounds = box.get(key)
             if bounds is None:
                 continue
             lo, hi = bounds
@@ -276,6 +293,11 @@ def widen_generation_only_injections(
             meas["variance"][k] += (hi - lo) ** 2 / 12.0
             meas["weight"][k] = 1.0 / meas["variance"][k]
             counts[mt] += 1
-        if any(counts.values()):
+        if any(counts.values()) or any(released.values()):
             model.measurements.update_from_array(meas)
-    return {"widened_p": counts[_INJ_MT["P"]], "widened_q": counts[_INJ_MT["Q"]]}
+    return {
+        "widened_p": counts[_INJ_MT["P"]],
+        "widened_q": counts[_INJ_MT["Q"]],
+        "released_p": released[_INJ_MT["P"]],
+        "released_q": released[_INJ_MT["Q"]],
+    }
