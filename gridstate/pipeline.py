@@ -352,6 +352,17 @@ class PipelineConfig:
         label="Добавить псевдо-приоры",
         help="add_pseudo_measurements: слабые V/P_inj/Q_inj приоры от недонаблюдаемости.",
     )
+    loosen_unknown_load_pseudo: bool = _toggle(
+        True,
+        group=_G_PSEUDO,
+        label="Рыхлый приор нагрузки без данных",
+        help=(
+            "add_pseudo_measurements(loosen_unknown_load): a node with load but no "
+            "load box and nothing materialized gets its zero P/Q injection prior "
+            "loosened where the injection is fixed by flow (or, for Q, voltage) "
+            "measurements."
+        ),
+    )
     unobservable_v_sigma_frac: float = _param(
         0.02,
         group=_G_PSEUDO,
@@ -1026,6 +1037,7 @@ def _s_add_pseudo(ctx: _Ctx) -> dict:
             unobservable_v_min_vm_deviation=ctx.cfg.unobservable_v_min_vm_deviation,
             unmeasured_gen_p_nodes=ctx.released_injections.get("P", frozenset()),
             unmeasured_gen_q_nodes=ctx.released_injections.get("Q", frozenset()),
+            loosen_unknown_load=ctx.cfg.loosen_unknown_load_pseudo,
         )
         or {}
     )
