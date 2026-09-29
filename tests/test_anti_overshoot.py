@@ -113,6 +113,36 @@ def test_anti_overshoot_revert_when_not_improved():
     assert abs(_max_voltage_ratio(m) - 1.30) < 1e-6
 
 
+def test_anti_overshoot_stops_after_round_that_did_not_help():
+    """Проход не снизил max-V ниже базы, но поднял новый узел выше потолка —
+    второй проход не делается, итог — откат."""
+    m = _build_model(overshoot_pu=1.30)
+    m.nodes.add(
+        {
+            "id": 3,
+            "voltage_nominal": 110.0,
+            "voltage_magnitude": 110.0,
+            "voltage_angle": 0.0,
+            "status": True,
+            "node_type": int(NodeType.PQ),
+        }
+    )
+    calls = []
+
+    def resolve():
+        calls.append(1)
+        m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.10})
+        m.nodes.update(3, {"voltage_magnitude": 110.0 * 1.40})  # новый overshoot
+        return "REFINED"
+
+    result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
+
+    assert len(calls) == 1
+    assert result == "BASE"
+    assert stats["accepted"] is False
+    assert stats["tightened"] == 1
+
+
 def test_anti_overshoot_noop_when_no_overshoot():
     """Нет узла > ceiling → resolve не зовётся, ничего не добавлено."""
     m = _build_model(overshoot_pu=1.05)  # в пределах нормы
