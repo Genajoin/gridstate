@@ -37,7 +37,7 @@ from gridstate.utils import id_to_pos_map
 
 if TYPE_CHECKING:
     from gridstate.units import NetworkPU
-    from gridstate.working import Working, _ArrayCollection, _RowProxy
+    from gridstate.working import Working, _ArrayCollection
 
 
 logger = logging.getLogger(__name__)
@@ -128,196 +128,162 @@ def build_z_and_r(
         R: (m × m) sparse — диагональ ``σ² = variance`` (в p.u.²);
         meas_index: метаданные для последующего h(x).
     """
-    bus_id_to_pos = id_to_pos_map(network_pu.bus_ids)
-    branch_id_to_pos = id_to_pos_map(network_pu.branch_ids)
+    arr = measurements.to_numpy()
+    base_mva = float(network_pu.base_mva)
+    ids = arr["id"].astype(np.int64)
+    kind = arr["measurement_type"].astype(np.int64)
+    obj_kind = arr["object_type"].astype(np.int64)
+    obj_id = arr["object_id"].astype(np.int64)
+    value = arr["value"].astype(np.float64)
+    variance = arr["variance"].astype(np.float64)
 
-    branches_arr = model.branches.to_numpy()
-    branch_id_to_row = id_to_pos_map(branches_arr["id"])
-
-    z_values: list[float] = []
-    variances: list[float] = []
-    kinds: list[int] = []
-    object_kinds: list[int] = []
-    object_positions: list[int] = []
-    branch_sides: list[int] = []
-    meas_ids: list[int] = []
-
-    for meas in measurements:
-        if not meas.status:
-            continue
-        if int(meas.quality) == MeasurementQuality.BAD:
-            continue
-        if meas.variance <= 0:
-            logger.warning(
-                "Измерение id=%d имеет variance=%g ≤ 0 — пропущено",
-                int(meas.id),
-                meas.variance,
-            )
-            continue
-
-        kind = int(meas.measurement_type)
-        obj_kind = int(meas.object_type)
-        obj_id = int(meas.object_id)
-
-        # ----- Узловые измерения -----
-        if obj_kind == OBJ_NODE:
-            if obj_id not in bus_id_to_pos:
-                logger.warning(
-                    "Измерение id=%d ссылается на отсутствующий узел id=%d — пропущено",
-                    int(meas.id),
-                    obj_id,
-                )
-                continue
-            pos = bus_id_to_pos[obj_id]
-            value_pu, variance_pu = _convert_node_meas(meas, network_pu, pos, kind)
-            side = SIDE_NONE
-
-        # ----- Ветвевые измерения -----
-        elif obj_kind == OBJ_BRANCH:
-            if obj_id not in branch_id_to_pos:
-                logger.warning(
-                    "Измерение id=%d ссылается на отсутствующую ветвь id=%d — пропущено",
-                    int(meas.id),
-                    obj_id,
-                )
-                continue
-            row = branch_id_to_row[obj_id]
-            side = _detect_branch_side(meas, branches_arr[row], kind)
-            if side == SIDE_NONE:
-                logger.warning(
-                    "Не удалось определить сторону (from/to) у измерения id=%d на ветви %d "
-                    "— пропущено",
-                    int(meas.id),
-                    obj_id,
-                )
-                continue
-            pos = branch_id_to_pos[obj_id]
-            v_base = (
-                network_pu.bus_vn_kv[network_pu.from_idx[pos]]
-                if side == SIDE_FROM
-                else network_pu.bus_vn_kv[network_pu.to_idx[pos]]
-            )
-            value_pu, variance_pu = _convert_branch_meas(
-                meas, kind, v_base_kv=float(v_base), base_mva=network_pu.base_mva
-            )
-
-        # ----- Измерения генератора -----
-        elif obj_kind == OBJ_GENERATOR:
-            # Генератор привязан к узлу — конвертируем как узловое инъекционное
-            # измерение.
-            gen = model.generators.get_by_id(obj_id)
-            if gen is None or int(gen.node_id) not in bus_id_to_pos:
-                logger.warning(
-                    "Измерение id=%d на генераторе %d: генератор/узел не найдены — пропущено",
-                    int(meas.id),
-                    obj_id,
-                )
-                continue
-            pos = bus_id_to_pos[int(gen.node_id)]
-            obj_kind = OBJ_NODE
-            value_pu, variance_pu = _convert_node_meas(meas, network_pu, pos, kind)
-            side = SIDE_NONE
-        else:
-            logger.warning(
-                "Измерение id=%d имеет неизвестный object_type=%d — пропущено",
-                int(meas.id),
-                obj_kind,
-            )
-            continue
-
-        z_values.append(value_pu)
-        variances.append(variance_pu)
-        kinds.append(kind)
-        object_kinds.append(obj_kind)
-        object_positions.append(pos)
-        branch_sides.append(side)
-        meas_ids.append(int(meas.id))
-
-    if not z_values:
-        logger.warning("В _ArrayCollection не оказалось ни одного валидного измерения")
-
-    z = np.array(z_values, dtype=np.float64)
-    variance_arr = np.array(variances, dtype=np.float64)
-    r_matrix = cast("csr_matrix", diags(variance_arr, format="csr"))
-
-    meas_index = MeasurementIndex(
-        kind=np.array(kinds, dtype=np.int8),
-        object_kind=np.array(object_kinds, dtype=np.int8),
-        object_pos=np.array(object_positions, dtype=np.int64),
-        branch_side=np.array(branch_sides, dtype=np.int8),
-        meas_id=np.array(meas_ids, dtype=np.int64),
+    keep = arr["status"].astype(bool) & (
+        arr["quality"].astype(np.int64) != int(MeasurementQuality.BAD)
     )
-    return z, r_matrix, meas_index
+    for i in np.where(keep & (variance <= 0))[0]:
+        logger.warning(
+            "Измерение id=%d имеет variance=%g ≤ 0 — пропущено", int(ids[i]), variance[i]
+        )
+    keep &= ~(variance <= 0)
+
+    pos = np.full(arr.size, -1, dtype=np.int64)
+    side = np.full(arr.size, SIDE_NONE, dtype=np.int64)
+    v_base = np.full(arr.size, np.nan, dtype=np.float64)
+
+    # ----- Узловые измерения (и измерения генератора — по узлу генератора) -----
+    bus_id_to_pos = id_to_pos_map(network_pu.bus_ids)
+    is_node = keep & (obj_kind == OBJ_NODE)
+    pos[is_node] = _lookup(bus_id_to_pos, obj_id[is_node])
+    for i in np.where(is_node & (pos < 0))[0]:
+        logger.warning(
+            "Измерение id=%d ссылается на отсутствующий узел id=%d — пропущено",
+            int(ids[i]),
+            int(obj_id[i]),
+        )
+    is_gen = keep & (obj_kind == OBJ_GENERATOR)
+    for i in np.where(is_gen)[0]:
+        gen = model.generators.get_by_id(int(obj_id[i]))
+        if gen is None or int(gen.node_id) not in bus_id_to_pos:
+            logger.warning(
+                "Измерение id=%d на генераторе %d: генератор/узел не найдены — пропущено",
+                int(ids[i]),
+                int(obj_id[i]),
+            )
+            continue
+        pos[i] = bus_id_to_pos[int(gen.node_id)]
+    at_node = (is_node | is_gen) & (pos >= 0)
+
+    # ----- Ветвевые измерения -----
+    is_branch = keep & (obj_kind == OBJ_BRANCH)
+    b_idx = np.where(is_branch)[0]
+    if b_idx.size:
+        branch_pos = _lookup(id_to_pos_map(network_pu.branch_ids), obj_id[b_idx])
+        for i in b_idx[branch_pos < 0]:
+            logger.warning(
+                "Измерение id=%d ссылается на отсутствующую ветвь id=%d — пропущено",
+                int(ids[i]),
+                int(obj_id[i]),
+            )
+        found = branch_pos >= 0
+        b_idx, branch_pos = b_idx[found], branch_pos[found]
+        branches_arr = model.branches.to_numpy()
+        rows = branches_arr[_lookup(id_to_pos_map(branches_arr["id"]), obj_id[b_idx])]
+        b_side = _branch_sides(arr[b_idx], rows, kind[b_idx], ids[b_idx])
+        for i in b_idx[b_side == SIDE_NONE]:
+            logger.warning(
+                "Не удалось определить сторону (from/to) у измерения id=%d на ветви %d — пропущено",
+                int(ids[i]),
+                int(obj_id[i]),
+            )
+        ok = b_side != SIDE_NONE
+        b_idx, branch_pos, b_side = b_idx[ok], branch_pos[ok], b_side[ok]
+        pos[b_idx] = branch_pos
+        side[b_idx] = b_side
+        end = np.where(
+            b_side == SIDE_FROM, network_pu.from_idx[branch_pos], network_pu.to_idx[branch_pos]
+        )
+        v_base[b_idx] = network_pu.bus_vn_kv[end]
+    at_branch = np.zeros(arr.size, dtype=bool)
+    at_branch[b_idx] = True
+
+    for i in np.where(keep & ~np.isin(obj_kind, (OBJ_NODE, OBJ_BRANCH, OBJ_GENERATOR)))[0]:
+        logger.warning(
+            "Измерение id=%d имеет неизвестный object_type=%d — пропущено",
+            int(ids[i]),
+            int(obj_kind[i]),
+        )
+
+    # ----- Перевод в p.u. -----
+    z = np.full(arr.size, np.nan, dtype=np.float64)
+    var_pu = np.full(arr.size, np.nan, dtype=np.float64)
+    power = np.isin(
+        kind, (KIND_POWER_P, KIND_POWER_Q, KIND_POWER_INJECTION_P, KIND_POWER_INJECTION_Q)
+    )
+    node_power = at_node & power
+    node_v = at_node & (kind == KIND_VOLTAGE)
+    if np.any(at_node & ~node_power & ~node_v):
+        bad = int(kind[np.where(at_node & ~node_power & ~node_v)[0][0]])
+        raise ValueError(f"Тип измерения {bad} не поддерживается на узле")
+    branch_power = at_branch & np.isin(kind, (KIND_POWER_P, KIND_POWER_Q))
+    branch_i = at_branch & (kind == KIND_CURRENT)
+    if np.any(at_branch & ~branch_power & ~branch_i):
+        bad = int(kind[np.where(at_branch & ~branch_power & ~branch_i)[0][0]])
+        raise ValueError(f"Тип измерения {bad} не поддерживается на ветви")
+    for sel in (node_power, branch_power):
+        z[sel] = value[sel] / base_mva
+        var_pu[sel] = variance[sel] / (base_mva * base_mva)
+    vb = network_pu.bus_vn_kv[pos[node_v]].astype(np.float64)
+    z[node_v] = value[node_v] / vb
+    var_pu[node_v] = variance[node_v] / (vb * vb)
+    # Базовый ток на стороне ветви: I_base = base_mva·1000 / (√3·V_base_kV) А.
+    i_base = base_mva * 1000.0 / (np.sqrt(3.0) * v_base[branch_i])
+    z[branch_i] = value[branch_i] / i_base
+    var_pu[branch_i] = variance[branch_i] / (i_base * i_base)
+
+    used = at_node | at_branch
+    if not used.any():
+        logger.warning("В _ArrayCollection не оказалось ни одного валидного измерения")
+    r_matrix = cast("csr_matrix", diags(var_pu[used], format="csr"))
+    meas_index = MeasurementIndex(
+        kind=kind[used].astype(np.int8),
+        object_kind=np.where(obj_kind[used] == OBJ_GENERATOR, OBJ_NODE, obj_kind[used]).astype(
+            np.int8
+        ),
+        object_pos=pos[used],
+        branch_side=side[used].astype(np.int8),
+        meas_id=ids[used],
+    )
+    return z[used], r_matrix, meas_index
 
 
-# ---------------------------------------------------------------------------
-# Внутренние конверторы единиц
-# ---------------------------------------------------------------------------
+def _lookup(id_to_pos: dict[int, int], ids: np.ndarray) -> np.ndarray:
+    """Позиции объектов по ``id`` (нет такого ``id`` → ``−1``)."""
+    return np.array([id_to_pos.get(i, -1) for i in ids.tolist()], dtype=np.int64)
 
 
-def _convert_node_meas(
-    meas: _RowProxy, network_pu: NetworkPU, pos: int, kind: int
-) -> tuple[float, float]:
-    """Узловое измерение: МВт/МВАр/кВ → p.u. и σ² → p.u.²."""
-    v = float(meas.value)
-    var = float(meas.variance)
-    base_mva = network_pu.base_mva
+def _branch_sides(
+    meas: np.ndarray, rows: np.ndarray, kind: np.ndarray, ids: np.ndarray
+) -> np.ndarray:
+    """Сторона ветви для каждого измерения (``SIDE_NONE`` — не определена).
 
-    if kind in (KIND_POWER_P, KIND_POWER_Q, KIND_POWER_INJECTION_P, KIND_POWER_INJECTION_Q):
-        return v / base_mva, var / (base_mva * base_mva)
-    if kind == KIND_VOLTAGE:
-        v_base = float(network_pu.bus_vn_kv[pos])
-        return v / v_base, var / (v_base * v_base)
-    # CURRENT на узле — нестандарт, но допустим (трактуется как |V|/Z_local
-    # измерение); пока не поддерживается.
-    raise ValueError(f"Тип измерения {kind} не поддерживается на узле")
-
-
-def _convert_branch_meas(
-    meas: _RowProxy, kind: int, *, v_base_kv: float, base_mva: float
-) -> tuple[float, float]:
-    """Ветвевое измерение."""
-    v = float(meas.value)
-    var = float(meas.variance)
-
-    if kind in (KIND_POWER_P, KIND_POWER_Q):
-        return v / base_mva, var / (base_mva * base_mva)
-    if kind == KIND_CURRENT:
-        # Базовый ток на стороне ветви: I_base = base_mva·1000 / (√3·V_base_kV) А.
-        i_base_a = base_mva * 1000.0 / (np.sqrt(3.0) * v_base_kv)
-        return v / i_base_a, var / (i_base_a * i_base_a)
-    raise ValueError(f"Тип измерения {kind} не поддерживается на ветви")
-
-
-def _detect_branch_side(meas: _RowProxy, branch_row: np.void, kind: int) -> int:
-    """Определить сторону ветви для измерения.
-
-    Сначала ищется поле ``branch_side`` в ``MEASUREMENT_DTYPE`` (если оно
-    присутствует). Иначе — реверс-поиск по ссылкам
-    ``ti_p_from/ti_q_from/ti_p_to/ti_q_to`` в строке ветви.
+    Сначала поле ``branch_side`` измерения (если оно есть в dtype), иначе
+    обратный поиск по ссылкам ``ti_p_from/ti_q_from/ti_p_to/ti_q_to`` строки
+    ветви. Для тока отдельных ti-полей нет — проверяются все четыре.
     """
-    # Прямое поле, если расширено.
-    direct = getattr(meas, "branch_side", None)
-    if direct is not None and int(direct) in (SIDE_FROM, SIDE_TO):
-        return int(direct)
-
-    meas_id = int(meas.id)
-    if kind == KIND_POWER_P:
-        if int(branch_row["ti_p_from"]) == meas_id:
-            return SIDE_FROM
-        if int(branch_row["ti_p_to"]) == meas_id:
-            return SIDE_TO
-    elif kind == KIND_POWER_Q:
-        if int(branch_row["ti_q_from"]) == meas_id:
-            return SIDE_FROM
-        if int(branch_row["ti_q_to"]) == meas_id:
-            return SIDE_TO
-    elif kind == KIND_CURRENT:
-        # Для тока в BRANCH_DTYPE отдельных ti-полей нет; пробуем все четыре.
-        for f in ("ti_p_from", "ti_q_from"):
-            if int(branch_row[f]) == meas_id:
-                return SIDE_FROM
-        for f in ("ti_p_to", "ti_q_to"):
-            if int(branch_row[f]) == meas_id:
-                return SIDE_TO
-    return SIDE_NONE
+    side = np.full(ids.size, SIDE_NONE, dtype=np.int64)
+    ref = {
+        f: rows[f].astype(np.int64) == ids for f in ("ti_p_from", "ti_q_from", "ti_p_to", "ti_q_to")
+    }
+    p, q, cur = kind == KIND_POWER_P, kind == KIND_POWER_Q, kind == KIND_CURRENT
+    # Порядок присваиваний: последнее выигрывает, поэтому «to» раньше «from».
+    side[p & ref["ti_p_to"]] = SIDE_TO
+    side[p & ref["ti_p_from"]] = SIDE_FROM
+    side[q & ref["ti_q_to"]] = SIDE_TO
+    side[q & ref["ti_q_from"]] = SIDE_FROM
+    side[cur & (ref["ti_p_to"] | ref["ti_q_to"])] = SIDE_TO
+    side[cur & (ref["ti_p_from"] | ref["ti_q_from"])] = SIDE_FROM
+    if meas.dtype.names is not None and "branch_side" in meas.dtype.names:
+        direct = meas["branch_side"].astype(np.int64)
+        explicit = (direct == SIDE_FROM) | (direct == SIDE_TO)
+        side[explicit] = direct[explicit]
+    return side
