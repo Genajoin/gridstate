@@ -311,3 +311,59 @@ def test_measurement_on_unknown_node_skipped() -> None:
     z, _, idx = build_z_and_r(m, m.measurements, pu)
     assert len(z) == 0
     assert 5 not in idx.meas_id.tolist()
+
+
+# ------------------------------------------- current, generator, NaN variance
+def test_current_side_from_q_reference_and_base_current() -> None:
+    from gridstate.z_vector import KIND_CURRENT
+
+    m = _build_two_bus_with_measurements()
+    m.measurements.add(
+        {
+            "id": 1004,  # ti_q_to of branch 100
+            "object_type": OBJ_BRANCH,
+            "object_id": 100,
+            "measurement_type": KIND_CURRENT,
+            "value": 150.0,
+            "variance": 4.0,
+            "status": True,
+            "quality": 0,
+        }
+    )
+    pu = model_to_pu(m)
+    z, R, idx = build_z_and_r(m, m.measurements, pu)
+    k = idx.meas_id.tolist().index(1004)
+    i_base = BASE_MVA * 1000.0 / (np.sqrt(3.0) * 110.0)
+    assert idx.branch_side[k] == SIDE_TO
+    assert z[k] == 150.0 / i_base
+    assert R.diagonal()[k] == 4.0 / (i_base * i_base)
+
+
+def test_generator_measurement_goes_to_its_node() -> None:
+    m = _build_two_bus_with_measurements()
+    m.generators.add({"id": 7, "node_id": 2, "status": True})
+    m.measurements.add(
+        {
+            "id": 70,
+            "object_type": 2,  # generator
+            "object_id": 7,
+            "measurement_type": KIND_POWER_INJECTION_P,
+            "value": 12.0,
+            "variance": 1.0,
+            "status": True,
+            "quality": 0,
+        }
+    )
+    pu = model_to_pu(m)
+    z, _, idx = build_z_and_r(m, m.measurements, pu)
+    k = idx.meas_id.tolist().index(70)
+    assert idx.object_kind[k] == OBJ_NODE
+    assert idx.object_pos[k] == int(np.where(pu.bus_ids == 2)[0][0])
+    assert z[k] == 12.0 / BASE_MVA
+
+
+def test_measurements_keep_collection_order() -> None:
+    m = _build_two_bus_with_measurements()
+    pu = model_to_pu(m)
+    _, _, idx = build_z_and_r(m, m.measurements, pu)
+    assert idx.meas_id.tolist() == [1, 2, 3, 4, 1001, 1003]
