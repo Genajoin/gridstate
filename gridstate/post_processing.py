@@ -727,6 +727,8 @@ def refine_anti_overshoot(
         ceiling: порог overshoot (pu); узлы выше него — кандидаты.
         inj_sigma: σ (МВ·А) tight инжекц-prior. Малая → жёстко пиннит инжекцию≈0.
         max_iters: макс. внешних проходов (каждый ловит новые overshoot-узлы).
+            Цикл прерывается после первого же прохода, не снизившего
+            ``max(V/Vnom)`` относительно базы.
         mid_start: стартовый id для добавляемых pseudo-мер.
 
     Returns:
@@ -779,6 +781,11 @@ def refine_anti_overshoot(
                 mid += 1
             tightened.add(nid)
         refined = resolve()
+        # Раунд не опустил max V/Vnom ниже базы — дальнейшие раунды
+        # добавляют priors к уже дестабилизированному решению; итог всё
+        # равно пойдёт в откат, если не станет лучше базы.
+        if _max_voltage_ratio(model) >= maxr0 - 1e-4:
+            break
 
     maxr1 = _max_voltage_ratio(model)
     accepted = bool(tightened) and maxr1 < maxr0 - 1e-4

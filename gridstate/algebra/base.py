@@ -28,11 +28,12 @@ Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 from scipy.sparse import csr_matrix, hstack, vstack
 
+from gridstate.algebra.jacobian_pattern import JacobianPattern, UnsupportedMeasurementError
 from gridstate.z_vector import (
     KIND_BOX_PRIOR_PGEN,
     KIND_BOX_PRIOR_PNAG,
@@ -108,6 +109,7 @@ class BaseAlgebra:
         self.to_idx = network_pu.to_idx
         self.n_bus = network_pu.n_bus
         self.n_branch = network_pu.n_branch
+        self._jacobian_pattern: JacobianPattern | Literal[False] | None = None
 
     # ------------------------------------------------------------------ h(E)
     def evaluate_h(
@@ -283,12 +285,31 @@ class BaseAlgebra:
 
     # ----------------------------------------------------------- H = ∂h/∂E
     def evaluate_jacobian(self, v: np.ndarray, delta: np.ndarray) -> csr_matrix:
-        """Якобиан h по состоянию E — ``(m × (2n−1))`` sparse."""
+        """Якобиан h по состоянию E — ``(m × (2n−1))`` sparse.
+
+        Считается на фиксированном шаблоне (:class:`JacobianPattern`, строится
+        при первом вызове); значения бит-в-бит совпадают с общим путём
+        :meth:`_evaluate_jacobian_generic`, который остаётся запасным для
+        комбинаций мер, не покрытых шаблоном.
+        """
         if v.shape != (self.n_bus,) or delta.shape != (self.n_bus,):
             raise ValueError(
                 f"v, delta должны быть длины n_bus={self.n_bus}; "
                 f"получено v.shape={v.shape}, delta.shape={delta.shape}"
             )
+        if len(self.meas_index) == 0:
+            return cast("csr_matrix", csr_matrix((0, 2 * self.n_bus - 1)))
+        if self._jacobian_pattern is None:
+            try:
+                self._jacobian_pattern = JacobianPattern(self)
+            except UnsupportedMeasurementError:
+                self._jacobian_pattern = False
+        if self._jacobian_pattern is False:
+            return self._evaluate_jacobian_generic(v, delta)
+        return self._jacobian_pattern.evaluate(v, delta)
+
+    def _evaluate_jacobian_generic(self, v: np.ndarray, delta: np.ndarray) -> csr_matrix:
+        """Якобиан через разреженные произведения матриц производных."""
         n = self.n_bus
         m_total = len(self.meas_index)
 
