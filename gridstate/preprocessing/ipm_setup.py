@@ -290,6 +290,49 @@ class IPMSetup:
     meas_index: MeasurementIndex
 
 
+def _boxed_balance_masks(
+    nodes_arr: np.ndarray, node_ids: list[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """P / Q masks over ``node_ids``: the node's injection range is fully set by data."""
+    rows = {int(r["id"]): r for r in nodes_arr}
+    boxed = np.zeros((2, len(node_ids)), dtype=bool)
+    for k, nid in enumerate(node_ids):
+        r = rows[nid]
+        has_gen, has_load = bool(r["exist_gen"]), bool(r["exist_load"])
+        if not (has_gen or has_load):
+            continue
+        reactive_only = is_reactive_only_generation(
+            r["generation_p_min"],
+            r["generation_p_max"],
+            r["generation_q_min"],
+            r["generation_q_max"],
+        )
+        for axis, sfx in ((0, "p"), (1, "q")):
+            pairs = []
+            if has_gen and not (sfx == "p" and reactive_only):
+                pairs.append(resolve_bounds(r[f"generation_{sfx}_min"], r[f"generation_{sfx}_max"]))
+            if has_load:
+                pairs.append(resolve_bounds(r[f"load_{sfx}_min"], r[f"load_{sfx}_max"]))
+            boxed[axis, k] = all(np.isfinite(lo) and np.isfinite(hi) for lo, hi in pairs)
+    return boxed[0], boxed[1]
+
+
+def _median_measurement_sigma2(sigma2: np.ndarray) -> float | None:
+    """Median variance (p.u.²) of the data rows; ``None`` when there are none."""
+    positive = sigma2[sigma2 > 1e-15]
+    return float(np.median(positive)) if positive.size > 0 else None
+
+
+def _adaptive_balance_sigma2(sigma2: np.ndarray, balance_weight_factor: float) -> float:
+    """Soft balance-row variance: median data variance / ``balance_weight_factor``."""
+    median_sigma2 = _median_measurement_sigma2(sigma2)
+    adaptive_sigma2 = (
+        1e-6 if median_sigma2 is None else median_sigma2 / float(balance_weight_factor)
+    )
+    # Floor чтобы избежать сингулярности при очень малых data-σ².
+    return max(adaptive_sigma2, 1e-12)
+
+
 def build_ipm_setup(
     model: Working,
     network_pu: NetworkPU,
@@ -301,6 +344,7 @@ def build_ipm_setup(
     balance_sigma2: float | None = None,
     balance_weight_factor: float = 0.1,
     transit_balance_sigma2_pu: float = 0.0,
+    boxed_balance_weight_factor: float = 0.0,
     bound_relax: float = 0.0,
     default_box_halfwidth_pu: float = 50.0,
     prior_sigma2_normal_pu: float = 0.0,
@@ -337,6 +381,12 @@ def build_ipm_setup(
             virtual-measurement (классический приём вместо equality-
             constraint): σ² берётся как ``min(мягкая, заданная)`` — рычаг
             никогда не ослабляет транзит относительно baseline.
+        boxed_balance_weight_factor: balance weight for nodes whose admissible
+            injection is bounded by data: every declared part (``exist_gen`` /
+            ``exist_load``) has both bounds set. Their variance is
+            ``median(σ²_data) / boxed_balance_weight_factor`` (never looser than
+            the soft one): the box already carries the node's freedom, so a
+            loose balance only hides data conflicts as an imbalance. ``0`` — off.
         bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
             (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
         default_box_halfwidth_pu: полуширина (p.u.) дефолтной коробки
@@ -431,12 +481,14 @@ def build_ipm_setup(
         | nodes_arr["exist_gen"][active_mask].astype(bool)
     )
     active_positions: list[int] = []
+    active_ids: list[int] = []
     transit_flags: list[bool] = []
     slack_pos = int(layout_base.slack_idx)
     for nid, is_transit in zip(active_nids.tolist(), active_transit.tolist(), strict=True):
         active_pos = bus_id_to_pos.get(int(nid))
         if active_pos is not None:
             active_positions.append(active_pos)
+            active_ids.append(int(nid))
             # Slack исключён из транзит-затяжки: он закрывает потери сети,
             # жёсткий zero-injection на нём ломал бы решение.
             transit_flags.append(bool(is_transit) and active_pos != slack_pos)
@@ -488,14 +540,7 @@ def build_ipm_setup(
     # data-fit ради balance.
     sigma2_old = r_matrix.diagonal()
     if balance_sigma2 is None:
-        positive = sigma2_old[sigma2_old > 1e-15]
-        if positive.size > 0:
-            median_sigma2 = float(np.median(positive))
-            adaptive_sigma2 = median_sigma2 / float(balance_weight_factor)
-        else:
-            adaptive_sigma2 = 1e-6
-        # Floor чтобы избежать сингулярности при очень малых data-σ².
-        balance_sigma2_eff = max(adaptive_sigma2, 1e-12)
+        balance_sigma2_eff = _adaptive_balance_sigma2(sigma2_old, balance_weight_factor)
     else:
         balance_sigma2_eff = float(balance_sigma2)
 
@@ -509,6 +554,15 @@ def build_ipm_setup(
             # Строки баланса: сначала n_balance P-строк, затем n_balance Q-строк.
             sigma2_new[n_old : n_old + n_balance][transit_arr] = tight
             sigma2_new[n_old + n_balance : n_old + 2 * n_balance][transit_arr] = tight
+    if boxed_balance_weight_factor > 0.0 and n_balance > 0:
+        median_sigma2 = _median_measurement_sigma2(sigma2_old)
+        if median_sigma2 is not None:
+            boxed_s2 = min(median_sigma2 / float(boxed_balance_weight_factor), balance_sigma2_eff)
+            boxed_p, boxed_q = _boxed_balance_masks(nodes_arr, active_ids)
+            p_rows = sigma2_new[n_old : n_old + n_balance]
+            q_rows = sigma2_new[n_old + n_balance : n_old + 2 * n_balance]
+            p_rows[boxed_p] = np.minimum(p_rows[boxed_p], boxed_s2)
+            q_rows[boxed_q] = np.minimum(q_rows[boxed_q], boxed_s2)
     if n_prior > 0:
         prior_sigmas = np.concatenate(
             [

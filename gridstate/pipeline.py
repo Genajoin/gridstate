@@ -457,6 +457,18 @@ class PipelineConfig:
         depends={"algorithm": "ipm"},
         help="Меньше → balance мягче. default 0.1.",
     )
+    ipm_boxed_balance_weight_factor: float = _param(
+        0.0,
+        group=_G_IPM,
+        label="Balance weight of boxed nodes",
+        control="number",
+        min=0.0,
+        max=1e6,
+        depends={"algorithm": "ipm"},
+        help="Nodes whose injection range is fully set by their generation/load boxes get a "
+        "balance row with variance median(σ²_data) / factor. The box carries the node's "
+        "freedom; a loose balance only hides data conflicts as an imbalance. 0 — off.",
+    )
     ipm_bound_relax: float = _param(
         0.0,
         group=_G_IPM,
@@ -804,6 +816,7 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
         "bound_relax": cfg.ipm_bound_relax,
         "prior_sigma2_bus_equiv_pu": cfg.ipm_prior_sigma2_bus_equiv_pu,
         "transit_balance_sigma2_pu": cfg.ipm_transit_balance_sigma2_pu,
+        "boxed_balance_weight_factor": cfg.ipm_boxed_balance_weight_factor,
     }
 
 
