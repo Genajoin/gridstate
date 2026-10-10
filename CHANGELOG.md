@@ -44,7 +44,7 @@ cut by tagging the merged main commit; the version is derived from that tag.
 - `gridstate.pipeline` is now a package. It exports `STEPS`, `DerivedInputs`,
   `PipelineConfig`, `Step`, `check_step_order`, `manifest`, `prepare_network`
   and `run`; the private helpers of the former module live in its submodules
-  (see "Removed" below). Patch `gridstate.pipeline.passes` instead of
+  (#98, see the next entry). Patch `gridstate.pipeline.passes` instead of
   `gridstate.pipeline` in tests (#50)
 - Invariants that were `assert` statements now raise `ValueError` (missing
   derived plan, naming it) or `RuntimeError` (no solution), also under
@@ -86,7 +86,7 @@ cut by tagging the merged main commit; the version is derived from that tag.
   - the deprecated `bound_relax` parameter of `build_ipm_setup` (and of
     `estimate(..., bound_relax=...)` in IPM mode, which now fails with
     `TypeError`) is gone; it had no pipeline setting and its default `0` is
-    the only behaviour left.
+    the only behaviour left (#98).
 
 ### Behavior changes
 
