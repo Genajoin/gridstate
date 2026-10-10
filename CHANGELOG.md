@@ -99,6 +99,12 @@ cut by tagging the merged main commit; the version is derived from that tag.
   are also the operating point of the pseudo-V priors) or `"x0_only"` (the
   previous solution is only the initial point of the main solve; the
   estimation problem is the cold-start one) (#58)
+- `PipelineConfig.ipm_trust_region_scope` (`estimate(..., trust_region_scope=)`,
+  `solve_ipm(tr_exclude_box=)`): `"all"` (default, unchanged bit for bit) or
+  `"state"` — the IPM trust region is measured on V/δ only, and the resulting
+  factor scales the whole Newton step, so a generation/load box variable that
+  has to move far no longer shrinks the V/δ step; boxes stay protected by
+  fraction-to-boundary. Opt-in for A/B evaluation (#59)
 
 ### Fix
 
