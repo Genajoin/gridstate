@@ -33,6 +33,7 @@ from gridstate.pipeline import (
 from gridstate.result import (
     Chi2Summary,
     ImbalanceRow,
+    NearCriticalRow,
     ResidualRow,
     SEResult,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "Chi2Summary",
     "ImbalanceRow",
     "InitialPoint",
+    "NearCriticalRow",
     "NormalizedResidualReport",
     "ObservabilityReport",
     "PipelineConfig",

@@ -5,13 +5,17 @@ After ``estimate()`` converges it collects:
 * ``Chi2Summary`` — ``J = Σ(r²/σ²)`` + df + χ² threshold + ``passes``;
 * ``worst_residuals`` — top-N measurements by ``|r_N| = |r|/√diag(Ω)``;
 * ``worst_imbalance`` — top-N nodes by ``|imbalance_p|`` from ``model.nodes``;
-* ``observability_warnings`` — IDs of nodes with zero ``H`` columns.
+* ``observability_warnings`` — IDs of nodes with zero ``H`` columns;
+* ``near_critical_measurements`` — measurements with ``Ω_ii / σ²_i`` below a
+  threshold, whose ``r_N`` is numerically unreliable (reported only).
 
 Exactly one pass over ``H``/``R⁻¹`` is used: ``Ω = R − H G⁻¹ Hᵀ`` is
 computed with sparse CHOLMOD and sparse right-hand sides (no cvxopt —
-dense Cholesky + block triangular substitution). Dense algebra on large
-models (tens of thousands of measurements) dominated the whole state
-estimation time. The ``r_N`` computation lives in
+dense Cholesky + block triangular substitution) or, on request
+(``rn_method="selected_inversion"``), by selected inversion of the sparse
+Cholesky factor. Dense algebra on large models (tens of thousands of
+measurements) dominated the whole state estimation time. The ``r_N``
+computation lives in
 :mod:`gridstate.algebra.normalized_residuals`, shared with the bad-data test
 (``gridstate.validation.bad_data``). The summary can be disabled via
 ``include_quality_summary=False``.
@@ -26,11 +30,15 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.stats import chi2 as _chi2_dist
 
-from gridstate.algebra.normalized_residuals import normalized_residuals
+from gridstate.algebra.normalized_residuals import (
+    NormalizedResiduals,
+    compute_normalized_residuals,
+)
 from gridstate.constants import MeasurementObjectType
 from gridstate.result import (
     Chi2Summary,
     ImbalanceRow,
+    NearCriticalRow,
     ResidualRow,
     label_for_kind,
 )
@@ -69,6 +77,19 @@ def compute_chi2(
     )
 
 
+#: Default ``Ω_ii / σ²_i`` below which a measurement is reported as nearly
+#: critical (its ``r_N`` carries the rounding of ``(H G⁻¹ Hᵀ)_ii`` amplified
+#: by more than 10⁴).
+NEAR_CRITICAL_THRESHOLD = 1e-4
+
+
+def residual_scope_mask(scope: str, is_pseudo: np.ndarray | None) -> np.ndarray | None:
+    """Rows of the residual ranking: ``None`` — all rows (see ``top_worst_residuals``)."""
+    if scope == "real" and is_pseudo is not None:
+        return ~np.asarray(is_pseudo, dtype=bool)
+    return None
+
+
 def top_worst_residuals(
     r: np.ndarray,
     sigma2: np.ndarray,
@@ -80,6 +101,8 @@ def top_worst_residuals(
     network_pu: NetworkPU | None = None,
     is_pseudo: np.ndarray | None = None,
     scope: str = "real",
+    rn_method: str = "solve",
+    normalized: NormalizedResiduals | None = None,
 ) -> list[ResidualRow]:
     """Top-``n`` measurements by ``|r_N|`` (default 10).
 
@@ -102,15 +125,22 @@ def top_worst_residuals(
             only (m drops ~2.5x).
             ``"all"`` — the previous semantics (all z-vector rows).
             Without ``is_pseudo`` scope="real" is equivalent to "all".
+        rn_method: method of ``diag(H G⁻¹ Hᵀ)`` (``"solve"`` |
+            ``"selected_inversion"``, see
+            :mod:`gridstate.algebra.normalized_residuals`).
+        normalized: precomputed normalized residuals of the same ``scope``
+            (``rn_method`` is then ignored).
     """
     if r.size == 0:
         return []
-    rows_mask = None
-    if scope == "real" and is_pseudo is not None:
-        rows_mask = ~np.asarray(is_pseudo, dtype=bool)
-        if not rows_mask.any():
-            return []
-    rn = normalized_residuals(r, H, sigma2, rows_mask=rows_mask)
+    rows_mask = residual_scope_mask(scope, is_pseudo)
+    if rows_mask is not None and not rows_mask.any():
+        return []
+    if normalized is None:
+        normalized = compute_normalized_residuals(
+            r, H, sigma2, rows_mask=rows_mask, method=rn_method
+        )
+    rn = normalized.rn
     finite_mask = np.isfinite(rn)
     if not finite_mask.any():
         return []
@@ -148,6 +178,38 @@ def top_worst_residuals(
             )
         )
     return rows
+
+
+def near_critical_measurements(
+    normalized: NormalizedResiduals,
+    meas_index: MeasurementIndex,
+    *,
+    threshold: float = NEAR_CRITICAL_THRESHOLD,
+    is_pseudo: np.ndarray | None = None,
+) -> list[NearCriticalRow]:
+    """Measurements with ``Ω_ii / σ²_i < threshold``, ascending by that ratio.
+
+    Only rows for which the ratio was computed take part (the scope of
+    ``normalized``). Critical measurements (``Ω_ii`` numerically
+    non-positive, ``r_N = inf``) are included: their ratio is below any
+    positive threshold. ``threshold <= 0`` reports nothing.
+    """
+    ratio = normalized.omega_ratio
+    if ratio.size == 0 or threshold <= 0.0:
+        return []
+    with np.errstate(invalid="ignore"):
+        flagged = np.where(ratio < threshold)[0]
+    order = flagged[np.argsort(ratio[flagged], kind="stable")]
+    return [
+        NearCriticalRow(
+            measurement_id=int(meas_index.meas_id[pos]),
+            kind=label_for_kind(int(meas_index.kind[pos])),
+            omega_ratio=float(ratio[pos]),
+            normalized_residual=float(normalized.rn[pos]),
+            is_pseudo=bool(is_pseudo[pos]) if is_pseudo is not None else False,
+        )
+        for pos in order
+    ]
 
 
 def top_worst_imbalance(model: Working, n: int = 10) -> list[ImbalanceRow]:
