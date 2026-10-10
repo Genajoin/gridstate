@@ -1,8 +1,8 @@
-"""Закрытие узлового небаланса оценок (``reconcile_node_balance``).
+"""Closing the nodal imbalance of the estimates (``reconcile_node_balance``).
 
-После SE оценки gen/load обязаны быть согласованы по KCL с состоянием:
-``gen_est − load_est ≡ p/q_inj_calc`` поэлементно. Иначе standalone PF от
-промоутнутых оценок решает другой режим (вплоть до нижней ветви PV-кривой).
+After SE the gen/load estimates must be consistent with the state by KCL:
+``gen_est - load_est == p/q_inj_calc`` element-wise. Otherwise a standalone PF from
+the promoted estimates solves a different operating point (down to the lower branch of the PV curve).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from tests.test_ipm_integration import _build_three_bus_with_bounds
 
 
 def _max_balance_residual(model: Working) -> float:
-    """max |inj_calc − (gen_est − load_est)| по решённым узлам, МВт/МВАр."""
+    """max |inj_calc - (gen_est - load_est)| over solved nodes, MW/MVAr."""
     worst = 0.0
     for row in model.nodes.to_numpy():
         if not bool(row["status"]) or not bool(row["solved"]):
@@ -32,14 +32,14 @@ def _max_balance_residual(model: Working) -> float:
 
 
 def test_ipm_balanced_by_default() -> None:
-    """IPM с дефолтным reconcile: оценки согласованы с inj_calc точно."""
+    """IPM with the default reconcile: estimates match inj_calc exactly."""
     m = _build_three_bus_with_bounds()
     estimate(m, algorithm="ipm", max_iterations=20)
     assert _max_balance_residual(m) < 1e-6
 
 
 def test_wls_balanced_by_default() -> None:
-    """WLS-разнос (клипы, СХН-перекрытие) тоже финализируется reconcile."""
+    """The WLS split (clips, load-characteristic overlap) is also finalised by reconcile."""
     m = _build_three_bus_with_bounds()
     result = estimate(m, algorithm="wls", max_iterations=20)
     assert result.success
@@ -47,12 +47,12 @@ def test_wls_balanced_by_default() -> None:
 
 
 def test_reconcile_off_keeps_state_and_residual() -> None:
-    """reconcile_balance=False: V/δ идентичны, но согласованность не навязана."""
+    """reconcile_balance=False: V/delta are identical, but consistency is not enforced."""
     m_on = _build_three_bus_with_bounds()
     m_off = _build_three_bus_with_bounds()
     estimate(m_on, algorithm="ipm", max_iterations=20)
     estimate(m_off, algorithm="ipm", max_iterations=20, reconcile_balance=False)
-    # Состояние (V/δ) пост-пасс не трогает — решения идентичны.
+    # The post-pass does not touch the state (V/delta) - the solutions are identical.
     for nid in [1, 2, 3]:
         n_on = m_on.nodes.get_by_id(nid)
         n_off = m_off.nodes.get_by_id(nid)
@@ -90,19 +90,19 @@ def _node_row(
 
 
 def test_unit_routing_rules() -> None:
-    """Правило слива по разметке узла: gen-only → gen, иначе → load."""
+    """Sink rule by node markup: gen-only -> gen, otherwise -> load."""
     m = Working.empty()
-    # gen-only: residual уходит в генерацию.
+    # gen-only: the residual goes into generation.
     m.nodes.add(
         _node_row(1, exist_load=0, exist_gen=1, p_inj=55.0, q_inj=12.0, gen_p=50.0, gen_q=10.0)
     )
-    # load-only: в нагрузку (load = gen − inj).
+    # load-only: into the load (load = gen - inj).
     m.nodes.add(
         _node_row(2, exist_load=1, exist_gen=0, p_inj=-28.0, q_inj=-9.0, load_p=30.0, load_q=10.0)
     )
-    # транзит: псевдонагрузка −inj (аналог материализации по районам).
+    # transit: pseudo-load -inj.
     m.nodes.add(_node_row(3, exist_load=0, exist_gen=0, p_inj=1.5, q_inj=-0.7))
-    # нерешённый узел не трогаем.
+    # an unsolved node is left alone.
     m.nodes.add(
         _node_row(4, exist_load=1, exist_gen=0, p_inj=99.0, q_inj=0.0, load_p=5.0, solved=0)
     )
@@ -126,17 +126,17 @@ def test_unit_routing_rules() -> None:
 
 
 def test_respect_bounds_clips_load_and_transit() -> None:
-    """respect_bounds: load клипуется к [min,max], транзит не получает
-    псевдонагрузку, незакрытый остаток копится в sum_unclosed_p_mw."""
+    """respect_bounds: load is clipped to [min,max], a transit node gets no
+    pseudo-load, the unclosed remainder accumulates in sum_unclosed_p_mw."""
     m = Working.empty()
-    # load-only с lo=0: слив дал бы load = 10 − 25 = −15 → клип к 0.
+    # load-only with lo=0: the sink would give load = 10 - 25 = -15 -> clip to 0.
     row = _node_row(2, exist_load=1, exist_gen=0, p_inj=25.0, q_inj=0.0, load_p=10.0)
     row["load_p_min"] = 0.0
     row["load_p_max"] = 100.0
     m.nodes.add(row)
-    # транзит: остаток НЕ материализуется псевдонагрузкой.
+    # transit: the remainder is NOT materialised as a pseudo-load.
     m.nodes.add(_node_row(3, exist_load=0, exist_gen=0, p_inj=1.5, q_inj=-0.7))
-    # load-only в границах: клип не срабатывает, слив как раньше.
+    # load-only within bounds: the clip does not trigger, the sink works as before.
     row = _node_row(5, exist_load=1, exist_gen=0, p_inj=-28.0, q_inj=-9.0, load_p=30.0)
     row["load_p_min"] = 0.0
     row["load_p_max"] = 100.0
@@ -144,30 +144,30 @@ def test_respect_bounds_clips_load_and_transit() -> None:
 
     stats = reconcile_node_balance(m, respect_bounds=True)
     n2 = m.nodes.get_by_id(2)
-    assert n2.load_p_estimated == 0.0  # не −15
+    assert n2.load_p_estimated == 0.0  # not -15
     n3 = m.nodes.get_by_id(3)
-    assert n3.load_p_estimated == 0.0  # не −1.5
+    assert n3.load_p_estimated == 0.0  # not -1.5
     assert n3.load_q_estimated == 0.0
     n5 = m.nodes.get_by_id(5)
-    assert abs(n5.load_p_estimated - 28.0) < 1e-12  # в границах — как раньше
+    assert abs(n5.load_p_estimated - 28.0) < 1e-12  # within bounds - as before
     assert stats["clipped"] == 2
     assert float(stats["sum_unclosed_p_mw"]) > 0.0
 
 
 def test_respect_bounds_default_off_is_legacy() -> None:
-    """Без respect_bounds поведение бит-в-бит прежнее (слив без клипа)."""
+    """Without respect_bounds the behaviour is bit-for-bit as before (sink without clip)."""
     m = Working.empty()
     row = _node_row(2, exist_load=1, exist_gen=0, p_inj=25.0, q_inj=0.0, load_p=10.0)
     row["load_p_min"] = 0.0
     row["load_p_max"] = 100.0
     m.nodes.add(row)
     reconcile_node_balance(m)
-    # r = 25 − (0 − 10) = 35; load = 10 − 35 = −25 (нарушает lo=0 — легаси).
+    # r = 25 - (0 - 10) = 35; load = 10 - 35 = -25 (violates lo=0 - legacy).
     assert abs(m.nodes.get_by_id(2).load_p_estimated - (-25.0)) < 1e-12
 
 
 def test_reconcile_respect_bounds_keeps_compensator_without_active_power() -> None:
-    """Остаток P на узле-компенсаторе не превращается в активную генерацию."""
+    """A P remainder at a compensator node does not turn into active generation."""
     from gridstate.constants import NodeType
 
     m = Working.empty()

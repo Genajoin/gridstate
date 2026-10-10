@@ -1,13 +1,13 @@
-"""Тесты ``prepare_network`` — сетевые деривации без прогона SE («одна сеть»).
+"""Tests of ``prepare_network`` - network derivations without running SE ("one network").
 
-Контракт фазы C1 (см. спека se_canonical_contract_design §8):
+Contract:
 
-* prepare_network исполняет ТОЛЬКО network=True шаги (без телеметрии/псевдо/
-  солвера) и НЕ мутирует вход;
-* деривации идемпотентны: prepare(prepare(m)) == prepare(m) по сетевым
-  таблицам бит-в-бит;
-* эквивалентность: run на материализованной сети даёт бит-в-бит тот же
-  результат, что run на сырой (гейт всей схемы материализации).
+* prepare_network runs ONLY network=True steps (no telemetry/pseudo/
+  solver) and does NOT mutate its input;
+* derivations are idempotent: prepare(prepare(m)) == prepare(m) on the network
+  tables, bit-for-bit;
+* equivalence: run on a materialised network gives bit-for-bit the same
+  result as run on the raw one (the gate of the whole materialisation scheme).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from tests.test_pipeline_idempotent import (
 
 
 def test_network_steps_marked() -> None:
-    """Сетевое подмножество STEPS зафиксировано явно (страж дрейфа)."""
+    """The network subset of STEPS is pinned explicitly (drift guard)."""
     expected = {
         "normalize_breakers",
         "voltage_nominal",
@@ -37,7 +37,7 @@ def test_network_steps_marked() -> None:
         "generator_status",
     }
     assert {s.name for s in STEPS if s.network} == expected
-    # Мер-шаги и солвер — НЕ network.
+    # Measurement steps and the solver are NOT network.
     non_network = {s.name for s in STEPS if not s.network}
     for name in ("telemetry", "add_pseudo", "estimate"):
         assert name in non_network
@@ -57,24 +57,24 @@ def test_prepare_network_does_not_mutate_input() -> None:
 
 
 def test_prepare_network_applies_network_steps() -> None:
-    """Реакторы агрегированы в shunt_b — сетевые шаги реально исполнились."""
+    """Reactors are aggregated into shunt_b - the network steps really ran."""
     m = _make_model_with_reactor(reactor_node=1, susceptance_uS=50_000.0)
     w = prepare_network(m)
     nodes = w.nodes.to_numpy()
     node1 = nodes[nodes["id"] == 1][0]
     assert abs(float(node1["shunt_b"]) - 0.05) < 1e-12
-    # Меры не добавлялись (псевдо-шаги не исполнялись).
+    # No measurements were added (pseudo steps did not run).
     assert len(w.measurements) == len(m.measurements)
 
 
 def _materialize(target, prepared) -> None:
-    """Имитация материализации сети внешним адаптером: перенос сетевого состояния.
+    """Imitate network materialisation by an external adapter: carry over the network state.
 
-    Протокол переноса (контракт C2): статусы узлов/ветвей, электрические
-    параметры ветвей (tap/R/X/G/B), типы узлов. Узловые ``shunt_g/b`` НЕ
-    переносятся — вклад устройств живёт в коллекции ``shunts`` и применяется
-    ядром при каждом прогоне (перенос агрегата в input-колонку дал бы
-    двойное применение: шаг reactors — это ``+=``).
+    Transfer protocol (contract): node/branch statuses, electrical
+    branch parameters (tap/R/X/G/B), node types. Nodal ``shunt_g/b`` are NOT
+    carried over - the device contribution lives in the ``shunts`` collection and is applied
+    by the core on every run (carrying the aggregate into an input column would give
+    a double application: the reactors step is ``+=``).
     """
     nodes = target.nodes.to_numpy().copy()
     p_nodes = prepared.nodes.to_numpy()
@@ -108,11 +108,11 @@ def _materialize(target, prepared) -> None:
 
 
 def test_prepare_network_idempotent_via_materialize() -> None:
-    """Материализация + повторный prepare == первый prepare (бит-в-бит).
+    """Materialisation + a repeated prepare == the first prepare (bit-for-bit).
 
-    Протокол «одной сети»: сетевое состояние переносится в носитель
-    (без узловых шунтов — см. ``_materialize``), повторные деривации на
-    материализованной модели дают то же сетевое состояние.
+    "One network" protocol: the network state is carried into the carrier
+    (without nodal shunts - see ``_materialize``); repeated derivations on the
+    materialised model give the same network state.
     """
     m = _make_model_with_reactor()
     w1 = prepare_network(m)
@@ -124,7 +124,7 @@ def test_prepare_network_idempotent_via_materialize() -> None:
 
 
 def test_run_on_materialized_equals_run_on_raw() -> None:
-    """SE на материализованной сети == SE на сырой: V/δ бит-в-бит."""
+    """SE on a materialised network == SE on the raw one: V/delta bit-for-bit."""
     m = _make_model_with_reactor()
     cfg = PipelineConfig()
     r_raw = run(m, config=cfg)
@@ -141,7 +141,7 @@ def test_run_on_materialized_equals_run_on_raw() -> None:
 
 
 def test_prepare_network_respects_toggles() -> None:
-    """Отключённый toggle сетевого шага уважается (reactors → шунт не применён)."""
+    """A disabled toggle of a network step is respected (reactors -> shunt not applied)."""
     m = _make_model_with_reactor(reactor_node=1)
     cfg = PipelineConfig(apply_reactors=False)
     w = prepare_network(m, config=cfg)
