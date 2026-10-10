@@ -59,10 +59,37 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+  test-cholmod:
+    name: Test (CHOLMOD, Python 3.12)
+    runs-on: ubuntu-latest
+    # The `test` matrix installs only `.[test]`, so the KKT solver falls back
+    # to scipy there. This job installs the `fast` extra (cvxopt) and runs the
+    # whole suite, including the golden regression, on the CHOLMOD path that
+    # kkt_solver="auto" selects in production installs.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # setuptools_scm needs full history + tags for the version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test,fast]"
+      - name: Require the CHOLMOD backend
+        run: |
+          python -c "from gridstate.algorithms.kkt_solver import resolve_backend; b = resolve_backend('auto'); print('kkt backend:', b); assert b == 'cholmod', b"
+      - name: Run tests (no cvxopt-related skips allowed)
+        shell: bash  # explicit shell = -eo pipefail, so a pytest failure is not masked by tee
+        run: |
+          pytest tests/ | tee pytest.log
+          if grep -iE "^SKIPPED.*cvxopt" pytest.log; then
+            echo "::error::cvxopt-dependent tests were skipped on the CHOLMOD job"
+            exit 1
+          fi
+
   build:
     name: Build (sdist + wheel)
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, test-cholmod]
     steps:
       - uses: actions/checkout@v4
         with:
