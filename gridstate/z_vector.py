@@ -10,6 +10,8 @@
   функцией ``h(x)``: тип, объект (узел/ветвь), позиционный индекс, сторона.
 
 Пропускаются измерения с ``status=False`` или ``quality=BAD``.
+Measurements with a non-finite value or variance, or variance ≤ 0, are
+skipped with a warning.
 
 **Сторона ветви** определяется так:
 
@@ -25,6 +27,7 @@
 from __future__ import annotations
 
 import logging
+import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -41,6 +44,10 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+# Ids of measurements already reported as non-finite, per collection: z is
+# rebuilt on every (re-)solve, and the warning is logged once per collection.
+_NONFINITE_REPORTED: weakref.WeakKeyDictionary[object, set[int]] = weakref.WeakKeyDictionary()
 
 
 # Кодировка типа измерения в ``MeasurementIndex.kind`` совпадает с
@@ -120,7 +127,8 @@ def build_z_and_r(
         model: модель — нужна для разрешения ``object_id`` в позиционный индекс
             и для базового напряжения при конвертации кВ/А → p.u.
         measurements: коллекция измерений; берутся только с ``status=True`` и
-            ``quality != BAD``.
+            ``quality != BAD``, with a finite value and a finite positive
+            variance.
         network_pu: внутреннее p.u.-представление сети.
 
     Returns:
@@ -140,6 +148,10 @@ def build_z_and_r(
     keep = arr["status"].astype(bool) & (
         arr["quality"].astype(np.int64) != int(MeasurementQuality.BAD)
     )
+    nonfinite = keep & ~(np.isfinite(value) & np.isfinite(variance))
+    if nonfinite.any():
+        _warn_nonfinite(measurements, ids[nonfinite], value[nonfinite], variance[nonfinite])
+        keep &= ~nonfinite
     for i in np.where(keep & (variance <= 0))[0]:
         logger.warning(
             "Измерение id=%d имеет variance=%g ≤ 0 — пропущено", int(ids[i]), variance[i]
@@ -254,6 +266,26 @@ def build_z_and_r(
         meas_id=ids[used],
     )
     return z[used], r_matrix, meas_index
+
+
+def _warn_nonfinite(
+    measurements: object, ids: np.ndarray, value: np.ndarray, variance: np.ndarray
+) -> None:
+    """Log skipped non-finite measurements (WARNING once per collection, then DEBUG)."""
+    try:
+        reported = _NONFINITE_REPORTED.setdefault(measurements, set())
+    except TypeError:  # not weak-referenceable: no de-duplication
+        reported = set()
+    for mid, val, var in zip(ids.tolist(), value.tolist(), variance.tolist(), strict=True):
+        level = logging.DEBUG if mid in reported else logging.WARNING
+        logger.log(
+            level,
+            "Measurement id=%d has non-finite value=%g / variance=%g — skipped",
+            mid,
+            val,
+            var,
+        )
+        reported.add(mid)
 
 
 def _lookup(id_to_pos: dict[int, int], ids: np.ndarray) -> np.ndarray:

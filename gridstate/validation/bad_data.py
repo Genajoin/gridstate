@@ -11,10 +11,15 @@ Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
     Ω = R − H G⁻¹ Hᵀ                       (ковариация невязок)
     r^N_i = |r_i| / √(diag(Ω)_i)            (нормированный остаток)
 
-    while max(r^N) > threshold:
+    while max(finite r^N) > threshold:
         пометить максимальный r^N как BAD (status=False, quality=BAD)
         перезапустить estimate()
         пересчитать r^N
+
+Critical (non-redundant) measurements have ``diag(Ω)_i ≈ 0`` and
+``r^N_i = +inf``: their errors are undetectable and removing one makes the
+network unobservable, so they are never removed — only reported in
+``BadDataResult.critical_meas_ids``.
 
 Возвращает ``BadDataResult`` со списком удалённых ``meas_id`` и финальным
 ``SEResult``.
@@ -28,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
+from gridstate.algebra.normalized_residuals import normalized_residuals
 from gridstate.api import estimate
 from gridstate.result import SEResult
 from gridstate.validation._diagnostics import compute_diagnostics
@@ -182,15 +188,20 @@ class BadDataResult:
         se_result: финальный ``SEResult`` после удаления всех плохих
             измерений.
         removed_meas_ids: список ``meas_id`` измерений, помеченных как BAD.
-        rn_max_history: значения ``max(r^N)`` после каждой итерации
-            (включая последнюю, прошедшую тест).
+        rn_max_history: значения ``max(r^N)`` по конечным ``r^N`` после
+            каждой итерации (включая последнюю, прошедшую тест); ``0.0`` when
+            no measurement has a finite ``r^N``.
         converged: ``True``, если на финальной итерации ``max(r^N) ≤ threshold``.
+        critical_meas_ids: ``meas_id`` of the critical (non-redundant)
+            measurements of the last checked iteration (``r^N = inf``). They
+            are never removed: their errors cannot be detected by the test.
     """
 
     se_result: SEResult
     removed_meas_ids: list[int] = field(default_factory=list)
     rn_max_history: list[float] = field(default_factory=list)
     converged: bool = False
+    critical_meas_ids: list[int] = field(default_factory=list)
 
 
 def _normalized_residuals(diag: Diagnostics) -> np.ndarray:
@@ -200,35 +211,11 @@ def _normalized_residuals(diag: Diagnostics) -> np.ndarray:
     G), элемент возвращается как ``+∞`` — такое измерение фактически
     «non-redundant», и нормированный остаток для него не определён.
 
-    Используем плотную линейную алгебру: ``n_state = 2·n_bus − 1`` обычно
-    мало (≤ десятков тысяч), поэтому ``G⁻¹`` через ``np.linalg.solve``
-    значительно проще, чем sparse-инверсия.
-
-    Note:
-        ``gridstate.quality_summary._normalized_residuals`` computes the same
-        quantity through a faster Cholesky + triangular-solve path. The two are
-        kept separate on purpose (not merged): results may differ in the tails
-        due to differing numerical paths, and this iterative bad-data driver
-        must not depend on the quality-summary module.
+    Delegates to the shared sparse implementation
+    :func:`gridstate.algebra.normalized_residuals.normalized_residuals`
+    (also used by the quality summary): no ``m × m`` matrix is formed.
     """
-    H_dense = diag.H.toarray()  # (m × (2n−1))
-    R_inv_dense = diag.R_inv.toarray()
-    G = H_dense.T @ R_inv_dense @ H_dense  # (n_state × n_state)
-
-    try:
-        X = np.linalg.solve(G, H_dense.T)  # (n_state × m), X = G⁻¹ · Hᵀ
-    except np.linalg.LinAlgError as exc:
-        logger.error("Сбой при инверсии G в rn_max-тесте: %s", exc)
-        return np.full_like(diag.r, np.inf, dtype=np.float64)
-
-    # diag(H · G⁻¹ · Hᵀ) = построчное произведение H_dense и X.T
-    HGH_diag = np.einsum("ij,ji->i", H_dense, X)
-    omega_diag = diag.sigma2 - HGH_diag
-
-    # Численная защита: «−0» и почти нули → ∞.
-    omega_diag = np.where(omega_diag > 1e-12, omega_diag, np.nan)
-    rn = np.abs(diag.r) / np.sqrt(omega_diag)
-    return np.where(np.isnan(rn), np.inf, rn)
+    return normalized_residuals(diag.r, diag.H, diag.sigma2)
 
 
 def remove_bad_data(
@@ -247,6 +234,9 @@ def remove_bad_data(
         3. Если ``max(r^N) > threshold`` — плохое измерение помечается
            ``status=False, quality=BAD`` и цикл повторяется.
 
+    Only finite ``r^N`` take part in the test: critical measurements
+    (``r^N = inf``) are kept and listed in ``critical_meas_ids``.
+
     Args:
         model: ``Working`` — обновляется in-place.
         measurements: коллекция — если ``None``, ``model.measurements``.
@@ -263,6 +253,7 @@ def remove_bad_data(
 
     removed: list[int] = []
     rn_history: list[float] = []
+    critical: list[int] = []
 
     def _run_estimate() -> SEResult:
         return estimate(
@@ -281,6 +272,7 @@ def remove_bad_data(
             removed_meas_ids=removed,
             rn_max_history=rn_history,
             converged=converged,
+            critical_meas_ids=critical,
         )
 
     # Первый прогон — до цикла; цикл только повторяет estimate после отбраковки.
@@ -297,7 +289,10 @@ def remove_bad_data(
             return _result(converged=True)
 
         rn = _normalized_residuals(diag)
-        rn_max = float(np.max(rn))
+        # Critical measurements (r^N = inf) are never candidates for removal.
+        finite = np.isfinite(rn)
+        critical = [int(i) for i in diag.meas_index.meas_id[~finite]]
+        rn_max = float(np.max(rn[finite])) if finite.any() else 0.0
         rn_history.append(rn_max)
 
         if rn_max <= rn_max_threshold:
@@ -307,10 +302,16 @@ def remove_bad_data(
                 rn_max,
                 rn_max_threshold,
             )
+            if critical:
+                logger.info(
+                    "rn_max: %d critical measurement(s) kept (r^N undefined): ids=%s",
+                    len(critical),
+                    critical,
+                )
             return _result(converged=True)
 
         # Иначе — отбрасываем худшее измерение.
-        bad_pos = int(np.argmax(rn))
+        bad_pos = int(np.argmax(np.where(finite, rn, -np.inf)))
         bad_id = int(diag.meas_index.meas_id[bad_pos])
         bad_meas = measurements.get_by_id(bad_id)
         if bad_meas is None:

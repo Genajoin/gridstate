@@ -352,3 +352,60 @@ def test_chi2_passes_after_bad_data_removal() -> None:
     assert len(result.removed_meas_ids) >= 1
     chi2_res = chi2_analysis(m)
     assert not chi2_res.bad_data_present
+
+
+# ------------------------------------------------- critical measurements
+def _case14_with_critical_flow():
+    """IEEE case14 where a radial node's angle is fixed by a single P flow.
+
+    All P injections at the radial node and its neighbour, the Q flows of the
+    radial branch and all but one of its P flows are switched off, so the
+    remaining P flow is a critical measurement (``Ω_ii ≈ 0``, ``r^N = inf``).
+    Returns ``(model, critical_meas_id)``.
+    """
+    from pathlib import Path
+
+    from gridstate.contract.serialize import load_se_input_npz
+
+    model = load_se_input_npz(Path(__file__).parent / "test_data" / "ieee" / "case14.npz").model
+    npu = model_to_pu(model)
+    degree = np.bincount(np.concatenate([npu.from_idx, npu.to_idx]), minlength=npu.n_bus)
+    radial = int(np.where(degree == 1)[0][0])
+    br = int(np.where((npu.from_idx == radial) | (npu.to_idx == radial))[0][0])
+    nb = int(npu.to_idx[br] if npu.from_idx[br] == radial else npu.from_idx[br])
+    node_ids = {int(npu.bus_ids[radial]), int(npu.bus_ids[nb])}
+    branch_id = int(npu.branch_ids[br])
+
+    arr = model.measurements.to_numpy()
+    kind = arr["measurement_type"]
+    on_node = (arr["object_type"] == OBJ_NODE) & np.isin(arr["object_id"], list(node_ids))
+    on_branch = (arr["object_type"] == OBJ_BRANCH) & (arr["object_id"] == branch_id)
+    arr["status"][on_node & np.isin(kind, (KIND_POWER_INJECTION_P, KIND_POWER_INJECTION_Q))] = False
+    arr["status"][on_branch & (kind == KIND_POWER_Q)] = False
+    flows_p = np.where(on_branch & (kind == KIND_POWER_P))[0]
+    arr["status"][flows_p[1:]] = False
+    model.measurements.update_from_array(arr)
+    return model, int(arr["id"][flows_p[0]])
+
+
+def test_remove_bad_data_never_removes_critical_measurements() -> None:
+    """A critical measurement (r^N = inf) is reported, not removed.
+
+    Removing it would make the network unobservable; the test must act only
+    on finite normalized residuals.
+    """
+    from gridstate.validation.bad_data import compute_normalized_residuals_report
+
+    m, critical_id = _case14_with_critical_flow()
+    assert estimate(m, algorithm="wls", include_quality_summary=False).success
+    report = compute_normalized_residuals_report(m)
+    critical = {int(i) for i in report.meas_ids[np.isinf(report.rn)]}
+    assert critical_id in critical
+
+    result = remove_bad_data(m, max_iterations=3)
+
+    assert result.se_result.success
+    assert not critical & set(result.removed_meas_ids)
+    assert critical_id in result.critical_meas_ids
+    assert all(np.isfinite(result.rn_max_history))
+    assert bool(m.measurements.get_by_id(critical_id).status)
