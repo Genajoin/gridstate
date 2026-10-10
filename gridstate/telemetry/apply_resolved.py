@@ -19,6 +19,7 @@ import numpy as np
 
 from gridstate._arrays import id_value_map
 from gridstate.constants import FilterFlag
+from gridstate.measurement_ids import IdAllocator
 from gridstate.telemetry._filters import build_measurement_index
 from gridstate.telemetry._specs import _INJ_MT, _KIND_MAP, _NODE_INJ_MAP
 from gridstate.telemetry.loss_filter import is_branch_q_consistent_with_physics
@@ -423,7 +424,7 @@ def _build_node_injection_rows(
     convergence. id назначаются здесь (бит-идентично прежнему .add()).
     """
     new_rows: list[dict] = []
-    next_id = int(meas_arr["id"].max()) + 1 if len(meas_arr) else 1
+    ids = IdAllocator.after_max(meas_arr["id"], name="apply_telemetry")
     for (obj_id, pq), entries in inj_acc.items():
         net = sum(v for v, _, _ in entries)
         guid_first = entries[0][1]
@@ -435,7 +436,7 @@ def _build_node_injection_rows(
             var *= config.questionable_sigma2_multiplier
         new_rows.append(
             {
-                "id": next_id,
+                "id": ids.next(),
                 "object_type": 0,
                 "object_id": int(obj_id),
                 "measurement_type": mt,
@@ -448,7 +449,6 @@ def _build_node_injection_rows(
                 "source_guid": guid_first,
             }
         )
-        next_id += 1
         stats["node_inj_added"] += 1
         if net_q == QUALITY_QUESTIONABLE:
             stats["applied_questionable"] += 1

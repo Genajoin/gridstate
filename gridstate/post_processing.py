@@ -34,6 +34,7 @@ from gridstate.algebra.base import (
     BaseAlgebra,
 )
 from gridstate.bounds import is_reactive_only_generation, resolve_bounds
+from gridstate.measurement_ids import ANTI_OVERSHOOT_ID_BASE, IdAllocator
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.resolve_pass import REVERT_REASON_NOT_CONVERGED, ResolveSnapshot
 from gridstate.units import BASE_MVA, NetworkPU
@@ -705,7 +706,7 @@ def refine_anti_overshoot(
     ceiling: float = 1.15,
     inj_sigma: float = 2.0,
     max_iters: int = 5,
-    mid_start: int = 760_000_000,
+    mid_start: int = ANTI_OVERSHOOT_ID_BASE,
 ) -> tuple[SEResult, dict[str, int | float | bool | str]]:
     """Anti-overshoot пост-solve уточнение V со САМО-ВАЛИДАЦИЕЙ (revert).
 
@@ -761,7 +762,9 @@ def refine_anti_overshoot(
     }
 
     tightened: set[int] = set()
-    mid = mid_start
+    # Ids are checked against the measurements at the start; the rows added
+    # below come from this allocator only.
+    ids = IdAllocator(me["id"], mid_start, name="anti_overshoot")
     var = float(inj_sigma) * float(inj_sigma)
     refined = result
     for _ in range(max_iters):
@@ -783,8 +786,7 @@ def refine_anti_overshoot(
                 (KIND_POWER_INJECTION_P, pinj),
                 (KIND_POWER_INJECTION_Q, qinj),
             ):
-                model.measurements.add(pseudo_node_measurement(mid, nid, kind, val, var))
-                mid += 1
+                model.measurements.add(pseudo_node_measurement(ids.next(), nid, kind, val, var))
             tightened.add(nid)
         refined = resolve()
         # Раунд не опустил max V/Vnom ниже базы — дальнейшие раунды
