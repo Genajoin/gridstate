@@ -1865,7 +1865,7 @@ def prepare_network(
 # ---------------------------------------------------------------------------
 
 
-def manifest() -> dict:
+def manifest(config: PipelineConfig | type[PipelineConfig] | None = None) -> dict:
     """Декларативное описание пайплайна для UI.
 
     Возвращает dict (JSON-сериализуемый)::
@@ -1880,13 +1880,36 @@ def manifest() -> dict:
 
     UI строит форму, итерируя ``params`` (контролы) и ``steps`` (toggle-список),
     группируя по ``group``. Дефолты берёт отсюда — не хардкодит.
+
+    ``config`` selects the source of defaults and of the iterated fields:
+
+    * ``None`` (default) -- ``PipelineConfig()``, the library defaults;
+    * a ``PipelineConfig`` subclass -- instantiated without arguments, so a subclass
+      that overrides defaults (or adds fields with metadata) is described as is;
+    * a ``PipelineConfig`` instance -- its current values are reported as defaults.
+
+    A UI that fills its form from the manifest then does not overwrite the defaults
+    of a downstream configuration with the library ones. A subclass field redeclared
+    with a bare default (no metadata) keeps the base field's UI metadata.
     """
-    cfg_defaults = PipelineConfig()
+    if config is None:
+        cfg_defaults = PipelineConfig()
+    elif isinstance(config, type):
+        if not issubclass(config, PipelineConfig):
+            raise TypeError(f"config must be a PipelineConfig subclass or instance, got {config!r}")
+        cfg_defaults = config()
+    elif isinstance(config, PipelineConfig):
+        cfg_defaults = config
+    else:
+        raise TypeError(f"config must be a PipelineConfig subclass or instance, got {config!r}")
 
     params: list[dict] = []
     groups_order: list[str] = []
-    for f in fields(PipelineConfig):
-        md = dict(f.metadata)
+    base_md = {f.name: dict(f.metadata) for f in fields(PipelineConfig)}
+    for f in fields(cfg_defaults):
+        # A subclass that re-declares a field with a bare default drops its metadata;
+        # fall back to the base declaration so the control does not disappear.
+        md = dict(f.metadata) or base_md.get(f.name, {})
         if not md:
             continue
         grp = md.get("group", "")
