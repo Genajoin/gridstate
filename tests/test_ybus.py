@@ -1,8 +1,8 @@
 """Тесты построения матриц проводимостей (``gridstate.ybus``).
 
-Проверки на простых сетях, где Y-bus вычисляется аналитически. Сравнения с
-полноценным эталоном pandapower вынесены в интеграционный тест WLS на
-IEEE 14-bus (см. ``tests/test_wls.py``).
+Checks on simple networks where the Y-bus is known analytically. The comparison
+with a full pandapower model lives in the WLS integration test on IEEE 14-bus
+(see ``tests/test_wls.py``).
 """
 
 from __future__ import annotations

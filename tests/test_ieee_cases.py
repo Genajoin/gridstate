@@ -1,11 +1,11 @@
 """SE на стандартных IEEE-моделях (case14 / case30 / case118) — фикстуры pandapower.
 
-Регрессия на эталонных публичных сетях: фикстуры (``tests/test_data/ieee/caseNN.npz``)
-собраны генератором ``tools/gen_ieee_fixtures.py`` (pandapower→PF→синтетический
-наблюдаемый z-вектор с гауссовым шумом, fixed seed). **Этот тест pandapower НЕ
-импортирует**: читает только контрактный npz через
-:func:`gridstate.load_se_input_npz` + сайдкар истины PF (``np.load``), прогоняет
-WLS-SE и сверяет |V| и углы с решением power flow.
+A regression on the standard public test networks. The fixtures
+(``tests/test_data/ieee/caseNN.npz``) are built by ``tools/gen_ieee_fixtures.py``
+(pandapower → PF → a synthetic observed z-vector with Gaussian noise, fixed seed).
+**This test does NOT import pandapower**: it reads only the contract npz through
+:func:`gridstate.load_se_input_npz` plus the PF truth sidecar (``np.load``), runs
+WLS SE and compares |V| and angles with the power flow solution.
 
 Углы сверяются **относительно slack-узла**: глобальный поворот фазы ненаблюдаем
 без абсолютного угла-якоря, а pandapower у разных кейсов задаёт slack-угол ≠ 0

@@ -3,9 +3,9 @@
 Классификация на синтетике: кандидат = активный шунт на узле, чья node-V-мера
 расходится с решением (|z−h| > v_frac·Vnom). Гейты: нет шунта / малая невязка /
 неправдоподобное z — не кандидат; ранжирование по невязке + кап. Правки
-``edit_shunt`` (off/flip) и скаляр ``sum_rn2``. Сам шаг зарегистрирован в
-contract.run как research-оркестрация полными re-run'ами; default OFF
-(бит-в-бит гарантию держит npz-гейт cspase).
+``edit_shunt`` (off/flip) и скаляр ``sum_rn2``. The step itself is orchestrated
+by contract.run as a research option with full re-runs; default OFF (the
+golden regression covers it).
 """
 
 from __future__ import annotations

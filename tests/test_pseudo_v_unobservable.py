@@ -1,10 +1,10 @@
-"""Тесты жёсткого V-якоря ненаблюдаемых узлов (Цех-3 #2p).
+"""Tests of the hard V anchor of unobservable nodes.
 
 ``add_pseudo_measurements(unobservable_v_sigma_frac=…)`` якорит pseudo-V
 ненаблюдаемого узла жёстко (вместо 5 %), НО только когда прайор —
 нетривиальная рабочая точка (``|vm-vn| ≥ min_vm_deviation·vn``) и узел не
 наблюдаем (нет real-V-соседа / инцидентного flow по гейтам). Default
-(``None``) — поведение не меняется (no-op). См. memory cex3-pseudov-vm-anchor.
+(``None``) — поведение не меняется (no-op).
 """
 
 from __future__ import annotations

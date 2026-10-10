@@ -1,10 +1,8 @@
 """Топология на gridstate-контейнере.
 
-`gridstate.topology` перенесена из исходной реализации дословно. Этот тест —
-функциональный страж: прогон топо-функций на gridstate-модели даёт ожидаемые
-статусы/типы узлов и статусы ветвей + ожидаемые возвраты. Дёшево (без
-SE-решения) → годится как per-phase гейт при отложенном canon
-(см. feedback-defer-heavy-gate-migration).
+A functional guard of ``gridstate.topology``: running the topology functions
+on a gridstate model gives the expected node statuses and types, branch
+statuses and return values. Cheap (no SE solve).
 """
 
 from __future__ import annotations

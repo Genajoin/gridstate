@@ -1,7 +1,7 @@
 """Идемпотентность и Input-read-only контракт ``gridstate.pipeline.run``.
 
-Сценарий пользователя (Studio/CLI): прогнать SE, затем ещё раз на том же
-объекте ``model`` — например WLS, потом IPM с тёплым стартом. Раньше препроцессинг
+A user scenario (an interactive front end or a CLI): run SE, then run it again
+on the same ``model`` object, e.g. WLS and then IPM with a warm start. Раньше препроцессинг
 ломал повтор (pseudo-меры с фикс. id → ``ValueError``; telemetry-инжекции → рост
 коллекции; реакторы ``shunt_b += B`` → двойной учёт), и существовал
 ``_reset_for_idempotency`` как костыль.
@@ -10,8 +10,7 @@
 не мутирует. Идемпотентность и edit→rerun — *by construction*:
 
 * unit: ``_build_working`` (Working) бит-в-бит + копия независима от Input;
-* e2e synthetic: ``run`` НЕ мутирует Input; повтор бит-в-бит (через result.model);
-* specs-gated: двойной ``run`` на 4 региональных моделях × {wls,ipm} бит-в-бит + Input read-only.
+* e2e synthetic: ``run`` НЕ мутирует Input; повтор бит-в-бит (через result.model).
 
 Тёплый старт через ``init_state`` — в :mod:`test_pipeline_warm_start`.
 """

@@ -298,9 +298,10 @@ class TestConvergenceStatus:
         """Старт в точном решении (после promote результата во вход) →
         converged, а не ложный «stalled».
 
-        Регресс: первый же Newton-шаг < inner_tol → inner break без
-        принятых шагов → lazy-break до μ_min → status='stalled' при
-        ЛЮБОМ лимите итераций (воспроизведено на СЗ-модели 2026-06-10).
+        Regression: the very first Newton step < inner_tol → inner break
+        without accepted steps → lazy break down to μ_min → status='stalled'
+        with ANY iteration limit (reproduced on a large production model,
+        2026-06-10).
         Сходимость inner по толерансу — НЕ стагнация: μ-расписание
         должно дойти до mu_min → kkt/completed.
         """

@@ -1,9 +1,9 @@
 """Тесты charging-aware σ_Q (:func:`gridstate.telemetry.units.variance_branch_q`).
 
 Единый источник истины для branch-Q дисперсии: σ² = max(σ²_frac, (α·|B|·Vn²)²).
-Используется и в production ``apply_telemetry`` (XML), и в Цех-2/3-мосте
-``build_measurements_from_ti`` (эталонная SE). Цех-3 sweep подтвердил α=0.10 как
-универсальный оптимум на 4 региональных моделях; этот тест фиксирует семантику формулы.
+``apply_telemetry`` uses it, and so can callers that build measurement variances
+themselves. A parameter sweep confirmed α=0.10 as the best value on four large
+production models; this test pins the semantics of the formula.
 """
 
 from __future__ import annotations
