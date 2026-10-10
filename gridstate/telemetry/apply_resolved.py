@@ -46,11 +46,6 @@ class TelemetryApplyConfig:
     branch_q_sigma_frac: float = 0.07
     branch_q_sigma_charging_alpha: float = 0.10
     sign_inconsistency_threshold_mw: float | None = 100.0
-    q_inconsistency_threshold_mvar: float | None = None
-    q_inconsistency_high_voltage_kv: float = 500.0
-    q_inconsistency_threshold_mvar_hv: float | None = None
-    q_inconsistency_action_hv: str = "drop"
-    q_inconsistency_downweight_factor: float = 100.0
     q_loss_filter_enabled: bool = True
     q_loss_filter_floor_mvar: float = 50.0
     q_loss_filter_rel_pct: float = 30.0
@@ -71,11 +66,6 @@ def apply_telemetry_resolved(
     branch_q_sigma_frac: float = 0.07,
     branch_q_sigma_charging_alpha: float = 0.10,
     sign_inconsistency_threshold_mw: float | None = 100.0,
-    q_inconsistency_threshold_mvar: float | None = None,
-    q_inconsistency_high_voltage_kv: float = 500.0,
-    q_inconsistency_threshold_mvar_hv: float | None = None,
-    q_inconsistency_action_hv: str = "drop",
-    q_inconsistency_downweight_factor: float = 100.0,
     q_loss_filter_enabled: bool = True,
     q_loss_filter_floor_mvar: float = 50.0,
     q_loss_filter_rel_pct: float = 30.0,
@@ -97,11 +87,6 @@ def apply_telemetry_resolved(
         branch_q_sigma_frac=branch_q_sigma_frac,
         branch_q_sigma_charging_alpha=branch_q_sigma_charging_alpha,
         sign_inconsistency_threshold_mw=sign_inconsistency_threshold_mw,
-        q_inconsistency_threshold_mvar=q_inconsistency_threshold_mvar,
-        q_inconsistency_high_voltage_kv=q_inconsistency_high_voltage_kv,
-        q_inconsistency_threshold_mvar_hv=q_inconsistency_threshold_mvar_hv,
-        q_inconsistency_action_hv=q_inconsistency_action_hv,
-        q_inconsistency_downweight_factor=q_inconsistency_downweight_factor,
         q_loss_filter_enabled=q_loss_filter_enabled,
         q_loss_filter_floor_mvar=q_loss_filter_floor_mvar,
         q_loss_filter_rel_pct=q_loss_filter_rel_pct,
@@ -170,35 +155,22 @@ def _detect_q_inconsistent_branches(
     branch_x: dict[int, float],
     config: TelemetryApplyConfig,
 ) -> tuple[set[int], set[int]]:
-    """Pre-pass для Q: проверка физической согласованности
-    |Q_BEG + Q_END| с π-схемой ветви (B·V², X-loss).
+    """Pre-pass for Q: physical consistency of |Q_BEG + Q_END| with the branch pi model.
 
-    **Старый подход** (deprecated, default отключён): flat threshold
-    `q_inconsistency_threshold_mvar` ложно дропает 750 кВ Q-меры с
-    зарядной B (Q_charging ≈ 1066 МВар легитимны).
+    With ``q_loss_filter_enabled`` (default) the observed |Q_beg + Q_end| is
+    compared with the expectation from V_flat = V_nom and
+    ``branch.{susceptance, reactance}``; an outlier is a deviation above
+    ``max(floor, rel_pct/100 * expected)``. See
+    :func:`gridstate.telemetry.loss_filter.is_branch_q_consistent_with_physics`.
+    Branches without a nominal voltage are not checked.
 
-    **Новый подход** (`q_loss_filter_enabled=True`, default):
-    сравнивает |Q_beg+Q_end| с расчётным ожиданием через V_flat=V_nom
-    и branch.{susceptance, reactance}. Outlier если расхождение
-    `|обс - exp| > max(floor, rel_pct/100 · exp)`. См.
-    `gridstate.telemetry.loss_filter.is_branch_q_consistent_with_physics`.
-
-    Возвращает ``(q_inconsistent_branches, q_inconsistent_hv_branches)`` —
-    ветви для drop и ветви для downweight соответственно.
+    Returns ``(q_inconsistent_branches, q_inconsistent_hv_branches)``: branches
+    to drop and branches to downweight (by ``q_loss_filter_action``).
     """
-    effective_hv = (
-        config.q_inconsistency_threshold_mvar_hv
-        if config.q_inconsistency_threshold_mvar_hv is not None
-        else config.q_inconsistency_threshold_mvar
-    )
     q_inconsistent_branches: set[int] = set()  # ветви для drop
     q_inconsistent_hv_branches: set[int] = set()  # ветви для downweight
 
-    flat_filter_active = (
-        config.q_inconsistency_threshold_mvar is not None
-        or config.q_inconsistency_threshold_mvar_hv is not None
-    )
-    if not (flat_filter_active or config.q_loss_filter_enabled):
+    if not config.q_loss_filter_enabled:
         return q_inconsistent_branches, q_inconsistent_hv_branches
 
     for obj_id, kind in arg_keys:
@@ -211,40 +183,27 @@ def _detect_q_inconsistent_branches(
         if v_beg is None or v_end is None:
             continue
         vn = branch_vn.get(int(obj_id), 0.0)
-
-        # Новый physical detector (приоритет над flat-thresh).
-        if config.q_loss_filter_enabled and vn > 0:
-            # Достанем P_typical из PBEG/PEND для оценки X-loss.
-            p_typical = 0.0
-            for p_kind in ("PBEG", "PEND"):
-                if (obj_id, p_kind) not in resolved:
-                    continue
-                pv = resolved[(obj_id, p_kind)][0]
-                if pv is not None:
-                    p_typical = max(p_typical, abs(pv))
-            is_ok, _, _, _ = is_branch_q_consistent_with_physics(
-                q_observed_mvar=v_beg + v_end,
-                vn_kv=vn,
-                susceptance_si=branch_b.get(int(obj_id), 0.0),
-                reactance_si=branch_x.get(int(obj_id), 0.0),
-                p_typical_mw=p_typical,
-                floor_mvar=config.q_loss_filter_floor_mvar,
-                rel_pct=config.q_loss_filter_rel_pct,
-            )
-            if not is_ok:
-                if config.q_loss_filter_action == "downweight":
-                    q_inconsistent_hv_branches.add(int(obj_id))
-                else:
-                    q_inconsistent_branches.add(int(obj_id))
+        if vn <= 0:
             continue
-
-        # Fallback: старый flat-detector.
-        is_hv = vn >= config.q_inconsistency_high_voltage_kv
-        threshold = effective_hv if is_hv else config.q_inconsistency_threshold_mvar
-        if threshold is None:
-            continue
-        if abs(v_beg + v_end) >= threshold:
-            if is_hv and config.q_inconsistency_action_hv == "downweight":
+        # Достанем P_typical из PBEG/PEND для оценки X-loss.
+        p_typical = 0.0
+        for p_kind in ("PBEG", "PEND"):
+            if (obj_id, p_kind) not in resolved:
+                continue
+            pv = resolved[(obj_id, p_kind)][0]
+            if pv is not None:
+                p_typical = max(p_typical, abs(pv))
+        is_ok, _, _, _ = is_branch_q_consistent_with_physics(
+            q_observed_mvar=v_beg + v_end,
+            vn_kv=vn,
+            susceptance_si=branch_b.get(int(obj_id), 0.0),
+            reactance_si=branch_x.get(int(obj_id), 0.0),
+            p_typical_mw=p_typical,
+            floor_mvar=config.q_loss_filter_floor_mvar,
+            rel_pct=config.q_loss_filter_rel_pct,
+        )
+        if not is_ok:
+            if config.q_loss_filter_action == "downweight":
                 q_inconsistent_hv_branches.add(int(obj_id))
             else:
                 q_inconsistent_branches.add(int(obj_id))
@@ -435,16 +394,11 @@ def _apply_measurement_loop(
                 var *= float(scale)
                 stats.setdefault("flow_sigma2_scaled", 0)
                 stats["flow_sigma2_scaled"] += 1
-        # Q-inconsistent на HV-ВЛ — downweight σ² × factor (loose якорь,
-        # как в эталонном OC с low weight). Применяется после расчёта
-        # default σ.
-        # Источник: либо новый physical filter (action="downweight"),
-        # либо старый flat-detector (action_hv="downweight").
+        # Q-inconsistent ветвь (physical filter, action="downweight") —
+        # downweight σ² × factor (loose якорь, как в эталонном OC с low weight).
+        # Применяется после расчёта default σ.
         if kind in ("QBEG", "QEND") and obj_id in q_inconsistent_hv_branches:
-            if config.q_loss_filter_enabled and config.q_loss_filter_action == "downweight":
-                var *= config.q_loss_filter_downweight_factor
-            elif config.q_inconsistency_action_hv == "downweight":
-                var *= config.q_inconsistency_downweight_factor
+            var *= config.q_loss_filter_downweight_factor
             meas_arr[idx]["filter_flag"] = int(FilterFlag.Q_INCONSISTENCY)  # q_inconsistency mark
         meas_arr[idx]["variance"] = float(var)
         meas_arr[idx]["weight"] = 1.0 / float(var)
@@ -588,11 +542,7 @@ def _apply_telemetry_on_arrays(
     q_inconsistent_branches, q_inconsistent_hv_branches = _detect_q_inconsistent_branches(
         arg_keys, resolved, branch_vn, branch_b, branch_x, config
     )
-    flat_filter_active = (
-        config.q_inconsistency_threshold_mvar is not None
-        or config.q_inconsistency_threshold_mvar_hv is not None
-    )
-    if flat_filter_active or config.q_loss_filter_enabled:
+    if config.q_loss_filter_enabled:
         stats["q_inconsistent_branches"] = len(q_inconsistent_branches)
         stats["q_inconsistent_hv_branches"] = len(q_inconsistent_hv_branches)
 

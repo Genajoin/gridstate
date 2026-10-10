@@ -70,8 +70,6 @@ VR_KW = {
     "min_voltage_nominal_kv": 110.0,
     "upper_fallback_factor": 1.4,
     "action": "downweight",
-    "detect_nominal_substitution": False,
-    "nominal_substitution_eps": 0.001,
     "questionable_sigma2_multiplier": 100.0,
 }
 
@@ -336,28 +334,6 @@ def test_vrf_skip_non_v_meas():
     )
     stats = _voltage_range_filter_on_arrays(meas, nodes, **VR_KW)
     assert stats["checked"] == 0
-
-
-def test_vrf_nominal_substitution():
-    nodes = _nodes(
-        [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
-    )
-    meas = _meas(
-        [
-            {
-                "id": 10,
-                "object_type": OT_NODE,
-                "object_id": 1,
-                "measurement_type": MT_V,
-                "value": 110.0,
-                "variance": 1.0,
-            }
-        ]
-    )
-    kw = {**VR_KW, "detect_nominal_substitution": True}
-    stats = _voltage_range_filter_on_arrays(meas, nodes, **kw)
-    assert stats["downweighted_nominal_substitution"] == 1
-    assert int(meas[0]["quality"]) == 1
 
 
 def test_vrf_lo_fallback_half_nom_rejects_sentinel():

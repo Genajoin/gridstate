@@ -141,7 +141,6 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
@@ -459,7 +458,6 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
@@ -823,7 +821,6 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
@@ -1176,7 +1173,6 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
@@ -1550,7 +1546,6 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
@@ -1930,7 +1925,6 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
