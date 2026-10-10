@@ -80,7 +80,7 @@ jobs:
       - name: Run tests (no cvxopt-related skips allowed)
         shell: bash  # explicit shell = -eo pipefail, so a pytest failure is not masked by tee
         run: |
-          pytest tests/ | tee pytest.log
+          pytest tests/ -rs | tee pytest.log
           if grep -iE "^SKIPPED.*cvxopt" pytest.log; then
             echo "::error::cvxopt-dependent tests were skipped on the CHOLMOD job"
             exit 1
