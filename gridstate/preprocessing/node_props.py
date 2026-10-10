@@ -1,12 +1,12 @@
-"""NODE-properties для pseudo-measurements: чтение из ``model.nodes``.
+"""NODE properties for pseudo-measurements: read from ``model.nodes``.
 
-`exist_load`, `exist_gen`, `vzd`, `pn_min/max` и т.п. — контрактные поля
-``NODE_DTYPE`` (входные атрибуты ``EXIST_PN/QN/PG/QG``, ``U_ZAD``,
-``PN_MIN/MAX`` и т.д.).
+`exist_load`, `exist_gen`, `vzd`, `pn_min/max`, etc. are contract fields of
+``NODE_DTYPE`` (input attributes ``EXIST_PN/QN/PG/QG``, ``U_ZAD``,
+``PN_MIN/MAX``, etc.).
 
-Используется ``add_pseudo_measurements`` для:
+Used by ``add_pseudo_measurements`` for:
 
-* классификации узла как **transit** vs **load/gen** (порог жёсткости ZIB);
+* classifying a node as **transit** vs **load/gen** (ZIB stiffness threshold);
 * anchoring the V prior of a PV node to its voltage setpoint ``vzd``.
 """
 
@@ -24,14 +24,14 @@ __all__ = ["extract_node_load_props_from_model"]
 
 def extract_node_load_props_from_model(model: Working) -> dict[int, dict]:
     """``id → {exist_load, exist_gen, vzd, pn_min/max, qn_min/max,
-    pg_min/max, umin, umax, na, tip}`` из ``model.nodes``.
+    pg_min/max, umin, umax, na, tip}`` from ``model.nodes``.
 
-    Поля живут прямо в ``NODE_DTYPE``: ``exist_load``, ``exist_gen``,
+    The fields live directly in ``NODE_DTYPE``: ``exist_load``, ``exist_gen``,
     ``load_p_min/max``, ``load_q_min/max``, ``generation_p_min/max``,
     ``voltage_setpoint``, ``voltage_min/max``, ``area_id``, ``node_type``.
 
-    Имена ключей в возврате (``pn_min``, ``vzd``, ``na`` и т.п.) сохранены
-    из терминологии исходных экспортов для ``add_pseudo_measurements``.
+    The returned key names (``pn_min``, ``vzd``, ``na``, etc.) are kept from the
+    terminology of the original exports, for ``add_pseudo_measurements``.
     """
     arr = model.nodes.to_numpy()
     # Extract each column once (vectorized) instead of per-row structured-scalar

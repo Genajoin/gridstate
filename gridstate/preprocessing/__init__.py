@@ -1,8 +1,8 @@
-"""Подготовка модели к WLS: псевдо-измерения и properties входного формата.
+"""Model preparation for WLS: pseudo-measurements and input-format properties.
 
-Топологическая чистка (`disable_orphan_branches`, `disable_disconnected_components`,
+Topology cleanup (`disable_orphan_branches`, `disable_disconnected_components`,
 `disable_isolated_nodes`, `refine_slack_to_one`, `refine_node_types_from_generators`)
-живёт в ``gridstate.topology``. Используется напрямую::
+lives in ``gridstate.topology``. Use it directly::
 
     from gridstate.topology import (
         disable_orphan_branches,
@@ -12,7 +12,7 @@
         refine_node_types_from_generators,
     )
 
-SE-специфичные шаги (псевдо-измерения, чтение properties входного формата) — здесь.
+SE-specific steps (pseudo-measurements, reading input-format properties) live here.
 """
 
 from gridstate.preprocessing.mirror_voltage import mirror_voltage_through_unit_tap_links
