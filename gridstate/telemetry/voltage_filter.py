@@ -1,18 +1,18 @@
-"""Фильтр V-измерений: широкий диапазон [V_lo, V_hi] с запасом.
+"""V-measurement filter: a wide [V_lo, V_hi] range with a margin.
 
 Implements the standard plausibility check of measurements against the
 admissible and nominal values. The goal is to reject only readings that are
 certainly broken (V<<V_critical, V>>V_max) without losing valid edge values.
 
-Нижний порог (приоритет — наиболее мягкий):
+Lower threshold (priority -- the most lenient):
 * `voltage_critical`, the emergency lower limit; the first constraint,
   usually supplied for all nodes;
-* fallback `V_ном · (1 − fallback_pct/100)` (default 20 %).
+* fallback `V_nom · (1 − fallback_pct/100)` (default 20 %).
 
-Верхний порог:
-* `voltage_max · (1 + upper_margin_pct/100)` — voltage_max само по себе
-  «нормальный режим», нужен запас сверху для edge-значений;
-* fallback `V_ном · (1 + fallback_pct/100)`.
+Upper threshold:
+* `voltage_max · (1 + upper_margin_pct/100)` -- voltage_max itself is the
+  "normal operating range", so a margin above it is needed for edge values;
+* fallback `V_nom · (1 + fallback_pct/100)`.
 """
 
 from __future__ import annotations
@@ -55,65 +55,65 @@ def apply_voltage_range_filter(
     nonphysical_upper_factor: float = 1.5,
     questionable_sigma2_multiplier: float = QUESTIONABLE_SIGMA2_MULTIPLIER,
 ) -> dict:
-    """Деактивирует/понижает вес V-измерений вне допустимого диапазона.
+    """Deactivate/downweight V measurements outside the admissible range.
 
     The fallbacks handle placeholder limits that real inputs contain, e.g. a
     critical limit of 1.0 on 500 kV nodes, or a missing upper limit on a large
     share of high-voltage nodes:
 
-    * Нижняя граница: ``voltage_critical`` если он ≥ ``V_ном/2``
-      (валидное значение). Иначе — ``voltage_min`` если он ≥ ``V_ном/2``.
-      Otherwise ``V_ном/2`` (so that a placeholder critical limit of 1.0 does
+    * Lower bound: ``voltage_critical`` if it is ≥ ``V_nom/2``
+      (a valid value). Otherwise ``voltage_min`` if it is ≥ ``V_nom/2``.
+      Otherwise ``V_nom/2`` (so that a placeholder critical limit of 1.0 does
       not let any V≥1 through).
-    * Верхняя граница: ``voltage_max · (1 + upper_margin_pct/100)``;
-      если ``voltage_max == 0`` — fallback ``V_ном · upper_fallback_factor``.
+    * Upper bound: ``voltage_max · (1 + upper_margin_pct/100)``;
+      if ``voltage_max == 0`` -- fallback ``V_nom · upper_fallback_factor``.
 
     Args:
-        model: Working с применённой телеметрией.
-        upper_margin_pct: запас сверху над voltage_max (default 10 %).
-            voltage_max — «допустимое в норм. режиме», для фильтра
-            битых ТИ берём `voltage_max · 1.10`. На узле Vn=10.5,
-            voltage_max=11.6 (=1.1·Vn) это даёт верхнюю границу 12.76.
-        upper_fallback_factor: множитель V_ном при `voltage_max=0`
+        model: Working with telemetry already applied.
+        upper_margin_pct: margin above voltage_max (default 10 %).
+            voltage_max is "admissible in the normal regime"; for filtering
+            broken telemetry we take `voltage_max · 1.10`. On a node with
+            Vn=10.5, voltage_max=11.6 (=1.1·Vn) this gives an upper bound of 12.76.
+        upper_fallback_factor: multiplier of V_nom when `voltage_max=0`
             (default 1.4 = +40 %). Many inputs lack the upper limit on a
             large share of nodes ≥500 kV; a wide bound is used then.
-        min_voltage_nominal_kv: минимальный класс напряжения для
-            проверки. Default 110 кВ — игнорируем генераторные шины
-            (6-21 кВ) и низковольтные нагрузки. На них V_TI обычно
-            на edge диапазона (voltage_max), а через трансформаторы
-            эти ТИ — важные якоря для 110-750 кВ части. Установка
-            в 0 проверяет все узлы.
-        action: что делать с out-of-range measurements:
-            ``"downweight"`` (default) — увеличить variance × multiplier
-            (мягко, WLS сам решит); ``"deactivate"`` — `status=False`
-            (жёстко, может ухудшить если V-меры — единственный якорь).
-        deactivate_nonphysical: если True, физически невозможные как
-            напряжение V-меры (``V<=0``, ``V < V_ном·nonphysical_lower_factor``
-            или ``V > V_ном·nonphysical_upper_factor``) **деактивируются**
-            (``status=False``) вне зависимости от ``action``. Мотив:
-            ``downweight`` (σ×10) не гасит грубо-нефизичные значения — битый
-            U-датчик с ``V=2533`` кВ на шине 20 кВ (pu=127), отрицательный
-            ``V`` или ``V=0.2`` pu (глубокий коллапс/битый датчик) сохраняет
-            гигантский взвешенный остаток и рушит solve (J~1e8, коллапс узлов).
-            Мягкий out-of-range в [lo, hi] по-прежнему обрабатывается
-            ``action``. **Default False** (сохраняет прежнее поведение бит-в-бит).
-        nonphysical_lower_factor: нижний физический предел V как множитель
-            V_ном (default 0.5 = 50 % V_ном, совпадает с soft-floor ``half_nom``).
-            V ниже этого на запитанной шине не может быть валидным напряжением
-            (симметрично верхнему пределу). ``V<=0`` деактивируется всегда,
-            вне зависимости от значения фактора.
-        nonphysical_upper_factor: верхний физический предел V как множитель
-            V_ном для ``deactivate_nonphysical`` (default 1.5 = 150 % V_ном).
-            V выше этого не может быть валидным напряжением.
-        questionable_sigma2_multiplier: множитель variance для
+        min_voltage_nominal_kv: minimum voltage class to check.
+            Default 110 kV -- generator buses (6-21 kV) and low-voltage loads
+            are ignored. Their V telemetry is usually at the edge of the range
+            (voltage_max), and through transformers these measurements are
+            important anchors for the 110-750 kV part. Setting it to 0 checks
+            all nodes.
+        action: what to do with out-of-range measurements:
+            ``"downweight"`` (default) -- increase variance × multiplier
+            (soft, WLS decides); ``"deactivate"`` -- `status=False`
+            (hard, may make things worse if V measurements are the only anchor).
+        deactivate_nonphysical: if True, V measurements that are physically
+            impossible as a voltage (``V<=0``, ``V < V_nom·nonphysical_lower_factor``
+            or ``V > V_nom·nonphysical_upper_factor``) are **deactivated**
+            (``status=False``) regardless of ``action``. Rationale:
+            ``downweight`` (σ×10) does not suppress grossly non-physical values --
+            a broken U sensor with ``V=2533`` kV on a 20 kV bus (pu=127), a
+            negative ``V`` or ``V=0.2`` pu (deep collapse / broken sensor) keeps
+            a huge weighted residual and wrecks the solve (J~1e8, node collapse).
+            A soft out-of-range in [lo, hi] is still handled by
+            ``action``. **Default False** (keeps the previous behaviour bit for bit).
+        nonphysical_lower_factor: lower physical limit of V as a multiple of
+            V_nom (default 0.5 = 50 % of V_nom, matches the soft floor ``half_nom``).
+            A V below this on an energized bus cannot be a valid voltage
+            (symmetric to the upper limit). ``V<=0`` is always deactivated,
+            regardless of the factor value.
+        nonphysical_upper_factor: upper physical limit of V as a multiple of
+            V_nom for ``deactivate_nonphysical`` (default 1.5 = 150 % of V_nom).
+            A V above this cannot be a valid voltage.
+        questionable_sigma2_multiplier: variance multiplier for
             QUESTIONABLE measurements (default 100.0 = σ × 10).
 
     Returns:
         ``{"checked": N, "out_of_range": N, "hard_deactivated": N,
         "by_vnom": {kv: N}}``
     """
-    # Енумы object/measurement-type резолвятся здесь (gridstate.constants),
-    # ядро принимает готовые int и читает только контрактные колонки.
+    # The object/measurement-type enums are resolved here (gridstate.constants);
+    # the core takes ready ints and reads only contract columns.
     validate_downweight_action(action)
     meas_arr = table_copy(model.measurements)
     nodes_arr = model.nodes.to_numpy()
@@ -150,7 +150,7 @@ def _voltage_range_filter_on_arrays(
     nonphysical_lower_factor: float = 0.5,
     nonphysical_upper_factor: float = 1.5,
 ) -> dict:
-    """ЯДРО: V-range filter над контрактными массивами.
+    """CORE: V-range filter over contract arrays.
 
     Mutates ``meas_arr`` in place (``status``/``variance``/``weight``/``quality``)
     and reads ``nodes_arr`` (``voltage_nominal``/``voltage_critical``/``voltage_min``/
@@ -179,13 +179,13 @@ def _voltage_range_filter_on_arrays(
             continue
         v_meas = float(m["value"])
 
-        # Жёсткая деактивация ФИЗИЧЕСКИ НЕВОЗМОЖНЫХ V (nonphysical): V≤0,
-        # V < V_ном·lower_factor или V > V_ном·upper_factor. downweight (σ×10)
-        # их не гасит — битый U-датчик с pu=127 («2533 кВ» на шине 20 кВ),
-        # отрицательный V или V=0.2 pu (глубокий коллапс) сохраняет гигантский
-        # взвешенный остаток и рушит solve (J~1e8, коллапс). Такие значения не
-        # могут быть напряжением → status=False, а не downweight. Пределы
-        # симметричны (снизу и сверху), V≤0 деактивируется всегда.
+        # Hard deactivation of PHYSICALLY IMPOSSIBLE V (nonphysical): V<=0,
+        # V < V_nom·lower_factor or V > V_nom·upper_factor. downweight (σ×10)
+        # does not suppress them -- a broken U sensor with pu=127 ("2533 kV" on
+        # a 20 kV bus), a negative V or V=0.2 pu (deep collapse) keeps a huge
+        # weighted residual and wrecks the solve (J~1e8, collapse). Such values
+        # cannot be a voltage -> status=False, not downweight. The limits are
+        # symmetric (below and above); V<=0 is always deactivated.
         if deactivate_nonphysical and (
             v_meas <= 0
             or v_meas < v_nom * nonphysical_lower_factor
@@ -199,10 +199,10 @@ def _voltage_range_filter_on_arrays(
             continue
 
         if v_meas <= 0:
-            # V≤0 на active-узле — деактивируем как заведомо невалидное.
-            # apply_telemetry уже фильтрует V<50%Vn для TM-формул, но
-            # measurement мог попасть из внешнего источника (manual seed,
-            # SQL-импорт, повторное apply); этот guard закрывает дыру.
+            # V<=0 on an active node -- deactivate as certainly invalid.
+            # apply_telemetry already filters V<50%Vn for TM formulas, but the
+            # measurement may have come from an external source (manual seed,
+            # SQL import, repeated apply); this guard closes the hole.
             counters["out_of_range"] += 1
             v_nom_int = round(v_nom)
             by_vnom[v_nom_int] = by_vnom.get(v_nom_int, 0) + 1
@@ -214,7 +214,7 @@ def _voltage_range_filter_on_arrays(
                 )
             continue
 
-        # Нижний порог: voltage_critical → voltage_min → V_ном/2.
+        # Lower threshold: voltage_critical -> voltage_min -> V_nom/2.
         # Some inputs carry a placeholder critical limit of 1.0 on nodes
         # ≥500 kV; the validity criterion "X ≥ V_nom/2" discards 1.0 as a
         # placeholder (1 ≪ 250 for 500 kV).
@@ -232,7 +232,7 @@ def _voltage_range_filter_on_arrays(
         else:
             lo = half_nom
 
-        # Верхний порог: voltage_max·(1+upper_margin_pct) → fallback V_ном·factor.
+        # Upper threshold: voltage_max·(1+upper_margin_pct) -> fallback V_nom·factor.
         # Many inputs lack the upper limit on a large share of nodes ≥500 kV;
         # fallback 1.4·V_nom.
         v_max = float(nodes_arr[ni]["voltage_max"])

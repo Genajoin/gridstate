@@ -21,41 +21,41 @@ def compute_expected_q_imbalance_mvar(
     p_typical_mw: float = 0.0,
     q_typical_mvar: float = 0.0,
 ) -> float:
-    """Расчётное ``|Q_beg + Q_end|`` для линии через физику π-схемы.
+    """Expected ``|Q_beg + Q_end|`` for a line from π-model physics.
 
-    На активной ВЛ (без трафо) сумма Q-потоков на обоих концах =
-    Q-потери в реактивности минус Q-генерация зарядной B::
+    On an in-service line (no transformer) the sum of the Q flows at both ends =
+    Q losses in the reactance minus the Q generation of the charging B::
 
         Q_beg + Q_end = (P²+Q²)/V²·X  -  V²·B
 
-    где B — полная зарядная (хранится в нашей storage как
-    ``branch.susceptance``, в Сименсах) — делится пополам в шунты
-    обоих концов π-схемы (V²·B/2 + V²·B/2 = V²·B).
+    where B is the full charging susceptance (stored in our data model as
+    ``branch.susceptance``, in Siemens) and is split in half into the shunts
+    of both π-model ends (V²·B/2 + V²·B/2 = V²·B).
 
-    Для приблизительной оценки используем ``Vnom`` вместо реального V
-    (на ВЛ V обычно близок к номиналу ±5 %). Также можно опустить
-    Q-потери в X если ``p_typical/q_typical = 0`` — на 750 кВ ВЛ они
-    обычно << зарядной мощности.
+    For a rough estimate we use ``Vnom`` instead of the actual V
+    (on a line V is usually close to nominal ±5 %). The Q losses in X can also
+    be omitted if ``p_typical/q_typical = 0``: on 750 kV lines they are
+    usually << the charging power.
 
     Args:
-        vn_kv: номинальное напряжение ветви, кВ (берём из узла начала).
-        susceptance_si: ``branch.susceptance``, См (полная B линии,
-            хранится со знаком: +у capacitive ВЛ, ‒у indictive ШР).
-        reactance_si: ``branch.reactance``, Ом.
-        p_typical_mw: типичный P-поток через ветвь, МВт (если знаем —
-            добавим Q-потери X-серии; default 0 = только charging).
-        q_typical_mvar: типичный Q-поток.
+        vn_kv: nominal branch voltage, kV (taken from the from-node).
+        susceptance_si: ``branch.susceptance``, S (full B of the line,
+            stored with sign: positive for capacitive lines, negative for inductive shunt reactors).
+        reactance_si: ``branch.reactance``, Ohm.
+        p_typical_mw: typical P flow through the branch, MW (if known,
+            adds the series-X Q losses; default 0 = charging only).
+        q_typical_mvar: typical Q flow.
 
     Returns:
-        |Σ Q_beg + Q_end| в МВар (положительное число).
+        |Σ Q_beg + Q_end| in MVAr (a positive number).
 
     Notes:
-        Единицы: V [кВ], B [См] → V²·B имеет размерность (кВ)² · См =
-        (1000 В)² · См = 10⁶ ВА = МВА. Поэтому V²·B напрямую в МВар.
-        Аналогично (P²+Q²)/V²·X = (МВА)²/(кВ)² · Ом = МА² · Ом = МВт²/В.
-        Конвертация: 1 МА = 10⁶ А; 1 МА² · Ом = 10¹² ВА = 10⁶ МВар.
-        Корректировка: (P²+Q²)/V²·X где P,Q в МВт/МВар, V в кВ →
-        результат в МВар напрямую (через единицы входного формата S = VI·1e-3).
+        Units: V [kV], B [S] → V²·B has dimension (kV)² · S =
+        (1000 V)² · S = 10⁶ VA = MVA. Hence V²·B is directly in MVAr.
+        Likewise (P²+Q²)/V²·X = (MVA)²/(kV)² · Ohm = MA² · Ohm = MW²/V.
+        Conversion: 1 MA = 10⁶ A; 1 MA² · Ohm = 10¹² VA = 10⁶ MVAr.
+        Correction: (P²+Q²)/V²·X with P,Q in MW/MVAr, V in kV →
+        the result is directly in MVAr (through the units of the input format S = VI·1e-3).
     """
     charging_mvar = vn_kv * vn_kv * abs(susceptance_si)
     if vn_kv > 0 and abs(reactance_si) > 1e-12:
@@ -76,22 +76,22 @@ def is_branch_q_consistent_with_physics(
     floor_mvar: float = 50.0,
     rel_pct: float = 30.0,
 ) -> tuple[bool, float, float, float]:
-    """Sanity-check: совпадает ли |Q_beg+Q_end| с физикой π-схемы.
+    """Sanity check: does |Q_beg+Q_end| agree with the π-model physics.
 
-    Расширение flat-threshold ``|Q_beg+Q_end|>const``: использует
-    расчётное ожидание через зарядную B и потери в X (V_flat=V_nom).
+    An extension of the flat threshold ``|Q_beg+Q_end|>const``: uses
+    the expected value from the charging B and the losses in X (V_flat=V_nom).
 
-    Outlier-логика: ``excess = ||Q_obs| - |Q_expected||``; tolerance
-    ``tol = max(floor_mvar, rel_pct/100 · |Q_expected|)``. Outlier если
+    Outlier logic: ``excess = ||Q_obs| - |Q_expected||``; tolerance
+    ``tol = max(floor_mvar, rel_pct/100 · |Q_expected|)``. A measurement is an outlier if
     ``excess > tol``.
 
-    Use case на 750 кВ ВЛ с большой зарядной B:
+    Use case on a 750 kV line with a large charging B:
     ``|Q_obs|≈1100, |Q_exp|=V²·B=1066`` → excess=34 < tol≈max(50, 320)
-    → **keep** (flat ``q>50 МВар`` ложно дропал).
+    → **keep** (the flat ``q>50 MVAr`` wrongly dropped it).
 
-    Use case на 220 кВ ВЛ с малой B:
+    Use case on a 220 kV line with a small B:
     ``|Q_obs|=80, |Q_exp|=5`` → excess=75 > tol=max(50, 1.5) → **drop**
-    (flat ``q>100 МВар`` пропускал).
+    (the flat ``q>100 MVAr`` let it pass).
 
     Returns:
         (is_consistent, expected_mvar, observed_mvar, excess_mvar)
