@@ -24,7 +24,6 @@ import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd  # type: ignore[import-untyped]
 
 from gridstate.constants import BranchType, NodeType
 from gridstate.contract.containers import SEInput
@@ -255,6 +254,10 @@ def _set_row(row: np.void, names: tuple[str, ...], values: dict[str, Any]) -> No
 
 def _build_branches(net: Any, f_hz: float) -> np.ndarray:
     """``net.line`` + ``net.trafo`` → массив ветвей (импеданс Ом, шунты См)."""
+    # pandas is not a gridstate dependency: it arrives with pandapower, so it is
+    # imported here (only for pd.isna on table cells), never at module import.
+    import pandas as pd  # type: ignore[import-untyped]
+
     # Пишем прямо в преаллоцированный массив (без промежуточного list[dict]):
     # число ветвей известно заранее = линии + трансформаторы.
     arr = np.zeros(len(net.line) + len(net.trafo), dtype=_BRANCHES_DTYPE)
