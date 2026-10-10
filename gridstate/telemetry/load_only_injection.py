@@ -42,6 +42,7 @@ from gridstate._arrays import meas_mask
 from gridstate.bounds import resolve_bounds
 from gridstate.constants import FilterFlag, MeasurementObjectType
 from gridstate.telemetry._specs import _INJ_MT, _NODE_INJ_MAP
+from gridstate.telemetry.noise import uniform_box_variance
 from gridstate.telemetry.quality import QUALITY_BAD
 from gridstate.working import table_copy, table_replace
 
@@ -282,7 +283,7 @@ def widen_generation_only_injections(
                 continue
             lo, hi = bounds
             meas["value"][k] -= 0.5 * (lo + hi)
-            meas["variance"][k] += (hi - lo) ** 2 / 12.0
+            meas["variance"][k] += uniform_box_variance(lo, hi)
             meas["weight"][k] = 1.0 / meas["variance"][k]
             counts[mt] += 1
         if any(counts.values()) or any(released.values()):

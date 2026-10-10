@@ -23,8 +23,15 @@ from gridstate.measurement_ids import IdAllocator
 from gridstate.telemetry._filters import build_measurement_index
 from gridstate.telemetry._specs import _INJ_MT, _KIND_MAP, _NODE_INJ_MAP
 from gridstate.telemetry.loss_filter import is_branch_q_consistent_with_physics
+from gridstate.telemetry.noise import (
+    QUESTIONABLE_SIGMA2_MULTIPLIER,
+    branch_nominal_kv,
+    variance_branch_q,
+    variance_injection,
+    variance_power,
+    variance_voltage,
+)
 from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_QUESTIONABLE, aggregate_qualities
-from gridstate.telemetry.units import variance_branch_q, variance_power, variance_voltage
 from gridstate.working import table_copy, table_replace
 from gridstate.z_vector import SIDE_NONE
 
@@ -49,7 +56,7 @@ class TelemetryApplyConfig:
     compatibility and assembles this config to hand down.
     """
 
-    questionable_sigma2_multiplier: float = 100.0
+    questionable_sigma2_multiplier: float = QUESTIONABLE_SIGMA2_MULTIPLIER
     v_sigma2_scale_by_node: dict[int, float] | None = None
     flow_sigma2_scale_by_branch: dict[tuple[int, str], float] | None = None
     branch_p_sigma_frac: float = 0.02
@@ -69,7 +76,7 @@ def apply_telemetry_resolved(
     arg_keys: list[tuple[int, str]],
     *,
     total_args: int,
-    questionable_sigma2_multiplier: float = 100.0,
+    questionable_sigma2_multiplier: float = QUESTIONABLE_SIGMA2_MULTIPLIER,
     v_sigma2_scale_by_node: dict[int, float] | None = None,
     flow_sigma2_scale_by_branch: dict[tuple[int, str], float] | None = None,
     branch_p_sigma_frac: float = 0.02,
@@ -424,11 +431,11 @@ def _build_node_injection_rows(
     config: TelemetryApplyConfig,
     stats: dict[str, int],
 ) -> list[dict]:
-    """Собрать NODE injections для последующего .add() адаптером. Локальная
-    sigma 5% (не 2% как JSON-TI) — net inj это агрегированная величина
-    (PG+PN с разными ARG), уверенность ниже чем у направленного branch
-    flow. Tighter sigma (как в `_variance_power` 2%) эмпирически ломала
-    convergence. id назначаются здесь (бит-идентично прежнему .add()).
+    """Собрать NODE injections для последующего .add() адаптером.
+
+    The variance is :func:`gridstate.telemetry.noise.variance_injection` (sigma
+    5 % of the net value, see there), scaled for a QUESTIONABLE aggregate. id
+    назначаются здесь (бит-идентично прежнему .add()).
     """
     new_rows: list[dict] = []
     ids = IdAllocator.after_max(meas_arr["id"], name="apply_telemetry")
@@ -437,8 +444,7 @@ def _build_node_injection_rows(
         guid_first = entries[0][1]
         net_q = aggregate_qualities([q for _, _, q in entries])
         mt = _INJ_MT[pq]
-        sigma = max(0.05 * abs(net), 0.5)
-        var = sigma * sigma + (1.0 if pq == "P" else 0.5)
+        var = variance_injection(net, "P" if pq == "P" else "Q")
         if net_q == QUALITY_QUESTIONABLE:
             var *= config.questionable_sigma2_multiplier
         new_rows.append(
@@ -525,10 +531,7 @@ def _apply_telemetry_on_arrays(
 
     # Per-branch nominal voltage / susceptance / reactance: питают Q-physics
     # pre-pass и charging-aware σ_Q. Vn берётся из узла начала ветви.
-    branch_vn: dict[int, float] = {
-        int(bid): vn_by_node.get(int(fn), 0.0)
-        for bid, fn in zip(branches_arr["id"], branches_arr["from_node"], strict=True)
-    }
+    branch_vn = branch_nominal_kv(vn_by_node, branches_arr, policy="from")
     branch_b: dict[int, float] = id_value_map(branches_arr, "susceptance")
     branch_x: dict[int, float] = id_value_map(branches_arr, "reactance")
 

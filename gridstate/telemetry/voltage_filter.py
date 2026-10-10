@@ -30,6 +30,11 @@ from gridstate.constants import (
     NodeType,
 )
 from gridstate.telemetry._filters import downweight_measurement, validate_downweight_action
+from gridstate.telemetry.noise import (
+    GEN_V_SIGMA2,
+    QUESTIONABLE_SIGMA2_MULTIPLIER,
+    gen_v_calibrated_variance,
+)
 from gridstate.utils import id_to_pos_map
 from gridstate.working import table_copy, table_replace
 
@@ -48,7 +53,7 @@ def apply_voltage_range_filter(
     deactivate_nonphysical: bool = False,
     nonphysical_lower_factor: float = 0.5,
     nonphysical_upper_factor: float = 1.5,
-    questionable_sigma2_multiplier: float = 100.0,
+    questionable_sigma2_multiplier: float = QUESTIONABLE_SIGMA2_MULTIPLIER,
 ) -> dict:
     """Деактивирует/понижает вес V-измерений вне допустимого диапазона.
 
@@ -260,7 +265,7 @@ def _voltage_range_filter_on_arrays(
 def apply_voltage_meas_calibration_for_gen_nodes(
     model: Working,
     *,
-    sigma2: float = 0.1,
+    sigma2: float = GEN_V_SIGMA2,
     mode: Literal["absolute", "tighten"] = "absolute",
 ) -> dict:
     """Calibrate σ² of V measurements on generating and slack nodes.
@@ -368,12 +373,11 @@ def _voltage_meas_calibration_on_arrays(
             continue
         if int(meas_arr[i]["quality"]) != int(MeasurementQuality.GOOD):
             continue
-        if tighten:
-            current = float(meas_arr[i]["variance"])
-            if np.isfinite(current) and 0.0 < current <= sigma2:
-                n_kept += 1
-                continue
-        meas_arr[i]["variance"] = float(sigma2)
+        new_var = gen_v_calibrated_variance(float(meas_arr[i]["variance"]), sigma2, tighten=tighten)
+        if new_var is None:
+            n_kept += 1
+            continue
+        meas_arr[i]["variance"] = new_var
         meas_arr[i]["weight"] = 1.0 / float(sigma2) if sigma2 > 0 else 0.0
         n_updated += 1
 
