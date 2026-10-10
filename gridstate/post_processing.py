@@ -34,6 +34,7 @@ from gridstate.algebra.base import (
 )
 from gridstate.bounds import is_reactive_only_generation, resolve_bounds
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
+from gridstate.resolve_pass import REVERT_REASON_NOT_CONVERGED, ResolveSnapshot
 from gridstate.units import BASE_MVA, NetworkPU
 from gridstate.utils import id_to_pos_map
 
@@ -703,7 +704,7 @@ def refine_anti_overshoot(
     inj_sigma: float = 2.0,
     max_iters: int = 5,
     mid_start: int = 760_000_000,
-) -> tuple[SEResult, dict[str, int | float | bool]]:
+) -> tuple[SEResult, dict[str, int | float | bool | str]]:
     """Anti-overshoot пост-solve уточнение V со САМО-ВАЛИДАЦИЕЙ (revert).
 
     Слабонаблюдаемые radial-узлы (нет real-V-меры, рыхлый Q-pseudo) могут получить
@@ -731,20 +732,24 @@ def refine_anti_overshoot(
             ``max(V/Vnom)`` относительно базы.
         mid_start: стартовый id для добавляемых pseudo-мер.
 
+    The refinement is accepted only if the last re-solve converged
+    (``refined.success``); a non-converged re-solve is reverted even when it
+    lowered ``max(V/Vnom)``, and the stats then carry ``revert_reason``.
+
     Returns:
         ``(result, stats)`` — финальный ``SEResult`` (refined или base при откате),
-        ``stats = {"tightened": N, "accepted": bool, "max_ratio_before/after": ...}``.
+        ``stats = {"tightened": N, "accepted": bool, "max_ratio_before/after": ...}``
+        (+ ``revert_reason`` when the re-solve did not converge).
     """
     # Снимки для ПОЛНОГО отката: узлы (V/δ/estimated), ветви (потоки) и меры
     # (добавленные tight-priors + estimated_si). Иначе revert оставлял бы в
     # модели меры и branch/measurement-оценки от отвергнутого решения —
     # несогласованные с базовыми V/δ (это ломало бы и post-hoc quality
     # summary, и bad-data re-pass, читающие estimated_si).
-    nd0 = model.nodes.to_numpy().copy()
-    br0 = model.branches.to_numpy().copy()
+    snapshot = ResolveSnapshot.capture(model)
     maxr0 = _max_voltage_ratio(model)
 
-    me = model.measurements.to_numpy()
+    me = snapshot.measurements
     real_v: set[int] = {
         int(me["object_id"][i])
         for i in range(len(me))
@@ -788,18 +793,21 @@ def refine_anti_overshoot(
             break
 
     maxr1 = _max_voltage_ratio(model)
-    accepted = bool(tightened) and maxr1 < maxr0 - 1e-4
-    stats = {
+    # A non-converged re-solve is never accepted: the V it stopped at says
+    # nothing about the overshoot being resolved.
+    converged = not tightened or bool(refined.success)
+    accepted = bool(tightened) and converged and maxr1 < maxr0 - 1e-4
+    stats: dict[str, int | float | bool | str] = {
         "tightened": len(tightened),
         "accepted": accepted,
         "max_ratio_before": round(maxr0, 4),
         "max_ratio_after": round(maxr1, 4),
     }
+    if not converged:
+        stats["revert_reason"] = REVERT_REASON_NOT_CONVERGED
     if accepted:
         return refined, stats
     # Полный откат к базе: V/δ + branch-потоки + меры (удаляются добавленные
     # tight-priors, estimated_si возвращаются к базовому решению).
-    model.nodes.update_from_array(nd0)
-    model.branches.update_from_array(br0)
-    model.measurements.update_from_array(me)
+    snapshot.restore(model)
     return result, stats
