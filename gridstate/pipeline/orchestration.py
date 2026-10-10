@@ -84,6 +84,11 @@ def shunt_sanity_rerun(
     Known asymmetry, kept as is: the trials are cold runs (no ``init_state``),
     while the base run may have been warm-started; with a warm base the Σrn²
     of the base and of the trials come from different starting points.
+
+    When exactly one candidate is accepted, the joint run of the accepted
+    edits is the trial run of that candidate (same input copy, same edit,
+    same configuration, cold start, no events), so its result is reused
+    instead of being computed a second time.
     """
     if not base_result.success:
         return base_result
@@ -121,15 +126,19 @@ def shunt_sanity_rerun(
         return res, sum_rn2(res.model.measurements.to_numpy())
 
     accepted: dict[int, str] = {}
+    # Trial of the most recently accepted candidate (its result and Σrn²).
+    accepted_trial: tuple[SEResult | None, float] = (None, float("inf"))
     for nid in plan.candidates:
         best_mode: str | None = None
         best_rn2 = base_rn2 - gate
+        best_res: SEResult | None = None
         for mode in ("off", "flip"):
-            _res, rn2 = _trial({nid: mode})
+            res, rn2 = _trial({nid: mode})
             if rn2 < best_rn2:
-                best_mode, best_rn2 = mode, rn2
+                best_mode, best_rn2, best_res = mode, rn2, res
         if best_mode is not None:
             accepted[nid] = best_mode
+            accepted_trial = (best_res, best_rn2)
 
     if not accepted:
         _emit(
@@ -141,7 +150,8 @@ def shunt_sanity_rerun(
         )
         return base_result
 
-    final_res, final_rn2 = _trial(accepted)
+    # One accepted candidate: _trial(accepted) would repeat its trial run.
+    final_res, final_rn2 = accepted_trial if len(accepted) == 1 else _trial(accepted)
     if final_res is None or final_rn2 >= base_rn2 - gate:
         _emit(
             {

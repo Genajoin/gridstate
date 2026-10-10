@@ -184,3 +184,41 @@ def test_orchestration_leaves_the_input_untouched():
     (sanity,) = [e for e in events if e.get("name") == "shunt_sanity"]
     assert sanity["stats"]["accepted"] == 1
     assert out.success
+
+
+def test_single_accepted_candidate_reuses_its_trial(monkeypatch):
+    """One accepted candidate: the joint run of the accepted edits IS its trial
+    run (same input copy, edit, configuration, cold start), so it is not run a
+    second time, and the output equals an explicit re-run bit for bit."""
+    import dataclasses
+
+    import gridstate.pipeline.orchestration as orch
+    from gridstate.contract import run as contract_run
+    from gridstate.pipeline import run as pipeline_run
+
+    se_input, cfg = _sanity_input()
+    calls: list[int] = []
+    real_run = orch._pipeline_run
+
+    def _counting_run(*args, **kwargs):
+        calls.append(1)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(orch, "_pipeline_run", _counting_run)
+    events: list[dict] = []
+    out = contract_run(se_input, config=cfg, on_event=events.append, validate=False)
+    (sanity,) = [e for e in events if e.get("name") == "shunt_sanity"]
+    assert sanity["stats"]["candidates"] == 1
+    assert sanity["stats"]["accepted"] == 1
+    assert len(calls) == 1 + 2  # base run + off/flip trials of the one candidate
+
+    edited = se_input.model.copy()
+    for nid, mode in sanity["stats"]["edits"].items():
+        assert edit_shunt(edited, nid, mode) > 0
+    rerun = pipeline_run(
+        edited, config=dataclasses.replace(cfg, shunt_sanity=False), derived=se_input.derived
+    )
+    for name in ("nodes", "branches", "measurements"):
+        assert getattr(out, name).tobytes() == getattr(rerun.outputs, name).tobytes(), name
+    assert out.iterations == rerun.iterations
+    assert out.objective_value == rerun.objective_value
