@@ -159,7 +159,7 @@ def find_violations(files: list[Path]) -> list[str]:
 
 def test_scan_covers_the_repository() -> None:
     names = {p.relative_to(REPO).as_posix() for p in _scanned_files()}
-    assert "gridstate/pipeline.py" in names
+    assert "gridstate/pipeline/config.py" in names
     assert "README.md" in names
     assert "pyproject.toml" in names
     assert Path(__file__).resolve().relative_to(REPO).as_posix() in names
