@@ -13,5 +13,5 @@ __all__ = ["normalize_guid", "variance_branch_q", "variance_power", "variance_vo
 
 
 def normalize_guid(g: str) -> str:
-    """Нормализация GUID к lower-case, без фигурных скобок."""
+    """Normalize a GUID to lower case, without curly braces."""
     return g.strip("{}").lower()

@@ -1,16 +1,16 @@
-"""Сборка инфраструктуры для IPM-режима SE.
+"""Setup assembly for the SE IPM mode.
 
-Helper-функции для:
+Helper functions for:
 
-1. Извлечения box-bounds из ``NODE_DTYPE`` (``load_p_min/max``,
-   ``generation_p_min/max`` и т.д.) активных узлов с ``exist_load=1``
-   или ``exist_gen=1``;
-2. Расширения ``StateLayout`` под IPM-режим с этими box-секциями;
-3. Дополнения ``z`` / ``R`` / ``MeasurementIndex`` узловыми
-   balance-уравнениями (``KIND_NODE_BALANCE_P/Q``) для всех активных
-   узлов — связь V/δ с box-vars через physics.
+1. Extracting box bounds from ``NODE_DTYPE`` (``load_p_min/max``,
+   ``generation_p_min/max``, etc.) of active nodes with ``exist_load=1``
+   or ``exist_gen=1``;
+2. Extending ``StateLayout`` for the IPM mode with these box sections;
+3. Augmenting ``z`` / ``R`` / ``MeasurementIndex`` with node
+   balance equations (``KIND_NODE_BALANCE_P/Q``) for all active
+   nodes, linking V/δ to the box variables through the physics.
 
-Все функции — pure (не модифицируют ``model``).
+All functions are pure (they do not modify ``model``).
 """
 
 from __future__ import annotations
@@ -92,15 +92,15 @@ def _collect_box_sections(
         *,
         is_default_box: bool = False,
     ) -> float:
-        """σ²_prior для box-var.
+        """σ²_prior for a box variable.
 
-        * широкая коробка (width > bus_equiv_threshold) → bus_equiv_pu
-          (tight, не даёт solver'у раскидать невязку по фиктивному
-          5-10 ГВт-эквиваленту); НЕ применяется к дефолтным коробкам
-          (``is_default_box=True``) — они широкие не потому что узел
-          BUS-эквивалент, а потому что границы в данных не заданы;
-        * обычная коробка → normal_pu (default 0 — prior не создаётся,
-          balance/data-меры подтягивают значение).
+        * wide box (width > bus_equiv_threshold) -> bus_equiv_pu
+          (tight, keeps the solver from spreading the residual over a fictitious
+          5-10 GW equivalent); NOT applied to default boxes
+          (``is_default_box=True``): they are wide not because the node is a
+          BUS equivalent but because no bounds are set in the data;
+        * ordinary box -> normal_pu (default 0: no prior is created,
+          balance/data measurements pull the value).
         """
         width = abs(bounds[1] - bounds[0])
         if not is_default_box and width > float(bus_equiv_width_threshold_pu):
@@ -110,26 +110,26 @@ def _collect_box_sections(
     def _bound_pair(
         lo_raw: float, hi_raw: float, default_halfwidth_pu: float
     ) -> tuple[float, float, bool]:
-        """``(lo, hi, is_default)`` в p.u.; незаданные границы → широкий дефолт.
+        """``(lo, hi, is_default)`` in p.u.; unset bounds -> a wide default.
 
-        Незаданность (оба ~0 / сентинелы ±9999 / вырожденная или
-        перевёрнутая пара) трактуется по :mod:`gridstate.bounds` и
-        заменяется симметричной коробкой ``±default_halfwidth_pu``.
-        Полузаданная пара (один сентинел) сохраняет валидную сторону.
+        "Unset" (both ~0 / sentinels ±9999 / a degenerate or
+        inverted pair) is interpreted per :mod:`gridstate.bounds` and
+        replaced by a symmetric box ``±default_halfwidth_pu``.
+        A half-set pair (one sentinel) keeps the valid side.
 
-        Раньше незаданные пары давали ``None`` → box-var **не
-        создавалась**, при этом balance-уравнение узла оставалось —
-        и прижимало его инжекцию к нулю как у transit-узла. Для Q это
-        массовый случай (Q-лимиты заполнены редко) — реактивная выдача
-        генераторных узлов насильно занулялась.
+        Previously unset pairs gave ``None`` -> the box variable was **not
+        created** while the node's balance equation remained,
+        pinning its injection to zero as for a transit node. For Q this is a
+        mass case (Q limits are rarely filled): the reactive output of
+        generator nodes was forcibly zeroed.
         """
         lo_res, hi_res = resolve_bounds(lo_raw, hi_raw)
         lo_pu = lo_res / BASE_MVA if np.isfinite(lo_res) else -float(default_halfwidth_pu)
         hi_pu = hi_res / BASE_MVA if np.isfinite(hi_res) else float(default_halfwidth_pu)
         is_default = not (np.isfinite(lo_res) and np.isfinite(hi_res))
         if hi_pu - lo_pu < 1e-9:
-            # Вырожденная валидная пара (lo==hi) — узкий «гвоздь» барьер
-            # не переживёт; расширяем симметрично на дефолт.
+            # A degenerate valid pair (lo==hi) is a narrow "nail" the barrier
+            # would not survive; widen symmetrically to the default.
             lo_pu -= float(default_halfwidth_pu)
             hi_pu += float(default_halfwidth_pu)
             is_default = True
@@ -140,11 +140,11 @@ def _collect_box_sections(
         return lo_pu, hi_pu, is_default
 
     def _init_in_box(value_pu: float, bounds: tuple[float, float]) -> float:
-        """Init box-var: текущее значение из node-таблицы зажатое в [lo, hi]
-        с микро-отступом от границ.
+        """Init box-var: the current value from the node table clamped to [lo, hi]
+        with a micro-margin from the bounds.
 
-        Если ``value_pu==0`` — init=0 (если 0 ∈ [lo+margin, hi-margin]),
-        иначе ближайшая граница с margin. This is a soft prior towards 0
+        If ``value_pu==0``, init=0 (if 0 ∈ [lo+margin, hi-margin]),
+        otherwise the nearest bound with margin. This is a soft prior towards 0
         for nodes without an explicit pn₀/pg₀ in the input: the injection
         starts at 0 and pn/pg are estimated from the branch telemetry.
         Without it IPM started from the box midpoint (e.g. 42 500 MW for a
@@ -152,10 +152,10 @@ def _collect_box_sections(
         """
         lo, hi = bounds
         width = hi - lo
-        # Микро-отступ от границ: 1% width или 1e-6 p.u.
+        # Micro-margin from the bounds: 1% of width or 1e-6 p.u.
         margin = max(width * 0.01, 1e-6)
         if abs(value_pu) < 1e-9:
-            # Старт от 0 если 0 ∈ box; иначе ближайшая граница с margin.
+            # Start from 0 if 0 ∈ box; otherwise the nearest bound with margin.
             if lo + margin > 0.0:
                 return lo + margin
             if hi - margin < 0.0:
@@ -168,8 +168,8 @@ def _collect_box_sections(
         return value_pu
 
     def _is_reactive_only(row: np.void) -> bool:
-        """Генерирующий узел только с реактивной мощностью: ``P ∈ [0, 0]``,
-        ``P = 0`` и заданный невырожденный диапазон Q."""
+        """Generating node with reactive power only: ``P ∈ [0, 0]``,
+        ``P = 0`` and a set, non-degenerate Q range."""
         return float(row["generation_p"]) == 0.0 and is_reactive_only_generation(
             row["generation_p_min"],
             row["generation_p_max"],
@@ -220,21 +220,21 @@ def _collect_box_sections(
             "exist_load": bool(row["exist_load"]),
         }
 
-        # Init box-vars берём из node-row (load_p/q, generation_p/q).
-        # КАЖДЫЙ exist_*-узел получает box-var (незаданные границы →
-        # широкий дефолт): balance-уравнение пишется для всех активных
-        # узлов, и узел с exist_* но без переменной вкладывался бы в
-        # него нулём — его P/Q-инжекция прижималась бы к нулю как у
-        # transit. Полное покрытие также гарантирует, что
-        # ``write_node_estimates`` заполнит все 4 ``*_estimated`` поля.
+        # Init box-vars are taken from the node row (load_p/q, generation_p/q).
+        # EVERY exist_* node gets a box variable (unset bounds ->
+        # a wide default): the balance equation is written for all active
+        # nodes, and a node with exist_* but without a variable would enter
+        # it as zero, so its P/Q injection would be pinned to zero as for a
+        # transit node. Full coverage also guarantees that
+        # ``write_node_estimates`` fills all 4 ``*_estimated`` fields.
         for sec in sections:
             if not exist_flags[sec.exist_col]:
                 continue
             if sec.min_col == "generation_p_min" and _is_reactive_only(row):
-                # Компенсатор (УШР, СТК, СК): активной мощности нет. Пара
-                # [0, 0] иначе читается как «границы не заданы» и получает
-                # широкий дефолтный ящик — оценка выдаёт на устройстве
-                # фантомную активную генерацию.
+                # Compensator (controllable shunt reactor, SVC, synchronous condenser):
+                # no active power. A [0, 0] pair would otherwise read as "bounds not set"
+                # and get a wide default box, and the estimate would produce phantom
+                # active generation on the device.
                 continue
             lo, hi, dflt = _bound_pair(
                 float(row[sec.min_col]),
@@ -252,19 +252,19 @@ def _collect_box_sections(
 
 @dataclass
 class IPMSetup:
-    """Расширенный layout + box-bounds + augmented (z, R, meas_index)."""
+    """Extended layout + box bounds + augmented (z, R, meas_index)."""
 
     layout: StateLayout
-    # Box-bounds в p.u. (P/Q в МВт делятся на BASE_MVA для согласованности с z).
-    box_idx_in_state: np.ndarray  # позиции в state-vector (длины n_box)
-    box_lo: np.ndarray  # нижние границы
-    box_hi: np.ndarray  # верхние границы
-    # Стартовые значения box-vars в p.u. (берутся из текущих generation_p/load_p).
+    # Box bounds in p.u. (P/Q in MW are divided by BASE_MVA to match z).
+    box_idx_in_state: np.ndarray  # positions in the state vector (length n_box)
+    box_lo: np.ndarray  # lower bounds
+    box_hi: np.ndarray  # upper bounds
+    # Initial box-var values in p.u. (taken from the current generation_p/load_p).
     pgen_init: np.ndarray
     qgen_init: np.ndarray
     pnag_init: np.ndarray
     qnag_init: np.ndarray
-    # Augmented z/R/meas_index с добавленными balance-meas.
+    # Augmented z/R/meas_index with the added balance measurements.
     z: np.ndarray
     r_matrix: csr_matrix
     meas_index: MeasurementIndex
@@ -312,7 +312,7 @@ def _adaptive_balance_sigma2(sigma2: np.ndarray, balance_weight_factor: float) -
     adaptive_sigma2 = (
         1e-6 if median_sigma2 is None else median_sigma2 / float(balance_weight_factor)
     )
-    # Floor чтобы избежать сингулярности при очень малых data-σ².
+    # Floor to avoid singularity at very small data σ².
     return max(adaptive_sigma2, 1e-12)
 
 
@@ -333,69 +333,69 @@ def build_ipm_setup(
     prior_sigma2_bus_equiv_pu: float = 0.01,
     bus_equiv_width_threshold_pu: float = 100.0,
 ) -> IPMSetup:
-    """Собрать IPM-инфраструктуру поверх готовых WLS-данных.
+    """Assemble the IPM setup on top of ready WLS data.
 
     Args:
-        model: ``Working`` (для чтения NODE_DTYPE).
-        network_pu: внутреннее p.u.-представление.
-        z, r_matrix, meas_index: WLS-данные (из ``build_z_and_r``).
-        layout_base: WLS-layout (без box-vars). Возвращаемый ``layout``
-            наследует ``n_bus, slack_idx, non_slack_idx`` и добавляет
-            box-секции.
-        balance_sigma2: дисперсия (p.u.²) для balance-pseudo-meas. Если
-            ``None`` (default) — вычисляется адаптивно:
+        model: ``Working`` (for reading NODE_DTYPE).
+        network_pu: internal p.u. representation.
+        z, r_matrix, meas_index: WLS data (from ``build_z_and_r``).
+        layout_base: WLS layout (without box-vars). The returned ``layout``
+            inherits ``n_bus, slack_idx, non_slack_idx`` and adds the
+            box sections.
+        balance_sigma2: variance (p.u.²) for the balance pseudo-measurements. If
+            ``None`` (default), computed adaptively:
             ``σ²_balance = median(σ²_data) / balance_weight_factor``
-            (median, а не min: минимум часто аутлаер и порождает
-            balance-вес, перебивающий данные на порядки).
-        balance_weight_factor: отношение веса (1/σ²) баланса к весу
-            медианной data-меры. Используется при ``balance_sigma2=None``.
-            Default 0.1 — баланс в 10 раз МЯГЧЕ медианной TI по σ²:
-            калибровка в пользу data-fit; узловой баланс достигается
-            солвером как стационарная точка, а не вбивается весом.
-            Значения >1 делают баланс жёстче медианной меры.
+            (median, not min: the minimum is often an outlier and produces a
+            balance weight that overrides the data by orders of magnitude).
+        balance_weight_factor: ratio of the balance weight (1/σ²) to the weight of
+            the median data measurement. Used when ``balance_sigma2=None``.
+            Default 0.1: the balance is 10 times SOFTER than the median TM by σ²:
+            calibrated in favor of data fit; the node balance is reached
+            by the solver as a stationary point rather than hammered in by weight.
+            Values >1 make the balance stiffer than the median measurement.
         boxed_balance_weight_factor: balance weight for nodes whose admissible
             injection is bounded by data: every declared part (``exist_gen`` /
             ``exist_load``) has both bounds set. Their variance is
             ``median(σ²_data) / boxed_balance_weight_factor`` (never looser than
             the soft one): the box already carries the node's freedom, so a
             loose balance only hides data conflicts as an imbalance. ``0`` — off.
-        bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
-            (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
+        bound_relax: extra margin from the strict NODE_DTYPE bounds
+            (widens [lo, hi] by ``bound_relax * (hi-lo)``). Default 0.
             Deprecated: no pipeline setting reaches it any more; kept for
             direct ``estimate(..., bound_relax=...)`` callers.
-        default_box_halfwidth_pu: полуширина (p.u.) дефолтной коробки
-            ``[-hw, +hw]`` для exist_*-узла с незаданными границами.
-            Default 50 p.u. (±5 ГВт/ГВАр) — заведомо шире любого
-            реального узла, барьер фактически не действует, значением
-            управляют balance + TI. Дефолтные коробки не получают
-            BUS-эквивалент-prior (широки не из-за фиктивного
-            эквивалента, а из-за отсутствия данных).
-        prior_sigma2_normal_pu: σ² (p.u.²) prior-меры для box-var
-            узла с обычной коробкой (ширина ≤ ``bus_equiv_width_threshold_pu``).
-            Default ``0`` — prior не создаётся, data-меры через TI на
-            ветвях управляют значениями. Transit-узлы (``exist_=0``)
-            не имеют box-var; их `Pgen-Pnag = 0` обеспечивается
-            через balance-meas Sbus=0.
-        prior_sigma2_bus_equiv_pu: σ² (p.u.²) prior-меры для BUS-
-            эквивалентов: узлы с шириной коробки больше
-            ``bus_equiv_width_threshold_pu`` (типичные внешние эквиваленты
-            с фиктивной широкой коробкой порядка десятков ГВт).
-            Default ``0.01`` (≈ σ=10 МВт) — tight чтобы не раскидать
-            невязку, но достаточно мягкий чтобы TI на ветвях могли
-            подтянуть значения.
-        bus_equiv_width_threshold_pu: порог ширины коробки (p.u.,
-            BASE_MVA=100 → 100 p.u. = 10 ГВт МВт-эквивалента).
-            Default ``100`` p.u. — покрывает крупные BUS-эквиваленты
-            и не задевает обычные узлы (типичная width 5–50 p.u.).
+        default_box_halfwidth_pu: half-width (p.u.) of the default box
+            ``[-hw, +hw]`` for an exist_* node with unset bounds.
+            Default 50 p.u. (±5 GW/GVAr), deliberately wider than any
+            real node, so the barrier is effectively inactive and the value is
+            governed by balance + TM. Default boxes get no
+            BUS-equivalent prior (they are wide because of missing data,
+            not because of a fictitious equivalent).
+        prior_sigma2_normal_pu: σ² (p.u.²) of the prior measurement for the box-var
+            of a node with an ordinary box (width <= ``bus_equiv_width_threshold_pu``).
+            Default ``0``: no prior is created, data measurements via TM on
+            branches govern the values. Transit nodes (``exist_=0``)
+            have no box-var; their `Pgen-Pload = 0` is enforced
+            through the balance measurement Sbus=0.
+        prior_sigma2_bus_equiv_pu: σ² (p.u.²) of the prior measurement for BUS
+            equivalents: nodes with a box width greater than
+            ``bus_equiv_width_threshold_pu`` (typical external equivalents
+            with a fictitious wide box of the order of tens of GW).
+            Default ``0.01`` (≈ σ=10 MW): tight so as not to spread the
+            residual, yet soft enough for TM on branches to be able to
+            pull the values.
+        bus_equiv_width_threshold_pu: box width threshold (p.u.,
+            BASE_MVA=100 -> 100 p.u. = 10 GW of MW equivalent).
+            Default ``100`` p.u. covers large BUS equivalents
+            and does not affect ordinary nodes (typical width 5–50 p.u.).
 
     Returns:
-        ``IPMSetup`` с расширенным layout и augmented z/R/meas_index.
+        ``IPMSetup`` with the extended layout and augmented z/R/meas_index.
     """
     nodes_arr = model.nodes.to_numpy()
     bus_ids = network_pu.bus_ids
     bus_id_to_pos = id_to_pos_map(bus_ids)
 
-    # ---- Сбор box-vars: для каждого активного узла с exist_load/exist_gen ----
+    # ---- Collecting box-vars: for every active node with exist_load/exist_gen ----
     pgen_sec, qgen_sec, pnag_sec, qnag_sec = _collect_box_sections(
         nodes_arr,
         bus_id_to_pos,
@@ -420,7 +420,7 @@ def build_ipm_setup(
         qnag_node_pos=qnag_node_pos,
     )
 
-    # ---- box-bounds в state-vector координатах ----
+    # ---- box bounds in state-vector coordinates ----
     box_idx: list[int] = []
     box_lo: list[float] = []
     box_hi: list[float] = []
@@ -440,9 +440,9 @@ def build_ipm_setup(
     box_lo_arr = np.asarray(box_lo, dtype=np.float64)
     box_hi_arr = np.asarray(box_hi, dtype=np.float64)
 
-    # ---- Balance-meas: для каждого активного узла (P + Q) ----
-    # z=0, σ²=balance_sigma2. Узлы без exist_load/gen — это transit
-    # (Sbus = 0 в скобках). Узлы с exist — связь Sbus = Pgen-Pnag.
+    # ---- Balance measurements: for every active node (P + Q) ----
+    # z=0, σ²=balance_sigma2. Nodes without exist_load/gen are transit
+    # (Sbus = 0 in brackets). Nodes with exist: link Sbus = Pgen-Pload.
     active_mask = nodes_arr["status"].astype(bool)
     active_nids = nodes_arr["id"][active_mask].astype(np.int64)
     active_positions: list[int] = []
@@ -454,7 +454,7 @@ def build_ipm_setup(
             active_ids.append(int(nid))
     n_balance = len(active_positions)
 
-    # ---- Prior-meas: z=0, σ² индивидуальные. Только для box-var с σ²>0 ----
+    # ---- Prior measurements: z=0, individual σ². Only for box-vars with σ²>0 ----
     pgen_prior_arr = np.asarray(pgen_sec.prior_s2, dtype=np.float64)
     qgen_prior_arr = np.asarray(qgen_sec.prior_s2, dtype=np.float64)
     pnag_prior_arr = np.asarray(pnag_sec.prior_s2, dtype=np.float64)
@@ -475,12 +475,12 @@ def build_ipm_setup(
 
     z_aug = np.zeros(n_new, dtype=np.float64)
     z_aug[:n_old] = z
-    # Prior-строки якорим к INIT box-var (материализованный load/gen в p.u.),
-    # а НЕ к нулю: BUS-эквивалент с фиктивной gross-парой (нагрузка 10 ГВт +
-    # генерация 12 ГВт на одном узле) при z=0 терял якорь — tight prior
-    # пиннил обе переменные к нулю, и солвер расщеплял чистый переток
-    # симметрично (±1.9 ГВт вместо 10/12). Балансы+TI по-прежнему правят
-    # NET; prior удерживает GROSS-уровень.
+    # Prior rows are anchored to the INIT box-var (materialized load/gen in p.u.),
+    # NOT to zero: a BUS equivalent with a fictitious gross pair (10 GW load +
+    # 12 GW generation at one node) lost its anchor at z=0: a tight prior
+    # pinned both variables to zero, and the solver split the pure flow
+    # symmetrically (±1.9 GW instead of 10/12). Balances + TM still steer
+    # NET; the prior holds the GROSS level.
     if n_prior > 0:
         prior_z = np.concatenate(
             [
@@ -492,12 +492,12 @@ def build_ipm_setup(
         )
         z_aug[n_old + 2 * n_balance :] = prior_z
 
-    # R: расширяем диагональ.
-    # Adaptive balance_sigma2: berём median (а не min) σ² у data-meas как
-    # репрезентативную базу, делим на balance_weight_factor. Минимум
-    # часто аутлаер (одна тугая мера) и порождает balance-вес который
-    # перебивает остальные данные на 4 порядка → solver жертвует
-    # data-fit ради balance.
+    # R: extend the diagonal.
+    # Adaptive balance_sigma2: take the median (not min) σ² of the data measurements as a
+    # representative base, divided by balance_weight_factor. The minimum is
+    # often an outlier (one tight measurement) and produces a balance weight that
+    # overrides the other data by 4 orders of magnitude, so the solver sacrifices
+    # data fit for the balance.
     sigma2_old = r_matrix.diagonal()
     if balance_sigma2 is None:
         balance_sigma2_eff = _adaptive_balance_sigma2(sigma2_old, balance_weight_factor)
@@ -531,7 +531,7 @@ def build_ipm_setup(
         shape=(n_new, n_new),
     )
 
-    # MeasurementIndex: добавляем строки (balance + prior)
+    # MeasurementIndex: add rows (balance + prior)
     balance_pos_arr = np.asarray(active_positions, dtype=np.int64)
     kind_blocks = [
         meas_index.kind,
@@ -549,7 +549,7 @@ def build_ipm_setup(
     ]
 
     if n_prior > 0:
-        # Prior-meas: 1 на каждую box-var с σ²>0. Kind по типу секции, pos=node_pos.
+        # Prior measurement: 1 per box-var with σ²>0. Kind by section type, pos=node_pos.
         prior_kind_list: list[int] = []
         prior_pos_list: list[int] = []
         for prior_kind, mask, sec_pos_arr in (
@@ -570,7 +570,7 @@ def build_ipm_setup(
     new_object_kind = np.concatenate(obj_kind_blocks)
     new_object_pos = np.concatenate(obj_pos_blocks)
     new_branch_side = np.concatenate(side_blocks)
-    # Отрицательные id для balance + prior (не пересекаются с real measurement.id).
+    # Negative ids for balance + prior (do not collide with real measurement.id).
     pseudo_ids = -(np.arange(2 * n_balance + n_prior, dtype=meas_index.meas_id.dtype) + 1)
     new_meas_id = np.concatenate([meas_index.meas_id, pseudo_ids])
 

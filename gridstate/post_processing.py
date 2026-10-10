@@ -1,14 +1,14 @@
-"""Постпроцессинг результатов SE — обратная запись в ``model.measurements``.
+"""Post-processing of SE results — write-back into ``model.measurements``.
 
-После сходимости WLS вектор ``z`` (измерения в p.u.) и оценочные значения
-``h(x)`` известны, но в ``Measurement`` поля ``estimated_si`` и
-``residual`` остаются нулевыми. Этот модуль заполняет их в исходных
-единицах (МВт / МВАр / кВ / А) для дальнейшей аналитики (bad-data
-detection, отчёты, плагины).
+After the WLS converges, the ``z`` vector (measurements in p.u.) and the
+estimated values ``h(x)`` are known, but in ``Measurement`` the
+``estimated_si`` and ``residual`` fields remain zero. This module fills them
+in the original units (MW / MVAr / kV / A) for further analytics (bad-data
+detection, reports, plugins).
 
-Поля заполняются для **активных** measurements, попавших в
-``meas_index`` (т.е. учтённых WLS). Меры вне ``meas_index`` получают
-``NaN`` — явная пометка «не оценено».
+The fields are filled for **active** measurements that made it into
+``meas_index`` (i.e. were used by the WLS). Measurements outside ``meas_index``
+get ``NaN`` — an explicit "not estimated" mark.
 """
 
 from __future__ import annotations
@@ -51,12 +51,12 @@ if TYPE_CHECKING:
 def _pu_to_si(
     values_pu: np.ndarray, meas_index: MeasurementIndex, network_pu: NetworkPU
 ) -> np.ndarray:
-    """Конвертирует значения по строкам ``z`` из p.u. в исходные единицы.
+    """Convert values of the ``z`` rows from p.u. to the original units.
 
-    * V (kind=2): p.u. × ``voltage_nominal`` → кВ.
-    * P/Q (kind=0/1/4/5): p.u. × ``BASE_MVA`` → МВт/МВАр.
-    * I (kind=3): p.u. × ``i_base`` (A), где
-      ``i_base = BASE_MVA·1000/(√3·vn)`` для соответствующей стороны ветви.
+    * V (kind=2): p.u. × ``voltage_nominal`` → kV.
+    * P/Q (kind=0/1/4/5): p.u. × ``BASE_MVA`` → MW/MVAr.
+    * I (kind=3): p.u. × ``i_base`` (A), where
+      ``i_base = BASE_MVA·1000/(√3·vn)`` for the corresponding branch side.
     """
     out = np.array(values_pu, dtype=np.float64, copy=True)
     if out.size == 0:
@@ -65,12 +65,12 @@ def _pu_to_si(
     op = meas_index.object_pos
     side = meas_index.branch_side
 
-    # V на узле
+    # V at a node
     m = (kind == KIND_VOLTAGE) & (meas_index.object_kind == OBJ_NODE)
     if m.any():
         out[m] = values_pu[m] * network_pu.bus_vn_kv[op[m]]
 
-    # P/Q-инжекции и P/Q-перетоки
+    # P/Q injections and P/Q branch flows
     m_pq = (
         (kind == KIND_POWER_P)
         | (kind == KIND_POWER_Q)
@@ -80,11 +80,11 @@ def _pu_to_si(
     if m_pq.any():
         out[m_pq] = values_pu[m_pq] * BASE_MVA
 
-    # Ток ветви — сторона определяет vn для i_base
+    # Branch current — the side determines vn for i_base
     m_i = (kind == KIND_CURRENT) & (meas_index.object_kind == OBJ_BRANCH)
     if m_i.any():
         sqrt3 = float(np.sqrt(3.0))
-        # vn соответствующего узла-конца
+        # vn of the corresponding end node
         from_idx = network_pu.from_idx[op[m_i]]
         to_idx = network_pu.to_idx[op[m_i]]
         vn_from = network_pu.bus_vn_kv[from_idx]
@@ -112,28 +112,29 @@ def write_measurement_estimates(
     meas_index: MeasurementIndex,
     z: np.ndarray,
 ) -> dict[str, int]:
-    """Заполнить ``estimated_si``/``residual`` в measurements.
+    """Fill ``estimated_si``/``residual`` in measurements.
 
     Args:
-        model: ``Working``, обновляется in-place.
-        measurements: коллекция, использованная в SE (та же ссылка из ``model``).
-        v_pu: модули напряжений из решения SE, p.u.
-        delta_rad: фазовые углы, рад.
-        network_pu: внутреннее p.u.-представление.
-        ybus, yf, yt: матрицы admittance, нужны для пересчёта h(x).
-        meas_index: метаданные строк ``z``.
-        z: вектор измерений в p.u. (для residual = z − h).
+        model: ``Working``, updated in place.
+        measurements: the collection used in SE (the same reference from ``model``).
+        v_pu: voltage magnitudes from the SE solution, p.u.
+        delta_rad: voltage angles, rad.
+        network_pu: internal p.u. representation.
+        ybus, yf, yt: admittance matrices, needed to recompute h(x).
+        meas_index: metadata of the ``z`` rows.
+        z: measurement vector in p.u. (for residual = z − h).
 
-    Заполняет (только для measurements попавших в meas_index):
-        * ``estimated_si`` — h(x) в исходных единицах;
-        * ``residual`` — value (исходное измерение) − estimated_si.
+    Fills (only for measurements that made it into meas_index):
+        * ``estimated_si`` — h(x) in the original units;
+        * ``residual`` — value (the original measurement) − estimated_si.
 
-    Меры ВНЕ ``meas_index`` (неактивные / не учтённые WLS) получают
-    ``estimated_si = residual = NaN`` — явная семантика «не оценено» вместо
-    молчаливого нуля из zero-fill коллекции. Потребители оценок/невязок (UI,
-    promote, аналитика) обязаны быть NaN-aware. Внутренние bad-data/χ²
-    считают остатки от живого вектора ``z − h(x)`` в ``quality_summary`` /
-    ``validation.bad_data``, а НЕ от этой колонки — на них NaN не влияет.
+    Measurements OUTSIDE ``meas_index`` (inactive / not used by the WLS) get
+    ``estimated_si = residual = NaN`` — explicit "not estimated" semantics
+    instead of a silent zero from the zero-filled collection. Consumers of
+    estimates/residuals (UI, promote, analytics) must be NaN-aware. The internal
+    bad-data/χ² code computes residuals from the live ``z − h(x)`` vector in
+    ``quality_summary`` / ``validation.bad_data``, NOT from this column, so NaN
+    does not affect it.
 
     Returns:
         ``{"updated": N, "missing": N}``.
@@ -143,21 +144,22 @@ def write_measurement_estimates(
         yf=yf,
         yt=yt,
         meas_index=meas_index,
-        layout=None,  # type: ignore[arg-type]  # evaluate_h не использует layout
+        layout=None,  # type: ignore[arg-type]  # evaluate_h does not use layout
         network_pu=network_pu,
     )
     h_pu = base.evaluate_h(v_pu, delta_rad)
 
-    # h(x) и z в исходных единицах.
+    # h(x) and z in the original units.
     h_si = _pu_to_si(h_pu, meas_index, network_pu)
 
     meas_id_arr = meas_index.meas_id
 
-    # Векторная запись через backing structured-массив (бит-в-бит замена
-    # by_id-словарю + двум per-row proxy-циклам; устраняет 2.2M __getattr__
-    # на крупных моделях). Сначала помечаем ВСЕ меры как «не оценено» (NaN),
-    # затем перекрываем оценёнными по id — без NaN-fill меры вне meas_index
-    # несли бы 0 из zero-fill коллекции, неотличимый от нулевой оценки.
+    # Vectorised write through the backing structured array (a bit-for-bit
+    # replacement of the by_id dict + two per-row proxy loops; removes 2.2M
+    # __getattr__ calls on large models). First mark ALL measurements as
+    # "not estimated" (NaN), then overwrite the estimated ones by id — without
+    # the NaN fill, measurements outside meas_index would carry 0 from the
+    # zero-filled collection, indistinguishable from a zero estimate.
     arr = table_copy(measurements)
     arr["estimated_si"] = np.nan
     arr["residual"] = np.nan
@@ -169,12 +171,12 @@ def write_measurement_estimates(
     )
     valid = rows >= 0
     vr = rows[valid]
-    # Дубль-id → last-write-wins (как dict by_id ранее): fancy-assign с
-    # повторяющимися индексами берёт последнюю запись в порядке meas_index.
+    # Duplicate id → last-write-wins (as the former dict by_id): fancy-assign with
+    # repeated indices takes the last write in meas_index order.
     est = arr["estimated_si"]
     res = arr["residual"]
     est[vr] = h_si[valid]
-    # residual в исходных единицах: value (в исходных) − estimated; f8−f8.
+    # residual in the original units: value (original) − estimated; f8−f8.
     res[vr] = arr["value"][vr] - h_si[valid]
     table_replace(measurements, arr)
 
@@ -190,30 +192,30 @@ def write_node_estimates(
     generation_p: np.ndarray | None = None,
     generation_q: np.ndarray | None = None,
 ) -> dict[str, int]:
-    """Записать оценки нагрузки/генерации после IPM-SE в node-таблицу.
+    """Write load/generation estimates after IPM-SE into the node table.
 
-    Заполняет ``load_p_estimated``, ``load_q_estimated``,
-    ``generation_p_estimated``, ``generation_q_estimated`` для узлов из
+    Fills ``load_p_estimated``, ``load_q_estimated``,
+    ``generation_p_estimated``, ``generation_q_estimated`` for the nodes in
     ``node_ids``. The semantics are the actual values at the current V
     (the voltage-dependent load and generation of the solved state); a
     conversion to nominal values (if PF needs it) is done separately through
     ``load_model_id`` + ``load_characteristics``.
 
-    ``None`` для любого из массивов значений → соответствующее поле не
-    обновляется. Для узлов, не входящих в ``node_ids``, поля остаются как
-    были (по умолчанию 0.0).
+    ``None`` for any of the value arrays → the corresponding field is not
+    updated. For nodes not in ``node_ids`` the fields stay as they were
+    (0.0 by default).
 
     Args:
-        model: ``Working``, обновляется in-place.
-        node_ids: (N,) — ID узлов, для которых пишутся оценки.
-        load_p: (N,) МВт или ``None``.
-        load_q: (N,) МВАр или ``None``.
-        generation_p: (N,) МВт или ``None``.
-        generation_q: (N,) МВАр или ``None``.
+        model: ``Working``, updated in place.
+        node_ids: (N,) — IDs of the nodes the estimates are written for.
+        load_p: (N,) MW or ``None``.
+        load_q: (N,) MVAr or ``None``.
+        generation_p: (N,) MW or ``None``.
+        generation_q: (N,) MVAr or ``None``.
 
     Returns:
-        ``{"updated": N, "missing": M}`` — сколько узлов записано, сколько
-        ID не нашлось в модели.
+        ``{"updated": N, "missing": M}`` — how many nodes were written, how many
+        IDs were not found in the model.
     """
     arrays = {
         "load_p_estimated": load_p,
@@ -224,7 +226,7 @@ def write_node_estimates(
     n = len(node_ids)
     for name, arr in arrays.items():
         if arr is not None and len(arr) != n:
-            raise ValueError(f"{name} имеет длину {len(arr)}, ожидается {n} (как node_ids)")
+            raise ValueError(f"{name} has length {len(arr)}, expected {n} (as node_ids)")
 
     updated = 0
     missing = 0
@@ -245,11 +247,11 @@ def write_node_estimates(
 
 
 def _clip(value: float, lo: float, hi: float) -> float:
-    """Безопасный clip с учётом «обратной» пары (lo > hi → возвращаем value)."""
+    """Safe clip that handles an "inverted" pair (lo > hi → return value)."""
     if not np.isfinite(lo) and not np.isfinite(hi):
         return value
     if np.isfinite(lo) and np.isfinite(hi) and lo > hi:
-        # Некорректные границы — не клипуем, иначе попадём в lo>hi.
+        # Invalid bounds — do not clip, otherwise we would end up with lo>hi.
         return value
     if np.isfinite(hi) and value > hi:
         return hi
@@ -259,48 +261,48 @@ def _clip(value: float, lo: float, hi: float) -> float:
 
 
 def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
-    """Разнести ``p_inj_calc``/``q_inj_calc`` по
-    ``load_*_estimated`` / ``generation_*_estimated`` для WLS-режима.
+    """Split ``p_inj_calc``/``q_inj_calc`` into
+    ``load_*_estimated`` / ``generation_*_estimated`` for the WLS mode.
 
-    После WLS-решения у нас есть только ``p_inj_calc``/``q_inj_calc``
-    (записаны в ``write_results_to_model``). Этот пост-pass заполняет
-    оценки нагрузки и генерации, опираясь на признаки ``exist_load`` /
-    ``exist_gen`` и физические границы ``*_min`` / ``*_max``. У IPM это
-    уже сделано через box-vars (``write_node_estimates``), вызывать его
-    дополнительно не нужно.
+    After a WLS solve we only have ``p_inj_calc``/``q_inj_calc``
+    (written in ``write_results_to_model``). This post-pass fills the
+    load and generation estimates based on the ``exist_load`` /
+    ``exist_gen`` flags and the physical bounds ``*_min`` / ``*_max``. For IPM
+    this is already done through the box vars (``write_node_estimates``), so it
+    does not need to be called additionally.
 
-    Границы трактуются через :func:`gridstate.bounds.resolve_bounds`:
-    незаполненная пара ``(0, 0)`` и сентинелы ±9999 = «не задано» →
-    оценка не клипуется (раньше (0, 0) зануляла оценку — узлы без
-    заданных лимитов теряли всю нагрузку/генерацию).
+    Bounds are interpreted through :func:`gridstate.bounds.resolve_bounds`:
+    an unfilled ``(0, 0)`` pair and ±9999 sentinels = "unset" →
+    the estimate is not clipped (previously (0, 0) zeroed the estimate — nodes
+    without declared limits lost all their load/generation).
 
-    Логика разнесения (по каждому активному узлу):
+    The split logic (for each active node):
 
     * **transit** (``exist_load=0`` AND ``exist_gen=0``) →
       ``load_*_estimated`` = ``generation_*_estimated`` = 0.
     * **gen-only** (``exist_gen=1``, ``exist_load=0``) →
-      ``generation_*_estimated`` = ``p_inj_calc`` (q_inj_calc для Q),
-      клип к ``[generation_*_min, generation_*_max]``;
+      ``generation_*_estimated`` = ``p_inj_calc`` (q_inj_calc for Q),
+      clipped to ``[generation_*_min, generation_*_max]``;
       ``load_*_estimated`` = 0.
     * **load-only** (``exist_load=1``, ``exist_gen=0``) →
-      ``load_*_estimated`` = ``-p_inj_calc`` (нагрузка — потребление),
-      клип к ``[load_*_min, load_*_max]``;
+      ``load_*_estimated`` = ``-p_inj_calc`` (load is consumption),
+      clipped to ``[load_*_min, load_*_max]``;
       ``generation_*_estimated`` = 0.
-    * **both** (``exist_load=1`` AND ``exist_gen=1``) — нагрузку
-      ФИКСИРУЕМ на номинале (``cur_pn=load_p`` из ИД), а разницу
-      инжекции относим к генерации: при ``p_inj≥0`` (избыток генерации)
-      ``gen = p_inj + cur_pn``, ``load = cur_pn``; при ``p_inj<0``
-      (избыток нагрузки) ``gen = cur_pg``, ``load = cur_pg − p_inj``.
-      Если узел не привязан к ИД (``cur_pg=cur_pn=0``) — разнести
-      по знаку инжекции (``gen=max(p_inj,0)``, ``load=max(−p_inj,0)``).
-      Q-ветка по аналогии. Клип к соответствующим границам. Это грубая
-      эвристика: точное распределение gen/load на смешанном узле по
-      одной инжекции недоопределено — без отдельных замеров pg/pn она
-      даёт лишь правдоподобное, не единственное решение.
+    * **both** (``exist_load=1`` AND ``exist_gen=1``) — the load is FIXED
+      at its nominal (``cur_pn=load_p`` from the input data) and the injection
+      difference is attributed to generation: for ``p_inj≥0`` (generation
+      surplus) ``gen = p_inj + cur_pn``, ``load = cur_pn``; for ``p_inj<0``
+      (load surplus) ``gen = cur_pg``, ``load = cur_pg − p_inj``.
+      If the node is not tied to the input data (``cur_pg=cur_pn=0``) — split
+      by the sign of the injection (``gen=max(p_inj,0)``, ``load=max(−p_inj,0)``).
+      The Q branch is analogous. Clipped to the corresponding bounds. This is a
+      rough heuristic: the exact gen/load split on a mixed node from a single
+      injection is underdetermined — without separate pg/pn measurements it
+      yields only a plausible, not a unique, solution.
 
-    Возвращает счётчики ``{"updated": ..., "missing": ...,
+    Returns the counters ``{"updated": ..., "missing": ...,
     "transit": ..., "gen_only": ..., "load_only": ..., "both": ...,
-    "clipped": ...}`` для диагностики.
+    "clipped": ...}`` for diagnostics.
     """
     nodes_arr = model.nodes.to_numpy()
     if len(nodes_arr) == 0:
@@ -331,10 +333,10 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
         p_inj = float(row["p_inj_calc"])
         q_inj = float(row["q_inj_calc"])
 
-        # Незаданные/сентинельные границы → ±inf («не клиповать»). Без
-        # этого пара (0, 0) — numpy-default незаполненного поля —
-        # зануляла оценку, а ±9999 у load_q фактически не встречалась,
-        # зато мусорные суммы лимитов генераторов клиповали Q к хламу.
+        # Unset/sentinel bounds → ±inf ("do not clip"). Without this the
+        # (0, 0) pair — the numpy default of an unfilled field — zeroed
+        # the estimate, while ±9999 on load_q practically never occurred,
+        # yet garbage sums of generator limits clipped Q to junk.
         load_p_min, load_p_max = resolve_bounds(row["load_p_min"], row["load_p_max"])
         load_q_min, load_q_max = resolve_bounds(row["load_q_min"], row["load_q_max"])
         gen_p_min, gen_p_max = resolve_bounds(row["generation_p_min"], row["generation_p_max"])
@@ -347,7 +349,7 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
 
         if not exist_load and not exist_gen:
             transit += 1
-            # all zeros — уже инициализированы.
+            # all zeros — already initialised.
         elif exist_gen and not exist_load:
             gen_only += 1
             gen_p_raw = p_inj
@@ -358,7 +360,7 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
                 clipped += 1
         elif exist_load and not exist_gen:
             load_only += 1
-            # Convention: load_p — потребление, p_inj = gen - load → load = -p_inj.
+            # Convention: load_p is consumption, p_inj = gen - load → load = -p_inj.
             load_p_raw = -p_inj
             load_q_raw = -q_inj
             load_p_est = _clip(load_p_raw, load_p_min, load_p_max)
@@ -367,7 +369,7 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
                 clipped += 1
         else:
             both += 1
-            # Сохранить долю генерации в (gen + |load|), как было в ИД node.
+            # Keep the generation share in (gen + |load|), as in the node input data.
             cur_pg = float(row["generation_p"])
             cur_pn = float(row["load_p"])
             denom_p = cur_pg + abs(cur_pn)
@@ -375,19 +377,19 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
             cur_qn = float(row["load_q"])
             denom_q = abs(cur_qg) + abs(cur_qn)
 
-            # p_inj = gen_p - load_p — НЕДООПРЕДЕЛЁН для пары (gen, load):
-            # одна инжекция, два неизвестных. Пропорциональное распределение
-            # gen_p_raw = frac_pg·S_p сингулярно при frac_pg≈0.5
-            # (S_p = p_inj/(2·frac_pg−1)), поэтому используем устойчивую
-            # эвристику: ФИКСИРУЕМ номинальную нагрузку (cur_pn) и относим
-            # разницу инжекции к генерации (при p_inj≥0 — избыток генерации
-            # над нагрузкой; при p_inj<0 — наоборот, фиксируем gen).
+            # p_inj = gen_p - load_p is UNDERDETERMINED for the (gen, load) pair:
+            # one injection, two unknowns. A proportional split
+            # gen_p_raw = frac_pg·S_p is singular at frac_pg≈0.5
+            # (S_p = p_inj/(2·frac_pg−1)), so a robust heuristic is used:
+            # FIX the nominal load (cur_pn) and attribute the injection
+            # difference to generation (for p_inj≥0 — generation surplus
+            # over the load; for p_inj<0 — the opposite, gen is fixed).
             if p_inj >= 0.0:
-                gen_p_raw = p_inj + cur_pn  # gen покрывает inj+load
+                gen_p_raw = p_inj + cur_pn  # gen covers inj+load
                 load_p_raw = cur_pn
             else:
                 gen_p_raw = cur_pg
-                load_p_raw = cur_pg - p_inj  # |p_inj| избыток load над gen
+                load_p_raw = cur_pg - p_inj  # |p_inj| is the load surplus over gen
             if q_inj >= 0.0:
                 gen_q_raw = q_inj + cur_qn
                 load_q_raw = cur_qn
@@ -395,8 +397,8 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
                 gen_q_raw = cur_qg
                 load_q_raw = cur_qg - q_inj
 
-            # Фолбэк, если узел не привязан к ИД (cur_pg=cur_pn=0): нет
-            # номинала-якоря → разносим строго по знаку инжекции
+            # Fallback when the node is not tied to the input data (cur_pg=cur_pn=0): there is no
+            # nominal anchor → split strictly by the sign of the injection
             # (gen=max(p_inj,0), load=max(−p_inj,0)).
             if denom_p < 1e-9:
                 gen_p_raw = max(p_inj, 0.0)
@@ -445,45 +447,46 @@ def write_node_estimates_from_inj(model: Working) -> dict[str, int]:
 def reconcile_node_balance(
     model: Working, *, respect_bounds: bool = False
 ) -> dict[str, float | int]:
-    """Закрыть узловой небаланс оценок: ``gen_est − load_est ≡ *_inj_calc``.
+    """Close the nodal imbalance of the estimates: ``gen_est − load_est ≡ *_inj_calc``.
 
-    Мягкий IPM (и WLS-разнос с клипами/СХН-перекрытием) оставляет в узлах
-    остаточный небаланс ``r = inj_calc − (gen_est − load_est)`` — оценки
-    нагрузки/генерации НЕ согласованы по KCL с напряжениями состояния.
-    Для аналитики это допустимо, но выход SE как РЕЖИМ (вход PF, промоут
-    в ИД) обязан быть сбалансирован: классический канон SE — состояние =
-    V/δ, инжекции = Sbus(V), а gen/load — их разнесение. Этот пост-пасс
-    финализирует разнесение, сливая остаток по разметке узла:
+    A soft IPM (and the WLS split with clips / load-characteristic overlay)
+    leaves a residual imbalance ``r = inj_calc − (gen_est − load_est)`` at the nodes —
+    the load/generation estimates are NOT KCL-consistent with the state voltages.
+    That is acceptable for analytics, but the SE output as an operating POINT
+    (a PF input, promotion into the input data) must be balanced: the classical SE
+    convention is state = V/δ, injections = Sbus(V), and gen/load are their split.
+    This post-pass finalises the split by draining the residual according to the
+    node markup:
 
-    * ``exist_gen=1, exist_load=0`` → в генерацию (``gen += r``);
-    * иначе (load-узлы, смешанные, транзиты) → в нагрузку
+    * ``exist_gen=1, exist_load=0`` → into generation (``gen += r``);
+    * otherwise (load nodes, mixed, transits) → into load
       (``load −= r``; a transit node gets a pseudo-load ``−inj``, the usual
       way to materialise an area's load on its nodes).
 
-    По умолчанию (``respect_bounds=False``) — без клипов к границам:
-    точность согласования важнее, после пасса ``gen_est − load_est ==
-    inj_calc`` поэлементно, и standalone PF от промоутнутых оценок
-    воспроизводит режим SE.
+    By default (``respect_bounds=False``) there are no clips to the bounds:
+    consistency accuracy matters more, after the pass ``gen_est − load_est ==
+    inj_calc`` element-wise, and a standalone PF from the promoted estimates
+    reproduces the SE operating point.
 
-    ``respect_bounds=True`` — целевое значение клипуется к физическим
-    границам узла (``load_*_min/max`` через :func:`resolve_bounds`;
-    незаданные пары не клипуются). Rationale: a consistent operating point
+    ``respect_bounds=True`` — the target value is clipped to the physical
+    node bounds (``load_*_min/max`` through :func:`resolve_bounds`;
+    unset pairs are not clipped). Rationale: a consistent operating point
     never violates ``pn_min`` (negative loads are legal only within the
     limits), while an unconditional split of the soft balance residual r
     fabricates non-physical negative loads on nodes
-    с ``lo=0`` (box-var IPM в минус уйти не может — минус создаёт именно
-    reconcile). Цена: на клипнутых узлах ``gen−load ≠ inj_calc`` —
-    незакрытый остаток копится в ``sum_unclosed_p_mw`` (диагностика).
+    with ``lo=0`` (the IPM box var cannot go negative — the negative is created by
+    reconcile itself). Cost: on clipped nodes ``gen−load ≠ inj_calc`` —
+    the unclosed residual accumulates in ``sum_unclosed_p_mw`` (diagnostics).
 
-    Обрабатываются только решённые узлы (``solved=1`` — получили
-    ``*_inj_calc`` в ``write_results_to_model``). Колонки
-    ``imbalance_p/q`` не трогаем — они считаются против ИД gen/load.
+    Only solved nodes are processed (``solved=1`` — they received
+    ``*_inj_calc`` in ``write_results_to_model``). The ``imbalance_p/q``
+    columns are not touched — they are computed against the input gen/load.
 
     Returns:
-        Счётчики: ``updated``, ``to_gen``/``to_load`` (узлов по ветке
-        правила), ``sum_abs_p_mw``/``max_abs_p_mw`` — масштаб закрытого
-        P-небаланса (диагностика «насколько мягким» был IPM); при
-        ``respect_bounds`` дополнительно ``clipped`` и
+        Counters: ``updated``, ``to_gen``/``to_load`` (nodes per rule
+        branch), ``sum_abs_p_mw``/``max_abs_p_mw`` — the scale of the closed
+        P imbalance (diagnostics of "how soft" the IPM was); with
+        ``respect_bounds`` additionally ``clipped`` and
         ``sum_unclosed_p_mw``.
     """
     nodes_arr = model.nodes.to_numpy()
@@ -499,7 +502,7 @@ def reconcile_node_balance(
     if len(nodes_arr) == 0:
         return out
 
-    eps = 1e-9  # МВт/МВАр: ниже — числовой шум, узел не трогаем
+    eps = 1e-9  # MW/MVAr: below this is numerical noise, the node is left alone
     for row in nodes_arr:
         if not bool(row["status"]) or not bool(row["solved"]):
             continue
@@ -526,7 +529,7 @@ def reconcile_node_balance(
                     row["generation_q_min"],
                     row["generation_q_max"],
                 ):
-                    # Компенсатор: активной мощности нет, пара [0, 0] — данные.
+                    # Compensator: no active power, the [0, 0] pair is data.
                     gp_lo, gp_hi = 0.0, 0.0
                 gq_lo, gq_hi = resolve_bounds(row["generation_q_min"], row["generation_q_max"])
                 gp = _clip(update["generation_p_estimated"], gp_lo, gp_hi)
@@ -546,8 +549,8 @@ def reconcile_node_balance(
             }
             if respect_bounds:
                 if not bool(row["exist_load"]):
-                    # Транзит (exist_load=0 в else-ветке): нагрузки на узле нет —
-                    # слив остатка сюда и есть фабрикация псевдонагрузки.
+                    # Transit (exist_load=0 in the else branch): there is no load on the node —
+                    # draining the residual here would be fabricating a pseudo-load.
                     lp, lq = 0.0, 0.0
                 else:
                     lp_lo, lp_hi = resolve_bounds(row["load_p_min"], row["load_p_max"])
@@ -585,31 +588,31 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         load_p_estimated = load_p_nominal × (a0 + a1·V_pu + a2·V_pu²)
         load_q_estimated = load_q_nominal × (b0 + b1·V_pu + b2·V_pu²)
 
-    где ``V_pu = voltage_magnitude / voltage_nominal`` (после SE).
-    Коэффициенты берутся из типизированной таблицы ``load_characteristics``
-    (узел ссылается на строку через 0-based индекс ``load_model_id``, ``-1`` =
-    нет привязки). Для PQ-const-моделей (a0=1, a1=a2=0, b0=1, b1=b2=0) пересчёт
-    тождественно даёт ``load_*_nominal``.
+    where ``V_pu = voltage_magnitude / voltage_nominal`` (after SE).
+    The coefficients come from the typed ``load_characteristics`` table
+    (a node refers to a row via the 0-based index ``load_model_id``, ``-1`` =
+    no binding). For PQ-const models (a0=1, a1=a2=0, b0=1, b1=b2=0) the recomputation
+    yields exactly ``load_*_nominal``.
 
-    Применяется **только в WLS-режиме** (см. ``gridstate/api.py::estimate``)
-    после ``write_node_estimates_from_inj``. У IPM box-vars уже учитывают
-    V на конечном состоянии — повторный пересчёт не нужен.
+    Applied **only in the WLS mode** (see ``gridstate/api.py::estimate``)
+    after ``write_node_estimates_from_inj``. The IPM box vars already account for
+    V at the final state — no repeated recomputation is needed.
 
     Args:
-        model: ``Working``, обновляется in-place.
+        model: ``Working``, updated in place.
 
     Returns:
-        Счётчики:
-            * ``updated`` — число узлов, у которых пересчитан
-              ``load_p_estimated`` (и/или ``load_q_estimated``).
-            * ``skipped_no_sxn`` — активные узлы с ``exist_load=True`` но
-              ``load_model_id < 0`` (нет привязки к СХН).
-            * ``skipped_no_load`` — активные узлы с ``load_model_id >= 0`` но
-              ``exist_load=False`` (нет нагрузки — нечего пересчитывать).
-            * ``skipped_bad_sxn`` — ``load_model_id`` указывает за пределы
-              таблицы ``load_characteristics`` (битая ссылка).
-            * ``no_load_models`` — 1 если в модели нет таблицы
-              ``load_characteristics`` (тогда возвращаем нули).
+        Counters:
+            * ``updated`` — number of nodes whose
+              ``load_p_estimated`` (and/or ``load_q_estimated``) was recomputed.
+            * ``skipped_no_sxn`` — active nodes with ``exist_load=True`` but
+              ``load_model_id < 0`` (no binding to a load characteristic).
+            * ``skipped_no_load`` — active nodes with ``load_model_id >= 0`` but
+              ``exist_load=False`` (no load — nothing to recompute).
+            * ``skipped_bad_sxn`` — ``load_model_id`` points outside the
+              ``load_characteristics`` table (a dangling reference).
+            * ``no_load_models`` — 1 if the model has no
+              ``load_characteristics`` table (then zeros are returned).
     """
     out = {
         "updated": 0,
@@ -619,8 +622,8 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         "no_load_models": 0,
     }
 
-    # Источник коэффициентов СХН — таблица ``load_characteristics``; узлы несут
-    # 0-based ссылку ``load_model_id`` (``-1`` = нет).
+    # The source of the load-characteristic coefficients is the ``load_characteristics`` table; nodes carry
+    # a 0-based reference ``load_model_id`` (``-1`` = none).
     nodes_arr = model.nodes.to_numpy()
     lc_coll = getattr(model, "load_characteristics", None)
     coeff = lc_coll.to_numpy() if lc_coll is not None else None
@@ -641,9 +644,9 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
             continue
         exist_load = bool(row["exist_load"])
 
-        # idx — 0-based строка коэффициентов из load_model_id (-1=нет). Порядок
-        # skip-проверок не влияет на пересчёт (во всех skip-ветвях recompute
-        # отсутствует) — только на stat-счётчики.
+        # idx — 0-based coefficient row from load_model_id (-1=none). The order
+        # of the skip checks does not affect the recomputation (no skip branch
+        # recomputes) — only the stat counters.
         idx = int(row["load_model_id"])
         if idx < 0:
             if exist_load:
@@ -660,7 +663,7 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         vn = float(row["voltage_nominal"])
         vm = float(row["voltage_magnitude"])
         if vn <= 0.0 or vm <= 0.0:
-            # Без валидного V не можем масштабировать — оставляем как есть.
+            # Without a valid V we cannot scale — leave as is.
             continue
         v_pu = vm / vn
 
@@ -683,14 +686,14 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
             )
             out["updated"] += 1
         except (KeyError, ValueError):
-            # ID не нашёлся — теоретически невозможно, мы итерируем по этой же таблице.
+            # ID not found — theoretically impossible, we iterate over this same table.
             pass
 
     return out
 
 
 def _max_voltage_ratio(model: Working) -> float:
-    """max(voltage_magnitude / voltage_nominal) по активным узлам (vn>0)."""
+    """max(voltage_magnitude / voltage_nominal) over active nodes (vn>0)."""
     nd = model.nodes.to_numpy()
     mask = nd["status"] & (nd["voltage_nominal"] > 0)
     if not np.any(mask):
@@ -708,48 +711,48 @@ def refine_anti_overshoot(
     max_iters: int = 5,
     mid_start: int = ANTI_OVERSHOOT_ID_BASE,
 ) -> tuple[SEResult, dict[str, int | float | bool | str]]:
-    """Anti-overshoot пост-solve уточнение V со САМО-ВАЛИДАЦИЕЙ (revert).
+    """Anti-overshoot post-solve V refinement with SELF-VALIDATION (revert).
 
-    Слабонаблюдаемые radial-узлы (нет real-V-меры, рыхлый Q-pseudo) могут получить
-    нефизичный overshoot V (до 1.3+ pu): высоко-X ветвь без телеметрии гонит
-    фантомный циркулирующий реактив. Шаг находит активные узлы с
-    ``V/Vnom > ceiling`` и БЕЗ реальной (не-pseudo) V-меры, добавляет на них tight
-    P/Q-инжекц-prior = материализ. (``generation−load``, σ=``inj_sigma`` МВ·А) и
-    пере-решает (warm) через ``resolve()``. Убирает фантомный Q → V садится к
-    физически-консистентной (``V_from/tap``), а не к произвольному потолку.
+    Weakly observable radial nodes (no real V measurement, a loose Q pseudo) can get
+    an unphysical V overshoot (up to 1.3+ pu): a high-X branch without telemetry drives
+    a phantom circulating reactive power. The step finds active nodes with
+    ``V/Vnom > ceiling`` and WITHOUT a real (non-pseudo) V measurement, adds tight
+    P/Q injection priors on them = the materialised value (``generation−load``, σ=``inj_sigma`` MVA) and
+    re-solves (warm) through ``resolve()``. This removes the phantom Q → V settles at the
+    physically consistent value (``V_from/tap``) rather than at an arbitrary ceiling.
 
-    САМО-ВАЛИДАЦИЯ: уточнение принимается ТОЛЬКО если ``max(V/Vnom)`` снизился
+    SELF-VALIDATION: the refinement is accepted ONLY if ``max(V/Vnom)`` dropped
     (a runtime criterion, no outside solution needed). Otherwise V/δ are
     **rolled back** to the base solution.
-    Гарантирует отсутствие регрессии: где overshoot реален и устраним — выигрыш;
-    где уточнение дестабилизирует — откат к базе (no-op). Универсально-безопасно.
+    This guarantees no regression: where the overshoot is real and removable — a gain;
+    where the refinement destabilises — a rollback to the base (no-op). Universally safe.
 
     Args:
-        model: модель ПОСЛЕ ``estimate`` (с V/δ в ``voltage_magnitude/angle``).
-        result: текущий ``SEResult`` (вернётся при откате).
-        resolve: callable ``() -> SEResult`` — пере-решить SE на ``model`` (warm,
-            ``init="results"``). Декаплинг от ``gridstate.api.estimate`` (нет цикла).
-        ceiling: порог overshoot (pu); узлы выше него — кандидаты.
-        inj_sigma: σ (МВ·А) tight инжекц-prior. Малая → жёстко пиннит инжекцию≈0.
-        max_iters: макс. внешних проходов (каждый ловит новые overshoot-узлы).
-            Цикл прерывается после первого же прохода, не снизившего
-            ``max(V/Vnom)`` относительно базы.
-        mid_start: стартовый id для добавляемых pseudo-мер.
+        model: the model AFTER ``estimate`` (with V/δ in ``voltage_magnitude/angle``).
+        result: the current ``SEResult`` (returned on rollback).
+        resolve: callable ``() -> SEResult`` — re-solve SE on ``model`` (warm,
+            ``init="results"``). Decoupling from ``gridstate.api.estimate`` (no cycle).
+        ceiling: overshoot threshold (pu); nodes above it are candidates.
+        inj_sigma: σ (MVA) of the tight injection prior. Small → pins the injection ≈ 0 hard.
+        max_iters: max outer passes (each catches new overshoot nodes).
+            The loop stops after the first pass that did not lower
+            ``max(V/Vnom)`` relative to the base.
+        mid_start: starting id for the added pseudo-measurements.
 
     The refinement is accepted only if the last re-solve converged
     (``refined.success``); a non-converged re-solve is reverted even when it
     lowered ``max(V/Vnom)``, and the stats then carry ``revert_reason``.
 
     Returns:
-        ``(result, stats)`` — финальный ``SEResult`` (refined или base при откате),
+        ``(result, stats)`` — the final ``SEResult`` (refined, or base on rollback),
         ``stats = {"tightened": N, "accepted": bool, "max_ratio_before/after": ...}``
         (+ ``revert_reason`` when the re-solve did not converge).
     """
-    # Снимки для ПОЛНОГО отката: узлы (V/δ/estimated), ветви (потоки) и меры
-    # (добавленные tight-priors + estimated_si). Иначе revert оставлял бы в
-    # модели меры и branch/measurement-оценки от отвергнутого решения —
-    # несогласованные с базовыми V/δ (это ломало бы и post-hoc quality
-    # summary, и bad-data re-pass, читающие estimated_si).
+    # Snapshots for a FULL rollback: nodes (V/δ/estimated), branches (flows) and
+    # measurements (the added tight priors + estimated_si). Otherwise a revert would leave
+    # the measurements and branch/measurement estimates of the rejected solution in
+    # the model — inconsistent with the base V/δ (which would break both the post-hoc quality
+    # summary and the bad-data re-pass that read estimated_si).
     # The pass is armed eagerly: the real-V set is read from the snapshot, and
     # the acceptance criterion is its own (revert() instead of settle()).
     rp = ResolvePass(model, result)
@@ -792,9 +795,9 @@ def refine_anti_overshoot(
                 model.measurements.add(pseudo_node_measurement(ids.next(), nid, kind, val, var))
             tightened.add(nid)
         refined = resolve()
-        # Раунд не опустил max V/Vnom ниже базы — дальнейшие раунды
-        # добавляют priors к уже дестабилизированному решению; итог всё
-        # равно пойдёт в откат, если не станет лучше базы.
+        # The round did not push max V/Vnom below the base — further rounds
+        # would add priors to an already destabilised solution; the result
+        # would be rolled back anyway unless it becomes better than the base.
         if _max_voltage_ratio(model) >= maxr0 - 1e-4:
             break
 
@@ -813,6 +816,6 @@ def refine_anti_overshoot(
         stats["revert_reason"] = REVERT_REASON_NOT_CONVERGED
     if accepted:
         return refined, stats
-    # Полный откат к базе: V/δ + branch-потоки + меры (удаляются добавленные
-    # tight-priors, estimated_si возвращаются к базовому решению).
+    # Full rollback to the base: V/δ + branch flows + measurements (the added
+    # tight priors are removed, estimated_si returns to the base solution).
     return rp.revert(), stats

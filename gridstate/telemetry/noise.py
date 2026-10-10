@@ -55,10 +55,10 @@ QUESTIONABLE_SIGMA2_MULTIPLIER = 100.0
 #: units of the model's V readings (kV^2: sigma ~ 0.32 kV).
 GEN_V_SIGMA2 = 0.1
 
-_VARIANCE_V_FRAC = 0.01  # 1% от номинала напряжения
-_VARIANCE_P_BASE = 1.0  # МВт² floor
-_VARIANCE_Q_BASE = 1.0  # МВАр² floor
-_VARIANCE_P_FRAC = 0.02  # 2% от значения мощности
+_VARIANCE_V_FRAC = 0.01  # 1% of the nominal voltage
+_VARIANCE_P_BASE = 1.0  # MW² floor
+_VARIANCE_Q_BASE = 1.0  # MVAr² floor
+_VARIANCE_P_FRAC = 0.02  # 2% of the power value
 _VARIANCE_Q_FRAC = 0.02
 
 # Node injection readings: sigma 5 % of |value| (not 2 % as branch flows): a net
@@ -69,9 +69,9 @@ _INJECTION_BASE = {"P": 1.0, "Q": 0.5}
 
 
 def variance_voltage(value_kv: float, vn_kv: float) -> float:
-    """σ²_V в kV²: 1% от номинала, минимум 0.1 кВ.
+    """σ²_V in kV²: 1% of nominal, at least 0.1 kV.
 
-    Не зависит от текущего value (variance прайор по nominal).
+    Independent of the current value (the variance is a prior on nominal).
 
     ``value_kv`` is ignored; it stays in the signature for existing positional
     callers.
@@ -85,9 +85,9 @@ def variance_power(
     base: float = _VARIANCE_P_BASE,
     sigma_frac: float = _VARIANCE_P_FRAC,
 ) -> float:
-    """σ² в МВт²: ``sigma_frac`` от |value|, минимум 0.5 МВт + base floor.
+    """σ² in MW²: ``sigma_frac`` of |value|, at least 0.5 MW, plus the base floor.
 
-    Для P-измерений default ``sigma_frac=0.02`` (2 % от |value|).
+    For P measurements the default is ``sigma_frac=0.02`` (2 % of |value|).
     For Q branch-flow measurements on large models a larger value
     (0.05–0.07) is sometimes justified: the Q flow depends strongly on V and
     δ, and a tight σ_Q forces the estimate to bend the voltage of a whole
@@ -105,31 +105,31 @@ def variance_branch_q(
     base: float = _VARIANCE_Q_BASE,
     sigma_frac: float = _VARIANCE_Q_FRAC,
 ) -> float:
-    """σ² для branch-Q с **charging-aware** полом (единый источник истины).
+    """σ² for branch Q with a **charging-aware** floor (single source of truth).
 
-    На длинных HV/EHV-ВЛ модельный branch-Q доминирован зарядной мощностью
-    π-схемы ``Q_charge ≈ V²·B`` (на 750 кВ — сотни-тысячи МВАр), тогда как
-    измеренный нетто-Q конца линии мал. Плоская ``σ_frac·|Q_meas|`` (1–3 МВАр
-    при малом Q) выдаёт нормированный резидуал в десятки-сотни σ и тянет V
-    региона вниз через нормальные уравнения. Поэтому вводим минимальный
-    абсолютный пол ``σ_charge = charging_alpha·|charging_mvar|``::
+    On long HV/EHV lines the model branch Q is dominated by the charging power
+    of the π-model ``Q_charge ≈ V²·B`` (hundreds to thousands of MVAr at 750 kV), while
+    the measured net Q at the line end is small. A flat ``σ_frac·|Q_meas|`` (1–3 MVAr
+    for small Q) yields a normalized residual of tens to hundreds of σ and pulls the
+    regional V down through the normal equations. Hence a minimal
+    absolute floor ``σ_charge = charging_alpha·|charging_mvar|`` is introduced::
 
         σ² = max( variance_power(value, sigma_frac), (charging_alpha·|charging_mvar|)² )
 
-    где ``charging_mvar = |B_si|·Vn²`` (полная зарядная, см.
+    where ``charging_mvar = |B_si|·Vn²`` (full charging, see
     :func:`gridstate.telemetry.loss_filter.compute_expected_q_imbalance_mvar`).
     Used by ``apply_telemetry`` (``gridstate.telemetry.apply_resolved``) and by
     callers that build measurement variances themselves.
 
     Args:
-        value_mvar: измеренный Q-поток ветви, МВАр.
-        charging_mvar: ``|B_si|·Vn²`` ветви, МВАр (полная зарядная). 0 = нет.
-        charging_alpha: доля зарядной, идущая в σ-пол. 0 = выкл (= ``variance_power``).
-        base: floor МВАр².
-        sigma_frac: относительная σ (default региональной модели 0.07).
+        value_mvar: measured branch Q flow, MVAr.
+        charging_mvar: branch ``|B_si|·Vn²``, MVAr (full charging). 0 = none.
+        charging_alpha: share of the charging power that goes into the σ floor. 0 = off (= ``variance_power``).
+        base: floor, MVAr².
+        sigma_frac: relative σ (default 0.07).
 
     Returns:
-        σ² в МВАр².
+        σ² in MVAr².
     """
     var_frac = variance_power(value_mvar, base=base, sigma_frac=sigma_frac)
     if charging_alpha > 0.0 and charging_mvar != 0.0:

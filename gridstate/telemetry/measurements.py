@@ -19,19 +19,19 @@ if TYPE_CHECKING:
 
 
 def deactivate_orphan_measurements(model: Working) -> dict[str, int]:
-    """Деактивировать measurements, чьи объекты `status=False` или отсутствуют.
+    """Deactivate measurements whose objects have `status=False` or are missing.
 
-    Когда ветвь/узел/генератор отключается (через ON_LINE-формулу,
-    `disable_orphan_branches`, cascade и т.д.), associated measurements
-    остаются `status=True`. ``z_vector`` пропускает их через
-    ``branch_id_to_pos`` / ``bus_id_to_pos``-фильтр, но это засоряет
-    логи warning-ами и завышает `len(active_measurements)` в audit.
+    When a branch/node/generator is switched off (via the ON_LINE formula,
+    `disable_orphan_branches`, cascade, etc.), its associated measurements
+    stay `status=True`. ``z_vector`` skips them through the
+    ``branch_id_to_pos`` / ``bus_id_to_pos`` filter, but this clutters
+    the logs with warnings and inflates `len(active_measurements)` in the audit.
 
-    Делает универсальную пост-очистку: для каждой active measurement
-    проверяет, что её object активен, иначе ставит ``status=False``.
+    Performs a universal post-cleanup: for every active measurement
+    checks that its object is active, otherwise sets ``status=False``.
 
     Args:
-        model: ``Working`` после всех topology-операций.
+        model: ``Working`` after all topology operations.
 
     Returns:
         ``{"branch_meas": N, "node_meas": N, "gen_meas": N,
@@ -54,10 +54,10 @@ def _deactivate_orphan_on_arrays(
     branches_arr: np.ndarray,
     gens_arr: np.ndarray,
 ) -> dict[str, int]:
-    """ЯДРО: деактивация measurements осиротевших объектов над контрактом.
+    """CORE: deactivate measurements of orphaned objects over the contract.
 
-    Строит множества active-id из ``branches_arr``/``nodes_arr``/``gens_arr``, для
-    каждой active-меры с неактивным/отсутствующим объектом ставит ``status=False``.
+    Builds active-id sets from ``branches_arr``/``nodes_arr``/``gens_arr`` and
+    sets ``status=False`` on every active measurement whose object is inactive or missing.
     Mutates ``meas_arr`` in place; no external dependencies.
     """
     active_branches = active_ids(branches_arr)

@@ -1,22 +1,22 @@
-"""σ-floor real-flow измерений от шкалы измерительного канала.
+"""σ floor for real-flow measurements from the measurement channel scale.
 
-Типовая телеметрийная σ flow-мер пропорциональна значению (≈ α·|z|): для
-малых перетоков σ оказывается нефизично занижена (поток 20 МВт → σ 2 МВт),
-и SE пере-доверяет мелким потокам — это даёт глобальный bias занижения V.
-Физически нижнюю границу ошибки канала задаёт класс точности ТТ/ТН от
-**шкалы** канала, а не от текущего значения::
+The typical telemetry σ of flow measurements is proportional to the value (≈ α·|z|): for
+small flows σ is unphysically low (20 MW flow → σ 2 MW),
+and the estimator over-trusts small flows, which gives a global downward bias of V.
+Physically, the lower bound of the channel error is set by the CT/VT accuracy class
+relative to the channel **scale**, not to the current value::
 
-    σ_min = kv_frac · S_шкалы,   S_шкалы = √3 · Vn · I_ном   (МВ·А)
+    σ_min = kv_frac · S_scale,   S_scale = √3 · Vn · I_nom   (MV·A)
 
-где Vn — класс напряжения ветви = max(Vn концов), I_ном — номинал первичной
-обмотки ТТ (типовой 1 кА). Floor применяется ТОЛЬКО к real (не pseudo)
-branch-flow мерам P и Q: ``variance := max(variance, floor²)``,
+where Vn is the branch voltage class = max(Vn of the ends), I_nom is the rated primary
+current of the CT (typically 1 kA). The floor is applied ONLY to real (non-pseudo)
+branch-flow P and Q measurements: ``variance := max(variance, floor²)``,
 ``weight := 1/variance``.
 
-A/B на 4 региональных моделях (IPM, kv_frac=0.010):
-p50|V_se − V_ref| −8…−15 % на трёх из четырёх (четвёртая +2.5 % по p50,
-но p95 5.64→5.25 и class-max лучше); на 500 кВ p50 до −55 %; p95 лучше
-базы на всех четырёх; dV_max нигде не регрессирует > 5 %.
+A/B on 4 regional models (IPM, kv_frac=0.010):
+p50|V_se − V_ref| −8…−15 % on three of four (the fourth +2.5 % in p50,
+but p95 5.64→5.25 and class-max is better); at 500 kV p50 up to −55 %; p95 better
+than the baseline on all four; dV_max regresses by more than 5 % nowhere.
 """
 
 from __future__ import annotations
@@ -44,18 +44,18 @@ def apply_flow_sigma_floor(
     kv_frac: float,
     current_ka: float = 1.0,
 ) -> dict:
-    """Поднять variance real branch-flow мер до floor² от шкалы канала.
+    """Raise the variance of real branch-flow measurements to floor² of the channel scale.
 
     Args:
-        model: ``Working`` после применения телеметрии (псевдо-меры, если
-            уже добавлены, не затрагиваются — селектор ``is_pseudo == 0``).
-        kv_frac: доля шкалы ``√3·Vn·current_ka`` как σ_min (класс точности
-            канала); 0.010 = 1 % шкалы (110 кВ → 1.9 МВт, 500 кВ → 8.7 МВт).
-        current_ka: номинальный первичный ток ТТ, кА (default 1.0 — типовой).
+        model: ``Working`` after telemetry is applied (pseudo-measurements, if
+            already added, are untouched: selector ``is_pseudo == 0``).
+        kv_frac: share of the scale ``√3·Vn·current_ka`` taken as σ_min (channel
+            accuracy class); 0.010 = 1 % of scale (110 kV → 1.9 MW, 500 kV → 8.7 MW).
+        current_ka: rated primary CT current, kA (default 1.0, the typical value).
 
     Returns:
-        ``{"checked": N, "floored": N}`` — сколько real-flow мер проверено
-        и у скольких variance поднята до floor².
+        ``{"checked": N, "floored": N}``: how many real-flow measurements were checked
+        and for how many the variance was raised to floor².
     """
     meas_arr = table_copy(model.measurements)
     nodes_arr = model.nodes.to_numpy()
@@ -85,12 +85,12 @@ def _flow_sigma_floor_on_arrays(
     kv_frac: float,
     current_ka: float,
 ) -> dict:
-    """ЯДРО: σ-floor от шкалы канала над контрактными массивами.
+    """CORE: σ floor from the channel scale over the contract arrays.
 
-    Мутирует ``meas_arr`` in place (``variance``/``weight``), читает
-    ``nodes_arr`` (``voltage_nominal``) и ``branches_arr`` (``from_node``/
-    ``to_node``). Векторно; python-цикл только в маппинге branch_id → Vn.
-    Меры на неизвестных ветвях получают floor 0 (не трогаются).
+    Mutates ``meas_arr`` in place (``variance``/``weight``), reads
+    ``nodes_arr`` (``voltage_nominal``) and ``branches_arr`` (``from_node``/
+    ``to_node``). Vectorized; the python loop is only in the branch_id → Vn mapping.
+    Measurements on unknown branches get floor 0 (left untouched).
     """
     vn_by_node = id_value_map(nodes_arr, "voltage_nominal")
     vn_by_branch = branch_nominal_kv(vn_by_node, branches_arr, policy="max")

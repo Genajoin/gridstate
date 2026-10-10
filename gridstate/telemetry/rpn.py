@@ -1,7 +1,7 @@
-"""РПН/ПБВ: применение выбранных отпаек к tap_ratio/phase_shift/шунту.
+"""On-load / off-circuit tap changers: apply selected taps to tap_ratio/phase_shift/shunt.
 
-Ядро ``_apply_tap_steps_on_arrays`` применяет готовую таблицу ``tap_steps`` к
-ветвям модели через обёртку ``apply_rpn_resolved``.
+The core ``_apply_tap_steps_on_arrays`` applies a ready ``tap_steps`` table to the
+model branches through the ``apply_rpn_resolved`` wrapper.
 """
 
 from __future__ import annotations
@@ -24,11 +24,11 @@ def _apply_tap_steps_on_arrays(
 
     Mutates ``branches_arr``.
 
-    Выбор отпайки сделан вне ядра — ``tap_steps`` несёт целевые ``tap_ratio``/
-    ``phase_shift`` + ``shunt_factor`` (=(tap_new/tap_old)², 1.0=без пересчёта).
+    The tap choice is made outside the core: ``tap_steps`` carries the target ``tap_ratio``/
+    ``phase_shift`` + ``shunt_factor`` (=(tap_new/tap_old)², 1.0 = no rescaling).
     The kernel only applies them: it writes tap/phase and rescales the branch
     shunt (fields ``!=0.0``).
-    Это формат-агностичная физика трансформатора.
+    This is format-agnostic transformer physics.
     """
     by_id = id_to_pos_map(branches_arr["id"])
     stats: dict[str, int | float] = {"applied": 0, "shunt_recalc": 0}
@@ -61,7 +61,7 @@ def _apply_tap_steps_on_arrays(
 
 
 def apply_rpn_resolved(model: Working) -> dict[str, int | float]:
-    """Применить выбранные отпайки (таблица ``tap_steps``) к ветвям модели.
+    """Apply the selected taps (the ``tap_steps`` table) to the model branches.
 
     The tap position is chosen upstream; the kernel :func:`_apply_tap_steps_on_arrays`
     writes tap/phase and rescales the branch shunt. The ``run()`` step calls it
