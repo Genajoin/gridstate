@@ -12,11 +12,10 @@
 ``outputs`` по id для отображения. Поля ``v_pu`` / ``delta_rad`` дублируют V/δ в
 p.u./радианах — для отладки и тестов.
 
-Дополнительные поля качества (``chi2``, ``worst_residuals``,
-``worst_imbalance``, ``observability_warnings``) заполняются ``estimate()``
-после ``write_results_to_model`` — это структурированная сводка для
-backward-compat диагностики (раньше собиралась ad-hoc в
-``examples/se_xml_inline_snapshot.py``).
+The additional quality fields (``chi2``, ``worst_residuals``,
+``worst_imbalance``, ``observability_warnings``) are filled by ``estimate()``
+after ``write_results_to_model``: a structured summary for backward-compatible
+diagnostics (it used to be assembled ad hoc by an example script).
 """
 
 from __future__ import annotations

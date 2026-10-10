@@ -7,7 +7,7 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Unit-тесты write_node_estimates_from_inj (без зависимости от XML).
+# Unit tests of write_node_estimates_from_inj.
 # ---------------------------------------------------------------------------
 
 
@@ -234,7 +234,7 @@ def test_write_node_estimates_from_inj_inactive_skipped():
 
 
 # ---------------------------------------------------------------------------
-# Unit-тесты apply_load_characteristic (H32, без зависимости от XML).
+# Unit tests of apply_load_characteristic.
 # ---------------------------------------------------------------------------
 
 

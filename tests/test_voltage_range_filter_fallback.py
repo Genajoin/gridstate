@@ -1,7 +1,7 @@
 """Тесты fallback-логики ``apply_voltage_range_filter``.
 
-Покрывают сценарии заглушек входного формата (`U_KRIT=1.0` на 500-кВ узлах,
-отсутствие `U_MAX` и т.п.).
+They cover placeholder limits found in real inputs (a critical limit of 1.0 on
+500 kV nodes, a missing upper limit and the like).
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ def _build(node_attrs: dict, v_meas: float):
     return m
 
 
-def test_u_krit_stub_falls_through_to_u_min() -> None:
-    """U_KRIT=1.0 — заглушка эталонной SE; должны взять U_MIN=350 как нижнюю границу."""
+def test_critical_placeholder_falls_through_to_min_limit() -> None:
+    """A critical limit of 1.0 is a placeholder; voltage_min=350 is the lower bound."""
     m = _build({"voltage_critical": 1.0, "voltage_min": 350.0}, v_meas=400.0)
     stats = apply_voltage_range_filter(m)
     me = m.measurements.to_numpy()
@@ -58,8 +58,8 @@ def test_u_krit_stub_falls_through_to_u_min() -> None:
     assert stats["out_of_range"] == 0
 
 
-def test_u_krit_stub_v_below_u_min_downweight() -> None:
-    """V=300 < U_MIN=350 → out-of-range при заглушке U_KRIT."""
+def test_critical_placeholder_v_below_min_limit_downweighted() -> None:
+    """V=300 < voltage_min=350 → out of range with a placeholder critical limit."""
     m = _build({"voltage_critical": 1.0, "voltage_min": 350.0}, v_meas=300.0)
     stats = apply_voltage_range_filter(m)
     me = m.measurements.to_numpy()
@@ -67,8 +67,8 @@ def test_u_krit_stub_v_below_u_min_downweight() -> None:
     assert stats["out_of_range"] == 1
 
 
-def test_both_u_krit_and_u_min_stubs_use_half_vnom() -> None:
-    """Обе заглушки (U_KRIT=1.0, U_MIN=1.0) → fallback V_ном/2 = 250."""
+def test_critical_and_min_placeholders_use_half_vnom() -> None:
+    """Both placeholders (critical 1.0, min 1.0) → fallback V_nom/2 = 250."""
     m = _build({"voltage_critical": 1.0, "voltage_min": 1.0}, v_meas=200.0)
     stats = apply_voltage_range_filter(m)
     m.measurements.to_numpy()
@@ -81,14 +81,14 @@ def test_both_u_krit_and_u_min_stubs_use_half_vnom() -> None:
     assert bool(me2[0]["status"]) is True
 
 
-def test_u_krit_valid_used_directly() -> None:
-    """Валидный U_KRIT=350 (≥ V_ном/2) — берём как нижнюю границу."""
+def test_valid_critical_limit_used_directly() -> None:
+    """A valid critical limit of 350 (≥ V_nom/2) is the lower bound."""
     m = _build({"voltage_critical": 350.0, "voltage_min": 0.0}, v_meas=349.0)
     stats = apply_voltage_range_filter(m)
     assert stats["out_of_range"] == 1  # 349 < 350
 
 
-def test_u_max_zero_uses_factor_fallback() -> None:
+def test_missing_upper_limit_uses_factor_fallback() -> None:
     """voltage_max=0 → fallback 1.4·V_ном = 700."""
     m = _build(
         {"voltage_critical": 350.0, "voltage_min": 350.0, "voltage_max": 0.0},
@@ -104,7 +104,7 @@ def test_u_max_zero_uses_factor_fallback() -> None:
     assert bool(m2.measurements.to_numpy()[0]["status"]) is True  # 650 < 700
 
 
-def test_u_max_set_takes_precedence() -> None:
+def test_upper_limit_set_takes_precedence() -> None:
     """voltage_max=525 → hi = 525·1.10 = 577.5."""
     m = _build(
         {"voltage_critical": 350.0, "voltage_min": 350.0, "voltage_max": 525.0},

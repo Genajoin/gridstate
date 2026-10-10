@@ -74,9 +74,10 @@ def apply_telemetry_resolved(
 ) -> dict[str, int]:
     """Применить готовый ``resolved`` z-вектор к ``measurements``.
 
-    Чистое применение (без XML/snapshot/формул): снимок ``measurements``/``nodes``/
-    ``branches`` → ядро :func:`_apply_telemetry_on_arrays` → write-back + ``.add()``
-    NODE-инжекций. Зовётся шагом ``run()`` на своей позиции (после ``apply_topology``/
+    A pure application (no source format, snapshot or formulas): snapshot of
+    ``measurements``/``nodes``/``branches`` → kernel
+    :func:`_apply_telemetry_on_arrays` → write-back + ``.add()`` of NODE
+    injections. Зовётся шагом ``run()`` на своей позиции (после ``apply_topology``/
     ``apply_rpn``: ядро читает branch ``status``/``susceptance``).
     """
     config = TelemetryApplyConfig(
@@ -236,10 +237,9 @@ def _measurement_variance(
     if mt == 1:  # BRANCH Q
         # Charging-aware σ_Q (единый источник — variance_branch_q): на
         # длинных HV/EHV-ВЛ с большой B legitimate Q ≈ V²·B; static σ_frac
-        # недооценивает шум. σ_min = α·|B|·Vn² (default α=0.10) → Q-замеры
-        # 750 кВ ВЛ получают σ ≈ 50–100 МВар. См. memory
-        # `odu_q_sigma_calibration`; Цех-3 sweep подтвердил α=0.10 как
-        # универсальный оптимум на 4 региональных моделях.
+        # недооценивает шум. σ_min = α·|B|·Vn² (default α=0.10), so Q readings
+        # of 750 kV lines get σ ≈ 50–100 Mvar. A parameter sweep confirmed
+        # α=0.10 as the best value on four large production models.
         vn_q = branch_vn.get(int(obj_id), 0.0) if ot == 1 else 0.0
         b_si_q = branch_b.get(int(obj_id), 0.0) if ot == 1 else 0.0
         return variance_branch_q(
@@ -345,8 +345,8 @@ def _apply_measurement_loop(
         val = value * sign
         # V-measurement < 50% Vnom — sentinel «датчик не работает» / отключённое
         # оборудование. Принимать его как жёсткий якорь нельзя: SE будет тянуть
-        # V→0 на узле и в окрестности (см. audit_se_nonphysical_minimum.md). Не
-        # активируем — добавит pseudo-V=Vnom через add_pseudo_measurements.
+        # V→0 at the node and around it (a non-physical minimum of J). It is not
+        # activated; add_pseudo_measurements adds pseudo-V=Vnom instead.
         if mt == 2 and ot == 0:
             obj_node = int(meas_arr[idx]["object_id"])
             vn = vn_by_node.get(obj_node, 220.0)
@@ -395,7 +395,7 @@ def _apply_measurement_loop(
                 stats.setdefault("flow_sigma2_scaled", 0)
                 stats["flow_sigma2_scaled"] += 1
         # Q-inconsistent ветвь (physical filter, action="downweight") —
-        # downweight σ² × factor (loose якорь, как в эталонном OC с low weight).
+        # downweight σ² × factor (a loose anchor: the reading stays with a low weight).
         # Применяется после расчёта default σ.
         if kind in ("QBEG", "QEND") and obj_id in q_inconsistent_hv_branches:
             var *= config.q_loss_filter_downweight_factor

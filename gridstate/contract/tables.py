@@ -164,17 +164,25 @@ NODES = TableSchema(
             doc="Vном, кВ — база pu-перевода (читается повсеместно).",
         ),
         ColumnSpec(
-            "voltage_min", "f8", Role.INPUT, required=False, doc="U_MIN — фильтр V вне диапазона."
+            "voltage_min",
+            "f8",
+            Role.INPUT,
+            required=False,
+            doc="Lower operating V limit; used by the V range filter.",
         ),
         ColumnSpec(
-            "voltage_max", "f8", Role.INPUT, required=False, doc="U_MAX — фильтр V вне диапазона."
+            "voltage_max",
+            "f8",
+            Role.INPUT,
+            required=False,
+            doc="Upper operating V limit; used by the V range filter.",
         ),
         ColumnSpec(
             "voltage_critical",
             "f8",
             Role.INPUT,
             required=False,
-            doc="U_KRIT — нижний порог фильтра V.",
+            doc="Critical (emergency) lower V limit; the lower threshold of the V filter.",
         ),
         ColumnSpec(
             "voltage_setpoint",
@@ -452,9 +460,9 @@ MEASUREMENTS = TableSchema(
     name="measurements",
     key=("id", "object_type", "object_id"),
     doc=(
-        "Телеизмерения = z-вектор. В XML-пути почти целиком СТРОЯТСЯ препроцессингом "
-        "(FORMULE→меры + синтетика), в пути эталонной SE/прямом пути — поставляются адаптером. "
-        "Большинство колонок поэтому WORKING."
+        "Telemetry = the z-vector. The producer of the input builds the rows (resolving "
+        "its own measurement definitions, plus synthetic rows); the pipeline then edits "
+        "them, so most columns are WORKING."
     ),
     columns=(
         ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор измерения."),
@@ -563,8 +571,9 @@ GENERATORS = TableSchema(
 # не мутирует).
 # ===========================================================================
 
-# Ступени РПН/ПБВ: строка выбирается вне ядра (main-vs-vc по xml_tap), ядро
-# применяет к branches (tap_ratio/phase_shift) + H30-факторинг шунта (shunt_factor).
+# Tap-changer steps (on-load and off-load): the row is selected outside the core
+# (the producer decides which tap position applies); the core applies it to the
+# branches (tap_ratio/phase_shift) and rescales the branch shunt (shunt_factor).
 # Физика трансформатора остаётся в формат-агностичном ядре.
 TAP_STEPS = TableSchema(
     name="tap_steps",
@@ -581,7 +590,7 @@ TAP_STEPS = TableSchema(
             "shunt_factor",
             "f8",
             Role.INPUT,
-            doc="(tap_new/tap_old)² для H30-пересчёта шунта; 1.0 — без пересчёта.",
+            doc="(tap_new/tap_old)², the branch shunt rescaling factor; 1.0 means no rescaling.",
         ),
     ),
 )

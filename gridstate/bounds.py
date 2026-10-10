@@ -6,11 +6,11 @@
 оба — сентинелы (ТОЧНОЕ значение ±9999 — «нет данных» в исходных
 форматах).
 
-Сентинел — именно точное ±9999, а НЕ порог «достаточно большое»:
-реальные данные несут границы того же масштаба (узел-эквивалент
-Рефтинской ГРЭС: ``load_p ∈ [10000, 30000]`` МВт; BUS-эквиваленты —
-±42500), и пороговое правило |v| ≥ 9000 их съедало, заменяя физический
-диапазон дефолтной коробкой.
+The sentinel is exactly ±9999, NOT a "large enough" threshold: real data
+carries limits of the same magnitude (an equivalent node of a large power
+plant: ``load_p ∈ [10000, 30000]`` MW; BUS equivalents: ±42500), and a
+threshold rule |v| ≥ 9000 swallowed them, replacing the physical range with
+the default box.
 
 До этого модуля каждая подсистема трактовала границы по-своему:
 ``ipm_setup`` понимал нули и сентинелы, а клип WLS-разноса
@@ -27,7 +27,7 @@ __all__ = ["SENTINEL_VALUE", "is_reactive_only_generation", "is_sentinel", "reso
 #: Точное значение-сентинел «нет данных» (контрактная конвенция ±9999).
 SENTINEL_VALUE = 9999.0
 
-#: Допуск сравнения с сентинелом (float-представление из XML/JSON).
+#: Tolerance of the sentinel comparison (the value may come from a text format).
 _SENTINEL_TOL = 1e-6
 
 

@@ -1,10 +1,9 @@
-"""Сериализация SEInput → .npz (граница входа pet-project, разворот 2026-06-02).
+"""Serialization SEInput → .npz, the input boundary of gridstate.
 
-XML-free регрессия для :mod:`gridstate.contract.serialize`: round-trip контрактных
-таблиц + ``DerivedInputs`` бит-в-бит и end-to-end эквивалентность прогона
-``run(SEInput)`` из npz vs из исходной модели (на малой синтетической модели —
-дёшево, без ``.specs``/XML). Полная матрица 4 региональные модели × {wls,ipm} проверяется отдельным
-харнесом (см. proof в истории; гейт миграции).
+A regression for :mod:`gridstate.contract.serialize`: a bit-identical round trip
+of the contract tables and ``DerivedInputs``, and end-to-end equivalence of
+``run(SEInput)`` from the npz and from the original model (on a small synthetic
+model, so it is cheap and needs no external data).
 """
 
 from __future__ import annotations

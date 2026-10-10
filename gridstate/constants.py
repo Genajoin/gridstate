@@ -15,9 +15,10 @@ from enum import IntEnum
 
 
 # Численный guard от переполнения R⁻¹ = 1/σ² на per-measurement диагонали R.
-# Значение 1e-10 (исторический WLS-floor, algorithms/wls.py): устраняет молчаливую
-# wls(1e-10)/ipm(1e-12) дивергенцию. На проде (4 ОДУ) min σ²≈1.8e-7 ≫ floor —
-# выбор bit-neutral (ни одна мера не попадает в зазор [1e-12, 1e-10)).
+# The value 1e-10 (the historical WLS floor, algorithms/wls.py) removes a silent
+# wls(1e-10)/ipm(1e-12) divergence. On the production models min σ² ≈ 1.8e-7, far
+# above the floor, so the choice is bit-neutral (no measurement falls into the
+# gap [1e-12, 1e-10)).
 SIGMA2_FLOOR: float = 1e-10
 
 

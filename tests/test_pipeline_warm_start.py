@@ -5,8 +5,7 @@ Input read-only ⇒ ``run`` каждый раз клонирует Input (V/δ �
 ``init_state``, его V/δ засеваются в рабочую копию до препроцессинга.
 
 * unit: ``_seed_warm_start`` пишет V/δ из результата в клон;
-* e2e synthetic: ``run(wls)`` → ``run(ipm, init_state=res)`` без крэша + событие;
-* specs-gated: цепочка wls→ipm на реальной региональной модели.
+* e2e synthetic: ``run(wls)`` → ``run(ipm, init_state=res)`` без крэша + событие.
 """
 
 from __future__ import annotations

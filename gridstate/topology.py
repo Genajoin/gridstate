@@ -319,10 +319,10 @@ def disable_isolated_nodes(model: Any) -> dict[str, int]:
 def refine_slack_to_one(model: Any) -> dict[str, int]:
     """Свести множество SLACK-узлов к одному через ``balance_priority``.
 
-    Входной формат помечает SLACK по XML ``PR_BAL=1`` — а в тестовых моделях обычно
-    5-15 узлов имеют ``PR_BAL=1``. Легитимно для решателя эталонной SE (он сам
-    выбирает slack), но для типичного PF/SE множественный slack = множественные
-    острова с независимыми δ → convergence ломается.
+    The input may flag several nodes as balancing (typically 5-15 in a production
+    model). A solver that picks its own slack tolerates that, but for a typical
+    PF/SE several slacks mean several islands with independent δ, and convergence
+    breaks.
 
     Алгоритм:
     1. Кандидаты — active SLACK (``node_type=2``) с ``balance_priority>0`` и

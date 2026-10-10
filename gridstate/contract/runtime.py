@@ -79,8 +79,8 @@ def load_se_input(
 
     Граница входа — файл данных ``.npz`` (см. :func:`gridstate.contract.serialize.
     load_se_input_npz`), который восстанавливает рабочий слой + предвычисленные планы
-    ``DerivedInputs`` без формат-слоя источника. Этот хелпер оборачивает уже готовую
-    модель; XML/формат-зависимые шаги ``run`` пропускаются (``derived=None``).
+    ``DerivedInputs`` без формат-слоя источника. This helper wraps a ready model;
+    the ``run`` steps that need derived inputs are skipped (``derived=None``).
     """
     return SEInput(model=model, derived=None, contract_version=contract_version)
 
@@ -222,8 +222,9 @@ def run(
     sanity_on = bool(getattr(config, "shunt_sanity", False)) if config is not None else False
     pristine = se_input.model.copy() if sanity_on else None
 
-    # Числовые планы (``derived``) предвычислены вне ядра; шаги применяют их
-    # контрактными ядрами. ``derived=None`` → XML/формат-зависимые шаги пропускаются.
+    # The numeric plans (``derived``) are precomputed outside the core and the steps
+    # apply them through contract kernels. With ``derived=None`` the steps that need
+    # derived inputs are skipped.
     result = _pipeline_run(
         se_input.model,
         config=config,
@@ -252,11 +253,12 @@ def _shunt_sanity_rerun(
 ) -> SEResult:
     """Try-off/flip шунтов-кандидатов ПОЛНЫМИ re-run'ами пайплайна (research).
 
-    Валидированный механизм (4 ОДУ 2026-07-06): кандидаты — активные шунты на
-    узлах, где node-V-мера расходится с БАЗОВЫМ решением; каждый вариант
-    (off/flip) правится на копии пристинного входа и прогоняется ПОЛНЫМ
-    пайплайном; гейт — падение Σrn² (согласие с собственными real-мерами)
-    больше ``shunt_sanity_gate_drop``. Ложные кандидаты гейтом отвергаются.
+    Validated mechanism (2026-07-06, four large models): the candidates are active
+    shunts on nodes whose node V measurement disagrees with the BASE solution; each
+    variant (off/flip) is applied to a copy of the pristine input and run through
+    the FULL pipeline; the gate is a drop of Σrn² (agreement with the model's own
+    real measurements) larger than ``shunt_sanity_gate_drop``. The gate rejects
+    false candidates.
 
     Сравнение обязано быть «полный прогон против полного прогона»: правка сети
     меняет решение, и σ-ужесточения v_refine (и планы v_mirror/bad_data)

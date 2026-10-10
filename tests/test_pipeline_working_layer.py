@@ -61,7 +61,7 @@ def _assert_input_key_columns_unchanged(input_model, working_model) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Синтетика (всегда): покрывает non-XML шаги пайплайна
+# Synthetic model (always runs): covers the steps that need no derived inputs
 # ---------------------------------------------------------------------------
 
 

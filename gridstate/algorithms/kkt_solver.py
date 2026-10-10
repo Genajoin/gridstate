@@ -12,17 +12,16 @@
 Бэкенд ``"cholmod"`` использует CHOLMOD из SuiteSparse через cvxopt
 (manylinux-wheels, лёгкая optional-зависимость): ``cholmod.symbolic`` на
 паттерн + ``cholmod.numeric`` на итерацию, режим simplicial LDLᵀ
-(``options['supernodal']=0``) — поздние IPM-итерации квази-определённы
-(barrier ~1e14 на диагонали), supernodal-LLᵀ на них срывается с
-реюзнутым fill-order. На ОДУ_Юга (339 систем, n=16k, nnz=237k) —
-17.4s spsolve → 1.2s (×14). Фолбэк на вырожденной матрице (потеря
+(``options['supernodal']=0``): late IPM iterations are quasi-definite
+(barrier ~1e14 on the diagonal) and supernodal LLᵀ breaks down on them with a
+reused fill order. On a 16k-node production model (339 systems, n=16k,
+nnz=237k): 17.4 s spsolve → 1.2 s (×14). Фолбэк на вырожденной матрице (потеря
 наблюдаемости) — единичный ``spsolve`` с warning.
 
-Грабли стабилизации паттерна: scipy prune'ит численные нули и в
-sparse-matmul, и в сложении, поэтому паттерн G «дрожит» на единицы
-элементов между итерациями (236564..236569 nnz на Юге), а проекция на
-superset сложением с нулевой паттерн-матрицей разваливается (нулевые
-суммы тоже prune'ятся). Решение — паттерн-матрица с данными
+Pattern stabilisation pitfall: scipy prunes numerical zeros both in sparse
+matmul and in addition, so the pattern of G jitters by a few entries between
+iterations (236564..236569 nnz on that model), and projecting onto a superset
+by adding a zero pattern matrix falls apart (zero sums are pruned too). Решение — паттерн-матрица с данными
 ``±PATTERN_EPS=1e-300``: сумма в «дырах» не нулевая (не prune'ится), а
 для реальных значений G (≫1e-280) добавка за пределами разрядности
 double — данные бит-в-бит те же.
@@ -110,10 +109,10 @@ class KKTSolver:
         μ-расписания; (2) лишь затем единичный ``spsolve``-фолбэк
         (честно вырожденная G — потеря наблюдаемости).
 
-        Simplicial LDLᵀ (``options['supernodal']=0``) как лекарство
-        ОТВЕРГНУТ: диагональный D без пивотинга шумит на тех же
-        квази-определённых системах — IPM Юга стопорился (stalled, it=4
-        вместо 9 при бесфейловой факторизации).
+        Simplicial LDLᵀ (``options['supernodal']=0``) was REJECTED as a cure:
+        the diagonal D without pivoting is noisy on the same quasi-definite
+        systems, and IPM on a large model stalled (it=4 instead of 9 with a
+        failure-free factorisation).
         """
         if self.backend == "scipy":
             return np.asarray(spsolve(G, rhs), dtype=np.float64).ravel()

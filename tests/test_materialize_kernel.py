@@ -1,13 +1,12 @@
-"""float-ядро материализации режима над контрактными массивами.
+"""Float kernel of the operating point materialization over contract arrays.
 
-``materialize_injections_from_xml`` расщеплена на двухслойный шов: АДАПТЕР
-резолвит наблюдаемый режим из XML-FORMULE (``_xml_observed_injections`` через
-``_eval_formula`` над snapshot) → числовой ``obs`` (``{node_id → value}``); ЯДРО
-``_materialize_area_on_arrays(nodes_arr, obs, ...)`` делает всю контрактную
-float-математику (двухуровневая материализация: вербатим наблюдаемых + area-fill
-``k_area·max`` ненаблюдаемых, sentinel-санация, clamp) над ``SE_INPUT.nodes``-массивом,
-БЕЗ XML и внешних зависимостей. Здесь проверяем корректность ядра на голых массивах; бит-в-бит публичного
-API — canon transitively + end-to-end дифф OLD-vs-NEW (см. соседний слайс apply_rpn).
+The producer of the input resolves the observed nodal operating point into a
+numeric ``obs`` plan (``{node_id → value}``); the kernel
+``_materialize_area_on_arrays(nodes_arr, obs, ...)`` does all the float
+arithmetic over the ``SE_INPUT.nodes`` array: two-level materialization (observed
+values verbatim plus an area fill of ``k_area·max`` for unobserved nodes),
+sentinel sanitising and clamping. These tests check the kernel on bare arrays,
+without a model and without external dependencies.
 """
 
 from __future__ import annotations

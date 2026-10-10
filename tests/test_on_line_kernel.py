@@ -1,13 +1,11 @@
-"""float-free ядро ON_LINE-топологии над контрактными массивами.
+"""Float-free kernel that applies a resolved on-line status plan to contract arrays.
 
-``apply_topology_from_xml`` расщеплена на двухслойный шов: АДАПТЕР
-резолвит ON_LINE-формулы по snapshot через ``_eval_status_formula`` + читает
-``spec.args`` (GENERATOR-guard) → план ``resolved: list[(tag, parent_id, status|None,
-eval_skip|None)]`` в порядке ``specs.items()``; ЯДРО ``_apply_topology_on_arrays``
-матчит ``parent_tag`` → целевой массив (nodes/branches/generators), пишет
-``status``-колонку. Чистый статус-каскад без float → строгий бит-в-бит. Здесь —
-корректность ядра на голых массивах; бит-в-бит публичного API — canon transitively +
-поведенческий new-vs-HEAD дифф на реальном регионе.
+The producer of the input resolves the element statuses into a plan
+``resolved: list[(tag, parent_id, status|None, eval_skip|None)]``; the kernel
+``_apply_topology_on_arrays`` matches ``parent_tag`` to the target array
+(nodes/branches/generators) and writes the ``status`` column. A pure status
+cascade without floats, so results are compared exactly. These tests check the
+kernel on bare arrays.
 """
 
 from __future__ import annotations

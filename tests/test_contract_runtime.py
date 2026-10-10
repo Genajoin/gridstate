@@ -264,12 +264,12 @@ def test_toplevel_exports():
 # ---------------------------------------------------------------------------
 
 
-def test_load_se_input_no_xml_returns_no_derived():
+def test_load_se_input_without_plans_returns_no_derived():
     se_in = load_se_input(_make_model())
     assert se_in.derived is None  # модель без планов
 
 
-def test_load_se_input_facade_bit_identical_no_xml():
+def test_load_se_input_facade_bit_identical_without_plans():
     # load_se_input (derived=None) ≡ прямой pipeline_run.
     model = _make_model()
     cfg = PipelineConfig()

@@ -1,13 +1,12 @@
-"""Конвертеры на контракт (``gridstate.units``).
+"""Array kernels of the unit converters (``gridstate.units``).
 
-Проверяет, что расщепление конвертеров на **массивные ядра** + тонкие
-модель-адаптеры — бит-в-бит (поведение не сместилось):
+The converters are split into **array kernels** and thin model adapters; the
+tests check that
 
-* read-ядро ``network_pu_from_tables`` ≡ ``model_to_pu`` (поле в поле);
-* read-ядро работает на голых контрактных таблицах (без полноценной модели) —
-  демонстрация развязки конвертеров от объекта-модели;
-* write-ядра ``compute_node_results_pu`` / ``compute_branch_results_pu`` дают
-  ровно те же величины, что эталонные формулы pu→именованные единицы.
+* the read kernel ``network_pu_from_tables`` equals ``model_to_pu`` field by field;
+* the read kernel works on bare contract tables (without a full model);
+* the write kernels ``compute_node_results_pu`` / ``compute_branch_results_pu``
+  give exactly the values of the textbook pu → physical unit formulas.
 """
 
 from __future__ import annotations
@@ -122,7 +121,7 @@ def test_read_core_multi_slack_picks_min_priority_on_bare_tables():
 
 
 # --------------------------------------------------------------------------
-# write-ядра ≡ эталонные формулы pu→именованные единицы
+# write kernels == the textbook pu -> physical unit formulas
 # --------------------------------------------------------------------------
 
 
@@ -140,7 +139,7 @@ def test_compute_node_results_pu_matches_reference():
 
     voltage_kv, p_inj_mw, q_inj_mvar = compute_node_results_pu(v_pu, delta, pu, ybus=ybus)
 
-    # Эталон: те же формулы, что были инлайн в write_results_to_model.
+    # Expected values: the textbook formulas, written out inline.
     ref_kv = v_pu * pu.bus_vn_kv
     v_complex = v_pu * np.exp(1j * delta)
     s_bus = v_complex * np.conj(ybus @ v_complex)
@@ -166,7 +165,7 @@ def test_compute_branch_results_pu_matches_reference():
         v_pu, delta, pu, yf, yt
     )
 
-    # Эталон: формулы, ранее инлайн в write_results_to_model.
+    # Expected values: the textbook formulas, written out inline.
     v_complex = v_pu * np.exp(1j * delta)
     i_from = yf @ v_complex
     i_to = yt @ v_complex
@@ -198,7 +197,7 @@ def test_write_results_to_model_imbalance_path_bit_identical():
     ybus, yf, yt = build_ybus(pu)
     v_pu, delta = _solution(pu)
 
-    # Эталон из ядра (на массивах) — ДО записи в модель.
+    # Expected values from the array kernel, BEFORE writing into the model.
     voltage_kv, p_inj_mw, q_inj_mvar = compute_node_results_pu(v_pu, delta, pu, ybus=ybus)
     net_p = np.array(
         [

@@ -1,14 +1,13 @@
-"""Ядро mirror_voltage на контрактных массивах.
+"""Kernel of ``mirror_voltage`` over contract arrays.
 
-В отличие от каскадных функций (мутируют существующую колонку →
-``update_from_array``), pseudo-слой ДОБАВЛЯЕТ measurement-строки. Шов иной:
-``_mirror_voltage_on_arrays`` — vendor-free ядро, читающее ТОЛЬКО контрактные
-колонки nodes/branches/measurements и ВОЗВРАЩАЮЩЕЕ ``new_rows: list[dict]``;
-тонкий адаптер делает ``model.measurements.add()`` построчно. Здесь проверяем
-(a) корректность ядра на «голых» ``SE_INPUT``-массивах (без полноценной модели),
-(b) дословную collision-skip-семантику раздачи id, (c) совпадение плана ядра с
-фактическим эффектом адаптера на модели. Бит-в-бит модели стережёт canon
-(transitively), здесь — контрактная чистота и append-семантика.
+Unlike the cascade functions (which mutate an existing column and then
+``update_from_array``), this pseudo-measurement layer ADDS measurement rows.
+``_mirror_voltage_on_arrays`` reads ONLY the contract columns of
+nodes/branches/measurements and RETURNS ``new_rows: list[dict]``; a thin adapter
+calls ``model.measurements.add()`` row by row. These tests check (a) the kernel
+on bare ``SE_INPUT`` arrays (without a full model), (b) the exact
+collision-skipping id assignment, (c) that the kernel plan matches the actual
+effect of the adapter on a model.
 """
 
 from __future__ import annotations

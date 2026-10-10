@@ -1,11 +1,10 @@
-"""float-ядро применения телеметрии над контрактными массивами.
+"""Float kernel that applies a resolved z-vector over contract arrays.
 
-``apply_xml_formulas_from_snapshot`` расщеплена на тонкий адаптер (BL4 пред-резолв
-XML/snapshot через ``_eval_formula`` + ``tm_code_classifier`` → ``resolved``) и ЯДРО
-``_apply_telemetry_on_arrays``, читающее/мутирующее только контрактные колонки
-``SE_INPUT.measurements`` (+ nodes/branches), БЕЗ внешних зависимостей, XML и FORMULE. Здесь —
-корректность ядра на голых массивах + синтетическом ``resolved``/``arg_keys``;
-бит-в-бит публичного API — canon transitively + end-to-end дифф OLD-vs-NEW (4 региональные модели).
+The producer of the input resolves its telemetry (values and quality codes) into
+a ``resolved`` plan; the kernel ``_apply_telemetry_on_arrays`` reads and mutates
+only contract columns of ``SE_INPUT.measurements`` (plus nodes/branches). These
+tests check the kernel on bare arrays with a synthetic ``resolved`` /
+``arg_keys``.
 """
 
 from __future__ import annotations

@@ -1,12 +1,12 @@
 """Фильтр V-измерений: широкий диапазон [V_lo, V_hi] с запасом.
 
-Реализует стр. 21 пункт 1 презентации эталонной SE «Контроль допустимых и
-номинальных значений измерений». Цель — отбраковка только гарантированно
-битых ТИ (V<<V_critical, V>>V_max), без потери валидных edge-значений.
+Implements the standard plausibility check of measurements against the
+admissible and nominal values. The goal is to reject only readings that are
+certainly broken (V<<V_critical, V>>V_max) without losing valid edge values.
 
 Нижний порог (приоритет — наиболее мягкий):
-* `voltage_critical` (U_CRIT) — аварийный нижний предел; первое
-  ограничение, как правило заполнено на 100 % узлов в исходном XML;
+* `voltage_critical`, the emergency lower limit; the first constraint,
+  usually supplied for all nodes;
 * fallback `V_ном · (1 − fallback_pct/100)` (default 20 %).
 
 Верхний порог:
@@ -50,14 +50,14 @@ def apply_voltage_range_filter(
 ) -> dict:
     """Деактивирует/понижает вес V-измерений вне допустимого диапазона.
 
-    Логика fallback'ов настроена под исходный XML, где встречаются
-    «заглушки» — например `U_KRIT=1.0` на 500-кВ узлах, `U_MAX`
-    отсутствует на большой доле высоковольтных узлов:
+    The fallbacks handle placeholder limits that real inputs contain, e.g. a
+    critical limit of 1.0 on 500 kV nodes, or a missing upper limit on a large
+    share of high-voltage nodes:
 
     * Нижняя граница: ``voltage_critical`` если он ≥ ``V_ном/2``
       (валидное значение). Иначе — ``voltage_min`` если он ≥ ``V_ном/2``.
-      Иначе — ``V_ном/2`` (чтобы не пропустить любое V≥1 при заглушке
-      `U_KRIT=1.0`).
+      Otherwise ``V_ном/2`` (so that a placeholder critical limit of 1.0 does
+      not let any V≥1 through).
     * Верхняя граница: ``voltage_max · (1 + upper_margin_pct/100)``;
       если ``voltage_max == 0`` — fallback ``V_ном · upper_fallback_factor``.
 
@@ -68,9 +68,8 @@ def apply_voltage_range_filter(
             битых ТИ берём `voltage_max · 1.10`. На узле Vn=10.5,
             voltage_max=11.6 (=1.1·Vn) это даёт верхнюю границу 12.76.
         upper_fallback_factor: множитель V_ном при `voltage_max=0`
-            (default 1.4 = +40 %). На многих XML-выгрузках атрибут
-            `U_MAX` отсутствует у большой доли узлов ≥500 кВ; при
-            отсутствии берём широкую границу.
+            (default 1.4 = +40 %). Many inputs lack the upper limit on a
+            large share of nodes ≥500 kV; a wide bound is used then.
         min_voltage_nominal_kv: минимальный класс напряжения для
             проверки. Default 110 кВ — игнорируем генераторные шины
             (6-21 кВ) и низковольтные нагрузки. На них V_TI обычно
@@ -148,10 +147,10 @@ def _voltage_range_filter_on_arrays(
 ) -> dict:
     """ЯДРО: V-range filter над контрактными массивами.
 
-    Мутирует ``meas_arr`` in place (``status``/``variance``/``weight``/``quality``),
-    читает ``nodes_arr`` (``voltage_nominal``/``voltage_critical``/``voltage_min``/
-    ``voltage_max``). Енумы object/measurement-type приходят готовыми int из
-    адаптера. БЕЗ внешних зависимостей и XML. Последовательный цикл в исходном порядке.
+    Mutates ``meas_arr`` in place (``status``/``variance``/``weight``/``quality``)
+    and reads ``nodes_arr`` (``voltage_nominal``/``voltage_critical``/``voltage_min``/
+    ``voltage_max``). The object and measurement type enums arrive as ready ints
+    from the adapter. No external dependencies; a sequential loop in input order.
     """
     node_by_id = id_to_pos_map(nodes_arr["id"])
 
@@ -212,9 +211,9 @@ def _voltage_range_filter_on_arrays(
             continue
 
         # Нижний порог: voltage_critical → voltage_min → V_ном/2.
-        # На некоторых XML встречается заглушка U_KRIT=1.0 на узлах
-        # ≥500 кВ; valid-критерий «X ≥ V_ном/2» отсекает 1.0 как
-        # заглушку (250 ≪ 1 для 500 кВ).
+        # Some inputs carry a placeholder critical limit of 1.0 on nodes
+        # ≥500 kV; the validity criterion "X ≥ V_nom/2" discards 1.0 as a
+        # placeholder (1 ≪ 250 for 500 kV).
         half_nom = v_nom * 0.5
         v_crit = float(nodes_arr[ni]["voltage_critical"])
         v_min = (
@@ -230,8 +229,8 @@ def _voltage_range_filter_on_arrays(
             lo = half_nom
 
         # Верхний порог: voltage_max·(1+upper_margin_pct) → fallback V_ном·factor.
-        # На многих XML U_MAX отсутствует у большой доли узлов ≥500 кВ;
-        # fallback 1.4·V_ном.
+        # Many inputs lack the upper limit on a large share of nodes ≥500 kV;
+        # fallback 1.4·V_nom.
         v_max = float(nodes_arr[ni]["voltage_max"])
         hi = (
             v_max * (1.0 + upper_margin_pct / 100.0) if v_max > 0 else v_nom * upper_fallback_factor

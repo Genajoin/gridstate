@@ -144,11 +144,11 @@ def _collect_box_sections(
         с микро-отступом от границ.
 
         Если ``value_pu==0`` — init=0 (если 0 ∈ [lo+margin, hi-margin]),
-        иначе ближайшая граница с margin. Это soft-prior к 0 для узлов
-        без явного pn₀/pg₀ в исходном XML — эталонная SE стартует с 0
-        на этих узлах и оценивает pn/pg через TI на ветвях. Без этого
-        фикса IPM брал mid-box (например 42 500 МВт для широкого
-        BUS-эквивалента) и раскидывал по нему невязку.
+        иначе ближайшая граница с margin. This is a soft prior towards 0
+        for nodes without an explicit pn₀/pg₀ in the input: the injection
+        starts at 0 and pn/pg are estimated from the branch telemetry.
+        Without it IPM started from the box midpoint (e.g. 42 500 MW for a
+        wide BUS equivalent) and spread the mismatch over it.
         """
         lo, hi = bounds
         width = hi - lo
