@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.algorithms.status import SolveStatus
 from gridstate.working import table_view
 
 
@@ -262,8 +263,15 @@ class SEResult:
             was passed to ``estimate``).
         success: whether the iterative process converged.
         iterations: number of iterations performed.
-        objective_value: value of the objective function J = rᵀ R⁻¹ r at the last
-            iteration.
+        objective_value: the solver-internal objective at the last iteration
+            (WLS: ``rᵀ R⁻¹ r`` with the Huber weights; IPM: ``½ rᵀ R⁻¹ r`` over
+            the augmented vector incl. balance/prior rows). Not comparable
+            between the solvers — use ``objective_wls``.
+        solve_status: solver-independent termination status
+            (:class:`~gridstate.algorithms.status.SolveStatus`).
+        objective_wls: plain WLS objective ``Σ (z − h)² / σ²`` of the
+            measurement vector at the final state (comparable between WLS
+            and IPM).
         algorithm: name of the algorithm used ("wls" / "ipm").
         v_pu: (n_nodes,) — voltage magnitudes in p.u. (duplicating
             ``model.nodes.voltage_magnitude / voltage_nominal``).
@@ -295,8 +303,17 @@ class SEResult:
     # Convergence breakdown. WLS: "converged"/"not_converged". IPM is
     # two-level (see IPMResult.status): "kkt" (strict stationarity),
     # "completed" (the μ schedule was run through, the solution is usable), "stalled",
-    # "error". success == True ⇔ status ∈ {kkt, completed, converged}.
+    # "error". success == True ⇔ status ∈ {kkt, completed, converged} under the
+    # default success_policy="legacy".
     convergence_status: str = ""
+    # Solver-independent termination status (see gridstate.algorithms.status;
+    # None when the result did not come from a solver run).
+    solve_status: SolveStatus | None = None
+    # Plain WLS objective Σ (z − h)² / σ² of the measurement vector at the final
+    # V/δ: no Huber weights, no ½, no IPM balance/prior rows. Unlike
+    # objective_value (the solver-internal objective) it is comparable between
+    # WLS and IPM.
+    objective_wls: float = float("nan")
 
     # Output container — results keyed by id (nodes/branches/measurements), parallel to
     # the Input collections. The canonical Output contract for adapters (Input is

@@ -16,6 +16,7 @@ from gridstate.algebra.estimators import build_branch_pq_huber_mask
 from gridstate.algebra.normalized_residuals import RN_METHODS, compute_normalized_residuals
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.kkt_solver import KKTSolver
+from gridstate.algorithms.status import SUCCESS_POLICIES, SuccessPolicy, success_from_status
 from gridstate.algorithms.wls import solve_wls
 from gridstate.post_processing import (
     apply_load_characteristic,
@@ -85,6 +86,7 @@ def estimate(
     x0: InitialPoint | None = None,
     quality_summary_rn_method: str = "solve",
     quality_summary_near_critical: float = NEAR_CRITICAL_THRESHOLD,
+    success_policy: SuccessPolicy = "legacy",
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Run state estimation for a model and telemetry.
@@ -150,6 +152,13 @@ def estimate(
             :mod:`gridstate.algebra.normalized_residuals`).
         quality_summary_near_critical: ``Ω_ii / σ²_i`` threshold of
             ``near_critical_measurements``; ``0`` reports none.
+        success_policy: how ``SEResult.success`` is derived. ``"legacy"``
+            (default) — the solver's own flag (WLS: step below the tolerance,
+            also when the trust region collapsed; IPM: the barrier schedule
+            ran through). ``"status"`` — from ``SEResult.solve_status`` via
+            :func:`gridstate.algorithms.status.success_from_status`
+            (``kkt`` or ``mu_schedule_done`` only). ``solve_status`` and
+            ``objective_wls`` are reported under both policies.
         **ipm_kwargs: IPM-mode knobs, ignored for WLS. ``trust_region_scope``
             (``"all"`` default | ``"state"``) selects the coordinates the IPM
             trust region is measured on (see ``_run_ipm``); everything else is
@@ -173,6 +182,10 @@ def estimate(
         )
     if zero_injection is not None:
         raise NotImplementedError(f"zero_injection={zero_injection!r} is not implemented yet.")
+    if success_policy not in SUCCESS_POLICIES:
+        raise ValueError(
+            f"success_policy must be one of {SUCCESS_POLICIES}, got {success_policy!r}"
+        )
 
     if measurements is None:
         measurements = model.measurements
@@ -225,6 +238,7 @@ def estimate(
         objective = ipm_res.objective_data
         algo_message = ipm_res.message
         convergence_status = ipm_res.status
+        solve_status = ipm_res.solve_status
         delta, v_pu = unpack(e_final[: 2 * network_pu.n_bus - 1], layout)
     else:
         # 5. WLS
@@ -253,6 +267,22 @@ def estimate(
         delta, v_pu = unpack(e_final, layout)
         algo_message = ""
         convergence_status = "converged" if success else "not_converged"
+        solve_status = wls_res.solve_status
+    # Solver-independent objective: the plain WLS objective of the base
+    # measurement vector at the final V/δ (no Huber weights, no ½, no IPM
+    # balance/prior rows), comparable between the solvers.
+    objective_wls = _wls_objective(
+        z, r_matrix, ybus, yf, yt, meas_index, layout, network_pu, v_pu, delta
+    )
+    if success_policy == "status":
+        success = success_from_status(solve_status)
+    message = (
+        algo_message
+        if algo_message
+        else ("" if success else f"Did not converge in {iterations}/{max_iterations} iterations")
+    )
+    if success_policy == "status" and not success:
+        message = f"solve status {solve_status.value}: {message}"
     write_results_to_model(model, v_pu, delta, network_pu, yf=yf, yt=yt, ybus=ybus)
     # 7. Post-processing of measurements: estimated_si/value/residual.
     write_measurement_estimates(
@@ -296,9 +326,9 @@ def estimate(
         # For IPM the solver diagnostics are passed through (μ_final, |grad|∞ and
         # the stop reason) — previously they were lost in _run_ipm, and the UI saw
         # only a bare "did not converge".
-        message=algo_message
-        if algo_message
-        else ("" if success else f"Did not converge in {iterations}/{max_iterations} iterations"),
+        message=message,
+        solve_status=solve_status,
+        objective_wls=objective_wls,
         # Output container: all results keyed by id (nodes/branches/measurements),
         # extracted from the model after writing. The canonical Output contract.
         outputs=extract_output_tables(model),
@@ -331,6 +361,26 @@ def estimate(
 def _check_rn_method(method: str) -> None:
     if method not in RN_METHODS:
         raise ValueError(f"unknown normalized residuals method {method!r}; available: {RN_METHODS}")
+
+
+def _wls_objective(
+    z: np.ndarray,
+    r_matrix: csr_matrix,
+    ybus: csr_matrix,
+    yf: csr_matrix,
+    yt: csr_matrix,
+    meas_index: MeasurementIndex,
+    layout: StateLayout,
+    network_pu: NetworkPU,
+    v_pu: np.ndarray,
+    delta_rad: np.ndarray,
+) -> float:
+    """``Σ (z − h(V, δ))² / σ²`` over the measurement vector (σ² floored as in the solvers)."""
+    if z.shape[0] == 0:
+        return float("nan")
+    algebra = BaseAlgebra(ybus, yf, yt, meas_index, layout, network_pu)
+    r = z - algebra.evaluate_h(v_pu, delta_rad)
+    return float(np.sum(r * r / floored_sigma2(r_matrix.diagonal())))
 
 
 def _populate_quality_summary(

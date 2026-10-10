@@ -456,4 +456,5 @@ def test_solve_wls_singular_returns_failure() -> None:
         max_iterations=10,
     )
     assert not res.success, "WLS must not report success on a singular problem"
+    assert res.solve_status == "error"
     assert np.isfinite(res.objective), f"J must be a number, not {res.objective}"

@@ -112,6 +112,24 @@ cut by tagging the merged main commit; the version is derived from that tag.
   difference of nearly equal numbers and `r_N` is numerically unreliable.
   `compute_normalized_residuals` returns that ratio with `r_N`. Reported only:
   `r_N` values are unchanged (#60)
+- `SolveStatus`: a solver-independent termination status (`kkt`,
+  `mu_schedule_done`, `tr_collapsed`, `max_iter`, `stalled`, `diverged`,
+  `error`) reported by `WLSResult` / `IPMResult` / `SEResult` as
+  `solve_status` and in the `estimate` and re-solve step stats, next to the
+  unchanged legacy `success` / `convergence_status`. It separates a WLS step
+  forced below the tolerance by a collapsed trust region from a stationary
+  point, and an IPM barrier schedule whose final inner solve converged from
+  one that exhausted its budget. `SEResult.objective_wls` is the plain WLS
+  objective of the measurement vector at the final state (no Huber weights,
+  no ½, no IPM balance/prior rows), comparable between the solvers;
+  `objective_value` keeps the solver-internal definition. Additive: solver
+  output, events and golden snapshots are unchanged apart from the new keys
+  (#57)
+- `PipelineConfig.success_policy` / `estimate(success_policy=...)`:
+  `"legacy"` (default, unchanged) or `"status"` — `success` is derived from
+  `solve_status` (`kkt` and `mu_schedule_done` only), so the post-solve
+  passes skip a non-converged base solution and the re-solve revert (#44)
+  also acts on IPM re-solves (#57)
 
 ### Fix
 

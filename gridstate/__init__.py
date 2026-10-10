@@ -7,6 +7,7 @@ individual function docstrings for usage.
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
+from gridstate.algorithms.status import SolveStatus
 from gridstate.api import estimate, populate_quality_summary
 from gridstate.contract import (
     SEInput,
@@ -91,6 +92,7 @@ __all__ = [
     "SEInput",
     "SEOutput",
     "SEResult",
+    "SolveStatus",
     "SystemLosses",
     "__version__",
     "analyze_observability",

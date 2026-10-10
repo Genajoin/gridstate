@@ -388,6 +388,17 @@ class PipelineConfig:
         max=100.0,
         help="None = авто (1.5 для wls, 2.0 для ipm). >0 включает робастный downweight.",
     )
+    success_policy: str = _param(
+        "legacy",
+        group=_G_EST,
+        label="Success policy",
+        control="select",
+        choices=["legacy", "status"],
+        help="How the solve is judged converged (gates the post-solve passes and the "
+        "re-solve revert). legacy — the solver's own flag: WLS step below the tolerance "
+        "(also when the trust region collapsed), IPM barrier schedule run through. "
+        "status — from the solver-independent status: kkt or mu_schedule_done only.",
+    )
     top_residuals_n: int = _param(
         20,
         group=_G_EST,

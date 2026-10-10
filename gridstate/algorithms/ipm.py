@@ -47,6 +47,7 @@ from scipy.sparse import csr_matrix
 
 from gridstate.algebra.estimators import HuberReweighter
 from gridstate.algorithms.kkt_solver import KKTSolver
+from gridstate.algorithms.status import SolveStatus
 from gridstate.utils import scale_csr_rows, sparse_diag
 
 
@@ -78,6 +79,13 @@ class IPMResult:
         success: ``status in ("kkt", "completed")`` — "the solution
           is usable". The former semantics (strict KKT only) gave a
           false "not converged" on all real-world models.
+        solve_status: solver-independent termination status
+          (:class:`~gridstate.algorithms.status.SolveStatus`). Unlike the
+          legacy ``status`` it separates a schedule completed with a
+          converged final inner solve (``MU_SCHEDULE_DONE``) from one whose
+          final inner solve exhausted ``inner_max`` (``MAX_ITER``) or found no
+          Armijo step (``STALLED``); an exhausted ``outer_max`` is
+          ``MAX_ITER``.
     """
 
     x: np.ndarray
@@ -89,6 +97,7 @@ class IPMResult:
     grad_inf_final: float
     message: str = ""
     status: str = "error"
+    solve_status: SolveStatus = SolveStatus.ERROR
 
 
 def _project_to_interior(
@@ -391,6 +400,10 @@ def solve_ipm(
 
     outer_iter = 0
     schedule_done = False
+    # Termination status only (never fed back into the iteration).
+    outer_exhausted = False
+    inner_converged = False
+    inner_stalled = False
     # Residual at the current x: the accepted Armijo trial already evaluated
     # it, so the next iteration (and the final objective) reuse it instead of
     # calling residual_fn again at the same point.
@@ -404,6 +417,7 @@ def solve_ipm(
         # gave a false "stalled": the very first Newton step < tol → no
         # accepted steps → lazy-break all the way to μ_min.
         inner_converged = False
+        inner_stalled = False  # Armijo found no step (termination status only)
         # IPM specifics: the adaptive c_eff is recomputed **on every outer** —
         # residuals drop sharply between outers (μ decreases, the barrier
         # weakens), so a one-shot adaptive (as in WLS) gives a c_eff
@@ -527,6 +541,7 @@ def solve_ipm(
 
             iter_inner_total += 1
             if not accepted:
+                inner_stalled = True
                 # No admissible step found — the outer loop will increase μ and try again.
                 logger.debug(
                     "ipm: no Armijo step at outer=%d inner=%d, breaking inner", outer_iter, inner
@@ -556,6 +571,7 @@ def solve_ipm(
     else:
         # the for loop finished without break: outer_max exhausted.
         schedule_done = mu <= mu_min
+        outer_exhausted = True
 
     # Final residual/objective
     r_final = r_at_x if r_at_x is not None else residual_fn(x)
@@ -569,6 +585,12 @@ def solve_ipm(
     else:
         status = "stalled"
     success = status in ("kkt", "completed")
+    solve_status = _solve_status(
+        status,
+        outer_exhausted=outer_exhausted,
+        inner_converged=inner_converged,
+        inner_stalled=inner_stalled,
+    )
     if not message:
         detail = (
             f"outer={outer_iter + 1}, inner_total={iter_inner_total}, "
@@ -591,7 +613,27 @@ def solve_ipm(
         grad_inf_final=grad_inf,
         message=message,
         status=status,
+        solve_status=solve_status,
     )
+
+
+def _solve_status(
+    status: str,
+    *,
+    outer_exhausted: bool,
+    inner_converged: bool,
+    inner_stalled: bool,
+) -> SolveStatus:
+    """Map the legacy status and the exit of the last inner solve to :class:`SolveStatus`."""
+    if status == "kkt":
+        return SolveStatus.KKT
+    if outer_exhausted:
+        return SolveStatus.MAX_ITER
+    if inner_converged:
+        return SolveStatus.MU_SCHEDULE_DONE
+    if inner_stalled:
+        return SolveStatus.STALLED
+    return SolveStatus.MAX_ITER
 
 
 __all__ = ["IPMResult", "solve_ipm"]

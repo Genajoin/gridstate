@@ -273,6 +273,7 @@ class TestConvergenceStatus:
             box_hi=np.array([10.0]),
         )
         assert result.status == "kkt"
+        assert result.solve_status == "kkt"
         assert result.success
 
     def test_schedule_done_loose_kkt_is_completed_and_success(self) -> None:
@@ -360,6 +361,7 @@ class TestConvergenceStatus:
             box_hi=np.array([100.0]),
         )
         assert result.status == "stalled"
+        assert result.solve_status == "stalled"
         assert not result.success
 
     def test_error_status_on_nonfinite(self) -> None:
@@ -382,6 +384,7 @@ class TestConvergenceStatus:
             box_hi=np.array([10.0]),
         )
         assert result.status == "error"
+        assert result.solve_status == "error"
         assert not result.success
 
 
