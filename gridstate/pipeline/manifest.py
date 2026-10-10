@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import fields
 from typing import Any
 
-from gridstate.pipeline.config import PipelineConfig
+from gridstate.pipeline.config import PipelineConfig, _effective_metadata
 from gridstate.pipeline.steps import STEPS
 
 
@@ -50,11 +50,10 @@ def manifest(config: PipelineConfig | type[PipelineConfig] | None = None) -> dic
 
     params: list[dict] = []
     groups_order: list[str] = []
-    base_md = {f.name: dict(f.metadata) for f in fields(PipelineConfig)}
     for f in fields(cfg_defaults):
         # A subclass that re-declares a field with a bare default drops its metadata;
         # fall back to the base declaration so the control does not disappear.
-        md = dict(f.metadata) or base_md.get(f.name, {})
+        md = _effective_metadata(f)
         if not md:
             continue
         grp = md.get("group", "")

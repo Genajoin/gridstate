@@ -227,6 +227,8 @@ def run(
         working copy) and ``result.outputs``. The input ``model`` is unchanged.
     """
     cfg = config or PipelineConfig()
+    # Re-check: a config may have been edited after construction.
+    cfg.validate()
 
     # Working layer: gridstate-native working copy over the contract arrays. All
     # preprocessing and the solver mutate ONLY it; the input model stays
@@ -318,6 +320,8 @@ def prepare_network(
         ``Working``: the working copy with the network derivations applied.
     """
     cfg = config or PipelineConfig()
+    # Re-check: a config may have been edited after construction.
+    cfg.validate()
     working: Working = _build_working(model)
     ctx = _Ctx(model=working, cfg=cfg)
     if derived is not None:

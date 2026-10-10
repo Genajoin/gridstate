@@ -12,15 +12,20 @@ the UI manifest (:func:`gridstate.pipeline.manifest`):
 * ``min`` / ``max``: bounds (numbers); ``choices``: allowed values (select);
 * ``depends``: show only when another field equals a value (e.g. ``algorithm=ipm``).
 
+``choices`` / ``min`` / ``max`` are enforced: :meth:`PipelineConfig.validate`
+runs on construction and at the start of a run.
+
 Downstream configurations subclass :class:`PipelineConfig` to change defaults
 (fields stay flat; the class is neither frozen nor slotted). A subclass field
 redeclared with a bare default keeps the UI metadata of the base declaration
-(:func:`field_metadata`).
+(:func:`_effective_metadata`), for the manifest and the validation alike.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import math
+import numbers
+from dataclasses import Field, dataclass, field, fields
 from typing import Any
 
 
@@ -686,3 +691,65 @@ class PipelineConfig:
         "The unclosed part goes to stats sum_unclosed_p_mw. Default OFF (previous "
         "behaviour).",
     )
+
+    # --- Validation ---
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        """Check every value against the ``choices`` / ``min`` / ``max`` of its metadata.
+
+        Runs on construction (also for ``dataclasses.replace``) and again at the
+        start of :func:`gridstate.pipeline.run`, so an out-of-range value fails
+        before any preprocessing instead of deep inside the solver. A subclass
+        field redeclared with a bare default is checked against the metadata of
+        the base declaration; fields without metadata are not checked. ``None``
+        is accepted where the field type allows it (an optional knob that is
+        switched off or automatic).
+
+        Raises:
+            ValueError: listing every invalid field.
+        """
+        problems: list[str] = []
+        for f in fields(self):
+            md = _effective_metadata(f)
+            value = getattr(self, f.name)
+            choices = md.get("choices")
+            lo, hi = md.get("min"), md.get("max")
+            if choices is None and lo is None and hi is None:
+                continue
+            if value is None:
+                if "None" not in str(f.type):
+                    problems.append(f"{f.name}=None is not allowed")
+                continue
+            if choices is not None:
+                if value not in choices:
+                    problems.append(f"{f.name}={value!r} is not one of {choices}")
+                continue
+            if isinstance(value, bool) or not isinstance(value, numbers.Real):
+                problems.append(f"{f.name}={value!r} is not a number")
+            elif math.isnan(value):
+                problems.append(f"{f.name}=nan is not a number")
+            elif lo is not None and value < lo:
+                problems.append(f"{f.name}={value!r} is below the minimum {lo!r}")
+            elif hi is not None and value > hi:
+                problems.append(f"{f.name}={value!r} is above the maximum {hi!r}")
+        if problems:
+            raise ValueError(f"invalid {type(self).__name__}: " + "; ".join(problems))
+
+
+#: UI metadata of the base declarations, by field name.
+_BASE_METADATA: dict[str, dict[str, Any]] = {
+    f.name: dict(f.metadata) for f in fields(PipelineConfig)
+}
+
+
+def _effective_metadata(f: Field[Any]) -> dict[str, Any]:
+    """UI metadata of a config field.
+
+    A subclass that redeclares a field with a bare default (to change the
+    default) drops its metadata; the base declaration's metadata then applies,
+    for the manifest and for the validation alike.
+    """
+    return dict(f.metadata) or dict(_BASE_METADATA.get(f.name, {}))
