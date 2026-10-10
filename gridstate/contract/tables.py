@@ -1,32 +1,32 @@
-"""Схема контракта данных SE: ``SEInput`` / ``SEOutput``.
+"""SE data contract schema: ``SEInput`` / ``SEOutput``.
 
-Это **декларация** контракта — формализованный, минимальный набор именованных
-таблиц с зафиксированными колонками и типами, которые оценка состояния (SE)
-реально читает и пишет. Схема фиксирует границу данных на входе и выходе SE.
+This is the **declaration** of the contract — a formalised, minimal set of named
+tables with fixed columns and types that state estimation (SE)
+actually reads and writes. The schema fixes the data boundary at the input and output of SE.
 
-**Минимальность.** В контракт входят ТОЛЬКО колонки, которые gridstate реально
-трогает. Возможный «хвост» полноразмерной модели сети (динамика генераторов,
-противоаварийная автоматика, сечения, виртуальные группы,
-``kct``/``ves``/``type_ekv`` и т.п.) намеренно НЕ часть контракта.
+**Minimality.** The contract includes ONLY the columns that gridstate actually
+touches. The possible "tail" of a full-size network model (generator dynamics,
+emergency automation, sections, virtual groups,
+``kct``/``ves``/``type_ekv``, etc.) is deliberately NOT part of the contract.
 
-**Роли колонок** (:class:`Role`) кодируют трёхслойную модель плана:
+**Column roles** (:class:`Role`) encode the three-layer model of the plan:
 
-* :attr:`Role.KEY` — идентичность (``id``, ``from_node`` …), не меняется.
-* :attr:`Role.INPUT` — read-only вход: SE читает, но НЕ мутирует.
-* :attr:`Role.WORKING` — вход, который препроцессинг **мутирует** по ходу
-  прогона (статусы, режим, шунты, tap, начальные V/δ). Эти колонки копируются в
-  явный рабочий слой (``Working``), поэтому роль выделена отдельно.
-* :attr:`Role.OUTPUT` — результат солвера; живёт в `SEOutput`, отдельно от входа.
+* :attr:`Role.KEY` — identity (``id``, ``from_node`` …), does not change.
+* :attr:`Role.INPUT` — read-only input: SE reads it but does NOT mutate it.
+* :attr:`Role.WORKING` — input that preprocessing **mutates** during
+  the run (statuses, state, shunts, tap, initial V/δ). These columns are copied into the
+  explicit working layer (``Working``), hence the role is singled out.
+* :attr:`Role.OUTPUT` — solver result; lives in `SEOutput`, separate from the input.
 
-``SEInput`` = таблицы с колонками ролей {KEY, INPUT, WORKING} + «сырые» таблицы;
-``SEOutput`` = таблицы с колонками ролей {KEY, OUTPUT}. Колонка ``voltage_magnitude``
-присутствует и там, и там (во входе — начальное приближение, роль WORKING; на
-выходе — решённое значение, роль OUTPUT): это разные слои, конфликта нет.
+``SEInput`` = tables with columns of roles {KEY, INPUT, WORKING} + "raw" tables;
+``SEOutput`` = tables with columns of roles {KEY, OUTPUT}. The column ``voltage_magnitude``
+is present in both (in the input — the initial guess, role WORKING; in the
+output — the solved value, role OUTPUT): these are different layers, there is no conflict.
 
-**Типы — у нас.** dtype-строки колонок зафиксированы здесь: контракт
-самодостаточен и является каноническим источником типов. Тест-страж
-``tests/test_contract.py`` следит, чтобы контракт оставался верен тому, что код
-фактически читает/пишет.
+**Types are ours.** The dtype strings of the columns are fixed here: the contract
+is self-contained and is the canonical source of types. The guard test
+``tests/test_contract.py`` makes sure the contract stays true to what the code
+actually reads/writes.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ import numpy as np
 
 
 class Role(str, Enum):
-    """Роль колонки в трёхслойной модели контракта (см. модульную доку)."""
+    """Role of a column in the three-layer contract model (see the module docs)."""
 
     KEY = "key"
     INPUT = "input"
@@ -46,23 +46,23 @@ class Role(str, Enum):
     OUTPUT = "output"
 
 
-# Роли, формирующие входной слой (``SEInput``) и выходной слой (``SEOutput``).
+# Roles forming the input layer (``SEInput``) and the output layer (``SEOutput``).
 _INPUT_ROLES: tuple[Role, ...] = (Role.KEY, Role.INPUT, Role.WORKING)
 _OUTPUT_ROLES: tuple[Role, ...] = (Role.KEY, Role.OUTPUT)
 
 
 @dataclass(frozen=True)
 class ColumnSpec:
-    """Одна колонка таблицы контракта.
+    """A single column of a contract table.
 
     Attributes:
-        name: имя колонки (== имя атрибута объекта в текущей модели).
-        dtype: numpy-dtype-строка (``"f8"``, ``"i4"``, ``"bool"``, ``"U64"`` …).
-        role: :class:`Role` — слой/мутабельность.
-        required: обязана ли присутствовать во входных данных (для INPUT/WORKING)
-            либо гарантированно заполняться (для OUTPUT). ``False`` — допустимо
-            отсутствие/дефолт.
-        doc: краткое назначение и кто из шагов SE её читает/пишет.
+        name: column name (== the object attribute name in the current model).
+        dtype: numpy dtype string (``"f8"``, ``"i4"``, ``"bool"``, ``"U64"`` …).
+        role: :class:`Role` — layer/mutability.
+        required: whether it must be present in the input data (for INPUT/WORKING)
+            or be guaranteed to be filled (for OUTPUT). ``False`` — absence/a
+            default is acceptable.
+        doc: brief purpose and which SE steps read/write it.
     """
 
     name: str
@@ -74,7 +74,7 @@ class ColumnSpec:
 
 @dataclass(frozen=True)
 class TableSchema:
-    """Схема одной таблицы контракта (узлы/ветви/меры/генераторы/сырые)."""
+    """Schema of a single contract table (nodes/branches/measurements/generators/raw)."""
 
     name: str
     key: tuple[str, ...]
@@ -82,39 +82,39 @@ class TableSchema:
     doc: str = ""
 
     def column(self, name: str) -> ColumnSpec | None:
-        """Спека колонки по имени (или ``None``)."""
+        """Spec of a column by name (or ``None``)."""
         for c in self.columns:
             if c.name == name:
                 return c
         return None
 
     def columns_by_role(self, *roles: Role) -> tuple[ColumnSpec, ...]:
-        """Колонки выбранных ролей (порядок объявления сохраняется)."""
+        """Columns of the selected roles (declaration order is preserved)."""
         wanted = set(roles)
         return tuple(c for c in self.columns if c.role in wanted)
 
     def column_names(self, *roles: Role) -> tuple[str, ...]:
-        """Имена колонок выбранных ролей (или всех, если ``roles`` пуст)."""
+        """Names of the columns of the selected roles (or of all, if ``roles`` is empty)."""
         if not roles:
             return tuple(c.name for c in self.columns)
         return tuple(c.name for c in self.columns_by_role(*roles))
 
     def required_names(self, *roles: Role) -> tuple[str, ...]:
-        """Имена обязательных колонок выбранных ролей."""
+        """Names of the required columns of the selected roles."""
         cols = self.columns_by_role(*roles) if roles else self.columns
         return tuple(c.name for c in cols if c.required)
 
     def numpy_dtype(self, *roles: Role) -> np.dtype:
-        """Собрать ``np.dtype`` из колонок выбранных ролей (или всех)."""
+        """Build an ``np.dtype`` from the columns of the selected roles (or all)."""
         cols = self.columns_by_role(*roles) if roles else self.columns
         return np.dtype([(c.name, c.dtype) for c in cols])
 
     def input_dtype(self) -> np.dtype:
-        """``np.dtype`` входного слоя таблицы (роли KEY/INPUT/WORKING)."""
+        """``np.dtype`` of the input layer of the table (roles KEY/INPUT/WORKING)."""
         return self.numpy_dtype(*_INPUT_ROLES)
 
     def output_dtype(self) -> np.dtype:
-        """``np.dtype`` выходного слоя таблицы (роли KEY/OUTPUT)."""
+        """``np.dtype`` of the output layer of the table (roles KEY/OUTPUT)."""
         return self.numpy_dtype(*_OUTPUT_ROLES)
 
 
@@ -139,29 +139,31 @@ def io_dtype(in_schema: TableSchema, out_schema: TableSchema) -> np.dtype:
 
 
 # ===========================================================================
-# Узлы
+# Nodes
 # ===========================================================================
 
 NODES = TableSchema(
     name="nodes",
     key=("id",),
-    doc="Узлы сети. Идентичность — id.",
+    doc="Network nodes. Identity — id.",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор узла."),
-        # --- read-only вход ---
-        ColumnSpec("name", "U64", Role.INPUT, required=False, doc="Имя узла (диагностика/вывод)."),
+        ColumnSpec("id", "i4", Role.KEY, doc="Unique node identifier."),
+        # --- read-only input ---
+        ColumnSpec(
+            "name", "U64", Role.INPUT, required=False, doc="Node name (diagnostics/output)."
+        ),
         ColumnSpec(
             "area_id",
             "i4",
             Role.INPUT,
             required=False,
-            doc="Район — материализация режима по area-distribution.",
+            doc="Area — state materialization by area-distribution.",
         ),
         ColumnSpec(
             "voltage_nominal",
             "f8",
             Role.INPUT,
-            doc="Vном, кВ — база pu-перевода (читается повсеместно).",
+            doc="Vnom, kV — base of the pu conversion (read everywhere).",
         ),
         ColumnSpec(
             "voltage_min",
@@ -189,21 +191,21 @@ NODES = TableSchema(
             "f8",
             Role.INPUT,
             required=False,
-            doc="U_ZAD — заданное V для PV-якоря.",
+            doc="U_ZAD — setpoint V for the PV anchor.",
         ),
         ColumnSpec(
             "exist_load",
             "i1",
             Role.INPUT,
             required=False,
-            doc="Узел может нести нагрузку — write-split p_inj→load, IPM box.",
+            doc="The node may carry load — write-split p_inj→load, IPM box.",
         ),
         ColumnSpec(
             "exist_gen",
             "i1",
             Role.INPUT,
             required=False,
-            doc="Узел может нести генерацию — write-split, IPM box, PV-promotion.",
+            doc="The node may carry generation — write-split, IPM box, PV-promotion.",
         ),
         ColumnSpec(
             "load_model_id",
@@ -211,131 +213,124 @@ NODES = TableSchema(
             Role.INPUT,
             required=False,
             doc=(
-                "Ссылка на load_characteristics.id (0-based, -1=нет) — характеристика "
-                "P(V)/Q(V) узла; читает apply_load_characteristic."
+                "Reference to load_characteristics.id (0-based, -1=none) — the node's "
+                "P(V)/Q(V) characteristic; read by apply_load_characteristic."
             ),
         ),
-        ColumnSpec(
-            "load_p_min", "f8", Role.INPUT, required=False, doc="Нижняя P-нагрузка — IPM box."
-        ),
+        ColumnSpec("load_p_min", "f8", Role.INPUT, required=False, doc="Lower P load — IPM box."),
         ColumnSpec(
             "load_p_max",
             "f8",
             Role.INPUT,
             required=False,
-            doc="Верхняя P-нагрузка — IPM box + clamp материализации.",
+            doc="Upper P load — IPM box + materialization clamp.",
         ),
-        ColumnSpec(
-            "load_q_min", "f8", Role.INPUT, required=False, doc="Нижняя Q-нагрузка — IPM box."
-        ),
-        ColumnSpec(
-            "load_q_max", "f8", Role.INPUT, required=False, doc="Верхняя Q-нагрузка — IPM box."
-        ),
-        # --- вход, мутируемый препроцессингом ---
+        ColumnSpec("load_q_min", "f8", Role.INPUT, required=False, doc="Lower Q load — IPM box."),
+        ColumnSpec("load_q_max", "f8", Role.INPUT, required=False, doc="Upper Q load — IPM box."),
+        # --- input mutated by preprocessing ---
         ColumnSpec(
             "status",
             "bool",
             Role.WORKING,
-            doc="Включён ли узел. Мутируют топология/телеметрия/каскад.",
+            doc="Whether the node is in service. Mutated by topology/telemetry/cascade.",
         ),
         ColumnSpec(
             "node_type",
             "i1",
             Role.WORKING,
-            doc="0-PQ/1-PV/2-Slack. Мутируют refine_slack/refine_node_types.",
+            doc="0-PQ/1-PV/2-Slack. Mutated by refine_slack/refine_node_types.",
         ),
         ColumnSpec(
             "balance_priority",
             "i4",
             Role.WORKING,
-            doc="Приоритет балансирования; читает refine_slack, пишет телеметрия.",
+            doc="Balancing priority; read by refine_slack, written by telemetry.",
         ),
-        ColumnSpec("shunt_g", "f8", Role.WORKING, doc="G шунта, См. Пишет apply_reactors."),
+        ColumnSpec("shunt_g", "f8", Role.WORKING, doc="Shunt G, S. Written by apply_reactors."),
         ColumnSpec(
-            "shunt_b", "f8", Role.WORKING, doc="B шунта, См. Пишет apply_reactors (ШР→шунт)."
+            "shunt_b",
+            "f8",
+            Role.WORKING,
+            doc="Shunt B, S. Written by apply_reactors (shunt reactor→shunt).",
         ),
         ColumnSpec(
             "generation_p",
             "f8",
             Role.WORKING,
-            doc="P-генерация, МВт — режим. Пишут материализация/агрегация генераторов.",
+            doc="P generation, MW — state. Written by generator materialization/aggregation.",
         ),
-        ColumnSpec("generation_q", "f8", Role.WORKING, doc="Q-генерация, МВАр — режим."),
+        ColumnSpec("generation_q", "f8", Role.WORKING, doc="Q generation, MVAr — state."),
         ColumnSpec(
             "generation_p_min",
             "f8",
             Role.WORKING,
-            doc="Нижняя P-генерация — IPM box; перезаписывает агрегация генераторов.",
+            doc="Lower P generation — IPM box; overwritten by generator aggregation.",
         ),
         ColumnSpec(
-            "generation_p_max", "f8", Role.WORKING, doc="Верхняя P-генерация — IPM box/агрегация."
+            "generation_p_max", "f8", Role.WORKING, doc="Upper P generation — IPM box/aggregation."
         ),
         ColumnSpec(
-            "generation_q_min", "f8", Role.WORKING, doc="Нижняя Q-генерация — IPM box/агрегация."
+            "generation_q_min", "f8", Role.WORKING, doc="Lower Q generation — IPM box/aggregation."
         ),
         ColumnSpec(
-            "generation_q_max", "f8", Role.WORKING, doc="Верхняя Q-генерация — IPM box/агрегация."
+            "generation_q_max", "f8", Role.WORKING, doc="Upper Q generation — IPM box/aggregation."
         ),
         ColumnSpec(
-            "load_p", "f8", Role.WORKING, doc="P-нагрузка, МВт — режим. Пишет материализация."
+            "load_p", "f8", Role.WORKING, doc="P load, MW — state. Written by materialization."
         ),
         ColumnSpec(
-            "load_q", "f8", Role.WORKING, doc="Q-нагрузка, МВАр — режим. Пишет материализация."
+            "load_q", "f8", Role.WORKING, doc="Q load, MVAr — state. Written by materialization."
         ),
         ColumnSpec(
             "voltage_magnitude",
             "f8",
             Role.WORKING,
-            doc="Модуль V, кВ — начальное приближение/тёплый старт; солвер перезаписывает.",
+            doc="V magnitude, kV — initial guess/warm start; overwritten by the solver.",
         ),
         ColumnSpec(
             "voltage_angle",
             "f8",
             Role.WORKING,
-            doc="Угол V, рад — начальное приближение; солвер перезаписывает.",
+            doc="V angle, rad — initial guess; overwritten by the solver.",
         ),
     ),
 )
 
 
-# Выходной слой узлов (``SEOutput.nodes``) — отдельное пространство results.
-# V/δ присутствуют и здесь (решённые значения), и во входе NODES (роль WORKING,
-# начальное приближение): разные слои, поэтому конфликта ролей нет.
+# Output layer of nodes (``SEOutput.nodes``) — a separate results namespace.
+# V/δ are present here too (solved values) and in the NODES input (role WORKING,
+# initial guess): different layers, hence no role conflict.
 NODES_OUTPUT = TableSchema(
     name="nodes",
     key=("id",),
-    doc="Результат SE по узлам (V/δ + инжекции/небалансы/оценки нагрузки-генерации).",
+    doc="SE result per node (V/δ + injections/imbalances/load-generation estimates).",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор узла."),
-        ColumnSpec("voltage_magnitude", "f8", Role.OUTPUT, doc="Решённый модуль V, кВ."),
-        ColumnSpec("voltage_angle", "f8", Role.OUTPUT, doc="Решённый угол V, рад."),
-        ColumnSpec("p_inj_calc", "f8", Role.OUTPUT, doc="P-инжекция узла из решения SE, МВт."),
-        ColumnSpec("q_inj_calc", "f8", Role.OUTPUT, doc="Q-инжекция узла из решения SE, МВАр."),
+        ColumnSpec("id", "i4", Role.KEY, doc="Unique node identifier."),
+        ColumnSpec("voltage_magnitude", "f8", Role.OUTPUT, doc="Solved V magnitude, kV."),
+        ColumnSpec("voltage_angle", "f8", Role.OUTPUT, doc="Solved V angle, rad."),
         ColumnSpec(
-            "imbalance_p", "f8", Role.OUTPUT, doc="Небаланс P = p_inj_calc − (gen_p − load_p)."
-        ),
-        ColumnSpec("imbalance_q", "f8", Role.OUTPUT, doc="Небаланс Q."),
-        ColumnSpec(
-            "load_p_estimated", "f8", Role.OUTPUT, doc="Фактическая P-нагрузка после SE, МВт."
+            "p_inj_calc", "f8", Role.OUTPUT, doc="Node P injection from the SE solution, MW."
         ),
         ColumnSpec(
-            "load_q_estimated", "f8", Role.OUTPUT, doc="Фактическая Q-нагрузка после SE, МВАр."
+            "q_inj_calc", "f8", Role.OUTPUT, doc="Node Q injection from the SE solution, MVAr."
         ),
         ColumnSpec(
-            "generation_p_estimated", "f8", Role.OUTPUT, doc="Фактическая P-генерация, МВт."
+            "imbalance_p", "f8", Role.OUTPUT, doc="P imbalance = p_inj_calc − (gen_p − load_p)."
         ),
-        ColumnSpec(
-            "generation_q_estimated", "f8", Role.OUTPUT, doc="Фактическая Q-генерация, МВАр."
-        ),
+        ColumnSpec("imbalance_q", "f8", Role.OUTPUT, doc="Q imbalance."),
+        ColumnSpec("load_p_estimated", "f8", Role.OUTPUT, doc="Actual P load after SE, MW."),
+        ColumnSpec("load_q_estimated", "f8", Role.OUTPUT, doc="Actual Q load after SE, MVAr."),
+        ColumnSpec("generation_p_estimated", "f8", Role.OUTPUT, doc="Actual P generation, MW."),
+        ColumnSpec("generation_q_estimated", "f8", Role.OUTPUT, doc="Actual Q generation, MVAr."),
         ColumnSpec(
             "solved",
             "i1",
             Role.OUTPUT,
             doc=(
-                "1 — узел вошёл в расчёт SE (есть решение V/δ); 0 — отсечён "
-                "препроцессингом (off/изолирован): его OUTPUT-поля нулевые, а "
-                "voltage_magnitude несёт входное значение. Маркер для "
-                "потребителей (promote/PF): не принимать нули за оценку."
+                "1 — the node entered the SE computation (a V/δ solution exists); 0 — cut off "
+                "by preprocessing (off/isolated): its OUTPUT fields are zero and "
+                "voltage_magnitude carries the input value. A marker for "
+                "consumers (promote/PF): do not take the zeros for an estimate."
             ),
         ),
     ),
@@ -343,68 +338,78 @@ NODES_OUTPUT = TableSchema(
 
 
 # ===========================================================================
-# Ветви
+# Branches
 # ===========================================================================
 
 BRANCHES = TableSchema(
     name="branches",
     key=("id", "from_node", "to_node", "parallel_id"),
-    doc="Ветви (ВЛ/трансформаторы/реакторы). Идентичность — id (+from/to/parallel).",
+    doc="Branches (lines/transformers/reactors). Identity — id (+from/to/parallel).",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор ветви."),
-        ColumnSpec("from_node", "i4", Role.KEY, doc="Начальный узел."),
-        ColumnSpec("to_node", "i4", Role.KEY, doc="Конечный узел."),
-        ColumnSpec("parallel_id", "i2", Role.KEY, doc="Номер параллельной ветви."),
-        # --- read-only вход ---
+        ColumnSpec("id", "i4", Role.KEY, doc="Unique branch identifier."),
+        ColumnSpec("from_node", "i4", Role.KEY, doc="From node."),
+        ColumnSpec("to_node", "i4", Role.KEY, doc="To node."),
+        ColumnSpec("parallel_id", "i2", Role.KEY, doc="Parallel branch number."),
+        # --- read-only input ---
         ColumnSpec(
-            "name", "U128", Role.INPUT, required=False, doc="Имя ветви (диагностика/вывод)."
+            "name", "U128", Role.INPUT, required=False, doc="Branch name (diagnostics/output)."
         ),
-        ColumnSpec("branch_type", "i1", Role.INPUT, doc="0-линия/1-трансформатор/2-реактор."),
+        ColumnSpec("branch_type", "i1", Role.INPUT, doc="0-line/1-transformer/2-reactor."),
         ColumnSpec(
             "current_limit_normal",
             "f8",
             Role.INPUT,
             required=False,
-            doc="Токовое ограничение, А — для loading_pct.",
+            doc="Current limit, A — for loading_pct.",
         ),
         ColumnSpec(
-            "ti_p_from", "i4", Role.INPUT, required=False, doc="Ссылка ТИ P-нач (детект стороны)."
+            "ti_p_from",
+            "i4",
+            Role.INPUT,
+            required=False,
+            doc="Telemetry reference P-from (side detection).",
         ),
-        ColumnSpec("ti_q_from", "i4", Role.INPUT, required=False, doc="Ссылка ТИ Q-нач."),
-        ColumnSpec("ti_p_to", "i4", Role.INPUT, required=False, doc="Ссылка ТИ P-кон."),
-        ColumnSpec("ti_q_to", "i4", Role.INPUT, required=False, doc="Ссылка ТИ Q-кон."),
-        # --- вход, мутируемый препроцессингом ---
+        ColumnSpec(
+            "ti_q_from", "i4", Role.INPUT, required=False, doc="Telemetry reference Q-from."
+        ),
+        ColumnSpec("ti_p_to", "i4", Role.INPUT, required=False, doc="Telemetry reference P-to."),
+        ColumnSpec("ti_q_to", "i4", Role.INPUT, required=False, doc="Telemetry reference Q-to."),
+        # --- input mutated by preprocessing ---
         ColumnSpec(
             "status",
             "bool",
             Role.WORKING,
-            doc="Включена ли ветвь. Мутируют топология/каскад/телеметрия.",
+            doc="Whether the branch is in service. Mutated by topology/cascade/telemetry.",
         ),
         ColumnSpec(
             "resistance",
             "f8",
             Role.WORKING,
-            doc="R, Ом. Мутирует normalize_breaker_reactance (R=X=0 КЗ).",
+            doc="R, Ohm. Mutated by normalize_breaker_reactance (R=X=0 short circuit).",
         ),
         ColumnSpec(
-            "reactance", "f8", Role.WORKING, doc="X, Ом. Мутирует normalize_breaker_reactance."
+            "reactance", "f8", Role.WORKING, doc="X, Ohm. Mutated by normalize_breaker_reactance."
         ),
-        ColumnSpec("conductance", "f8", Role.WORKING, doc="G серии, См. Пересчёт при смене tap."),
-        ColumnSpec("susceptance", "f8", Role.WORKING, doc="B серии, См. Пересчёт при смене tap."),
-        ColumnSpec("conductance_from", "f8", Role.WORKING, doc="G шунта в начале, См."),
-        ColumnSpec("susceptance_from", "f8", Role.WORKING, doc="B шунта в начале, См."),
-        ColumnSpec("conductance_to", "f8", Role.WORKING, doc="G шунта в конце, См."),
-        ColumnSpec("susceptance_to", "f8", Role.WORKING, doc="B шунта в конце, См."),
-        ColumnSpec("tap_ratio", "f8", Role.WORKING, doc="Коэф. трансформации. Мутирует apply_rpn."),
-        ColumnSpec("phase_shift", "f8", Role.WORKING, doc="Сдвиг фаз, рад. Мутирует apply_rpn."),
+        ColumnSpec("conductance", "f8", Role.WORKING, doc="Series G, S. Recomputed on tap change."),
+        ColumnSpec("susceptance", "f8", Role.WORKING, doc="Series B, S. Recomputed on tap change."),
+        ColumnSpec("conductance_from", "f8", Role.WORKING, doc="Shunt G at the from end, S."),
+        ColumnSpec("susceptance_from", "f8", Role.WORKING, doc="Shunt B at the from end, S."),
+        ColumnSpec("conductance_to", "f8", Role.WORKING, doc="Shunt G at the to end, S."),
+        ColumnSpec("susceptance_to", "f8", Role.WORKING, doc="Shunt B at the to end, S."),
+        ColumnSpec(
+            "tap_ratio", "f8", Role.WORKING, doc="Transformation ratio. Mutated by apply_rpn."
+        ),
+        ColumnSpec(
+            "phase_shift", "f8", Role.WORKING, doc="Phase shift, rad. Mutated by apply_rpn."
+        ),
         ColumnSpec(
             "tap_step_id",
             "i4",
             Role.INPUT,
             required=False,
             doc=(
-                "Ссылка на tap_steps.id (0-based, -1=нет РПН). Выбор отпайки делается "
-                "вне ядра, ядро применяет готовую строку (apply_rpn)."
+                "Reference to tap_steps.id (0-based, -1=no tap changer). The tap position is selected "
+                "outside the core, the core applies the ready row (apply_rpn)."
             ),
         ),
         ColumnSpec(
@@ -412,48 +417,48 @@ BRANCHES = TableSchema(
             "i1",
             Role.INPUT,
             required=False,
-            doc="Сторона регулирования: 0=from(ВН)/1=to(НН). Резерв (дефолт 0).",
+            doc="Regulation side: 0=from (HV)/1=to (LV). Reserved (default 0).",
         ),
         ColumnSpec(
             "tap_min",
             "f8",
             Role.INPUT,
             required=False,
-            doc="Нижняя граница коэф. трансформации. Резерв под будущую оптимизацию.",
+            doc="Lower bound of the transformation ratio. Reserved for future optimization.",
         ),
         ColumnSpec(
             "tap_max",
             "f8",
             Role.INPUT,
             required=False,
-            doc="Верхняя граница коэф. трансформации. Резерв.",
+            doc="Upper bound of the transformation ratio. Reserved.",
         ),
     ),
 )
 
 
-# Выходной слой ветвей (``SEOutput.branches``) — перетоки/токи/потери/загрузка.
+# Output layer of branches (``SEOutput.branches``) — flows/currents/losses/loading.
 BRANCHES_OUTPUT = TableSchema(
     name="branches",
     key=("id",),
-    doc="Результат SE по ветвям (перетоки P/Q с обеих сторон, токи, потери, загрузка).",
+    doc="SE result per branch (P/Q flows at both ends, currents, losses, loading).",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор ветви."),
-        ColumnSpec("power_from_p", "f8", Role.OUTPUT, doc="P в начале, МВт."),
-        ColumnSpec("power_from_q", "f8", Role.OUTPUT, doc="Q в начале, МВАр."),
-        ColumnSpec("power_to_p", "f8", Role.OUTPUT, doc="P в конце, МВт."),
-        ColumnSpec("power_to_q", "f8", Role.OUTPUT, doc="Q в конце, МВАр."),
-        ColumnSpec("current_from", "f8", Role.OUTPUT, doc="Ток в начале, А."),
-        ColumnSpec("current_to", "f8", Role.OUTPUT, doc="Ток в конце, А."),
-        ColumnSpec("loss_p", "f8", Role.OUTPUT, doc="Активные потери, МВт."),
-        ColumnSpec("loss_q", "f8", Role.OUTPUT, doc="Реактивные потери, МВАр."),
-        ColumnSpec("loading_pct", "f8", Role.OUTPUT, doc="Загрузка по току, %."),
+        ColumnSpec("id", "i4", Role.KEY, doc="Unique branch identifier."),
+        ColumnSpec("power_from_p", "f8", Role.OUTPUT, doc="P at the from end, MW."),
+        ColumnSpec("power_from_q", "f8", Role.OUTPUT, doc="Q at the from end, MVAr."),
+        ColumnSpec("power_to_p", "f8", Role.OUTPUT, doc="P at the to end, MW."),
+        ColumnSpec("power_to_q", "f8", Role.OUTPUT, doc="Q at the to end, MVAr."),
+        ColumnSpec("current_from", "f8", Role.OUTPUT, doc="Current at the from end, A."),
+        ColumnSpec("current_to", "f8", Role.OUTPUT, doc="Current at the to end, A."),
+        ColumnSpec("loss_p", "f8", Role.OUTPUT, doc="Active losses, MW."),
+        ColumnSpec("loss_q", "f8", Role.OUTPUT, doc="Reactive losses, MVAr."),
+        ColumnSpec("loading_pct", "f8", Role.OUTPUT, doc="Current loading, %."),
     ),
 )
 
 
 # ===========================================================================
-# Измерения (z-вектор + оценки)
+# Measurements (z-vector + estimates)
 # ===========================================================================
 
 MEASUREMENTS = TableSchema(
@@ -465,127 +470,129 @@ MEASUREMENTS = TableSchema(
         "them, so most columns are WORKING."
     ),
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор измерения."),
-        ColumnSpec("object_type", "i1", Role.KEY, doc="0-узел/1-ветвь/2-генератор."),
-        ColumnSpec("object_id", "i4", Role.KEY, doc="ID объекта измерения."),
-        # --- read-only вход (определяющие/провенанс) ---
+        ColumnSpec("id", "i4", Role.KEY, doc="Unique measurement identifier."),
+        ColumnSpec("object_type", "i1", Role.KEY, doc="0-node/1-branch/2-generator."),
+        ColumnSpec("object_id", "i4", Role.KEY, doc="ID of the measured object."),
+        # --- read-only input (defining/provenance) ---
         ColumnSpec("measurement_type", "i1", Role.INPUT, doc="0-P/1-Q/2-U/3-I/4-Pinj/5-Qinj."),
+        ColumnSpec("min_value", "f8", Role.INPUT, required=False, doc="Lower plausible bound."),
+        ColumnSpec("max_value", "f8", Role.INPUT, required=False, doc="Upper plausible bound."),
+        ColumnSpec("name", "U128", Role.INPUT, required=False, doc="Measurement name."),
+        # --- input mutated/derived by preprocessing ---
         ColumnSpec(
-            "min_value", "f8", Role.INPUT, required=False, doc="Нижняя достоверная граница."
-        ),
-        ColumnSpec(
-            "max_value", "f8", Role.INPUT, required=False, doc="Верхняя достоверная граница."
-        ),
-        ColumnSpec("name", "U128", Role.INPUT, required=False, doc="Имя измерения."),
-        # --- вход, мутируемый/деривируемый препроцессингом ---
-        ColumnSpec(
-            "value", "f8", Role.WORKING, doc="Значение меры. Пишут телеметрия/материализация."
+            "value",
+            "f8",
+            Role.WORKING,
+            doc="Measurement value. Written by telemetry/materialization.",
         ),
         ColumnSpec(
             "variance",
             "f8",
             Role.WORKING,
-            doc="Дисперсия σ². Пишут σ_Q-charging/фильтры. Солвер строит R из неё.",
+            doc="Variance σ². Written by σ_Q-charging/filters. The solver builds R from it.",
         ),
         ColumnSpec(
             "weight",
             "f8",
             Role.WORKING,
             required=False,
-            doc="Вес = 1/σ² (производный). Пишут телеметрия/фильтры; солвер читает variance, не weight.",
+            doc="Weight = 1/σ² (derived). Written by telemetry/filters; the solver reads variance, not weight.",
         ),
         ColumnSpec(
             "status",
             "bool",
             Role.WORKING,
-            doc="Активно ли в z-векторе. Глушится/включается препроцессингом.",
+            doc="Whether it is active in the z-vector. Muted/enabled by preprocessing.",
         ),
         ColumnSpec(
-            "quality", "i1", Role.WORKING, doc="0-хор/1-сомн/2-плох. Пишут фильтры/bad-data."
+            "quality",
+            "i1",
+            Role.WORKING,
+            doc="0-good/1-doubtful/2-bad. Written by filters/bad-data.",
         ),
         ColumnSpec(
-            "branch_side", "i1", Role.WORKING, doc="0-from/1-to/-1-N/A (Yf vs Yt для P_to/Q_to)."
+            "branch_side", "i1", Role.WORKING, doc="0-from/1-to/-1-N/A (Yf vs Yt for P_to/Q_to)."
         ),
-        ColumnSpec("is_pseudo", "bool", Role.WORKING, doc="Псевдо-приор (add_pseudo/синтез)."),
-        ColumnSpec("filter_flag", "i1", Role.WORKING, doc="Причина деактивации (0=ok, …)."),
+        ColumnSpec("is_pseudo", "bool", Role.WORKING, doc="Pseudo-prior (add_pseudo/synthesis)."),
+        ColumnSpec("filter_flag", "i1", Role.WORKING, doc="Deactivation reason (0=ok, …)."),
         ColumnSpec(
             "source_code",
             "U16",
             Role.WORKING,
-            doc="Метка происхождения меры (источник/препроцессинг).",
+            doc="Measurement origin label (source/preprocessing).",
         ),
-        ColumnSpec("source_guid", "U40", Role.WORKING, doc="GUID источника данных."),
+        ColumnSpec("source_guid", "U40", Role.WORKING, doc="GUID of the data source."),
     ),
 )
 
 
-# Выходной слой измерений (``SEOutput.measurements``) — оценки и невязки.
+# Output layer of measurements (``SEOutput.measurements``) — estimates and residuals.
 MEASUREMENTS_OUTPUT = TableSchema(
     name="measurements",
     key=("id",),
-    doc="Результат SE по измерениям (оценённое значение + невязка).",
+    doc="SE result per measurement (estimated value + residual).",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор измерения."),
-        ColumnSpec("estimated_si", "f8", Role.OUTPUT, doc="Оценка нашего SE, исходные единицы."),
-        ColumnSpec("residual", "f8", Role.OUTPUT, doc="Невязка value − estimated."),
+        ColumnSpec("id", "i4", Role.KEY, doc="Unique measurement identifier."),
+        ColumnSpec("estimated_si", "f8", Role.OUTPUT, doc="Estimate of our SE, original units."),
+        ColumnSpec("residual", "f8", Role.OUTPUT, doc="Residual value − estimated."),
     ),
 )
 
 
 # ===========================================================================
-# Генераторы (вход; результаты сворачиваются в node generation_*_estimated)
+# Generators (input; results are folded into node generation_*_estimated)
 # ===========================================================================
 
 GENERATORS = TableSchema(
     name="generators",
     key=("id", "node_id"),
-    doc="Генераторы. SE читает мощности/границы, мутирует только status (каскад от узла).",
+    doc="Generators. SE reads powers/bounds, mutates only status (cascade from the node).",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Уникальный идентификатор генератора."),
-        ColumnSpec("node_id", "i4", Role.KEY, doc="Узел подключения."),
-        ColumnSpec("power_output", "f8", Role.INPUT, doc="Выходная P, МВт (→ node gen-инжекция)."),
-        ColumnSpec("reactive_output", "f8", Role.INPUT, doc="Выходная Q, МВАр."),
-        ColumnSpec("power_min", "f8", Role.INPUT, required=False, doc="Нижняя P — box/агрегация."),
-        ColumnSpec("power_max", "f8", Role.INPUT, required=False, doc="Верхняя P — box/агрегация."),
+        ColumnSpec("id", "i4", Role.KEY, doc="Unique generator identifier."),
+        ColumnSpec("node_id", "i4", Role.KEY, doc="Connection node."),
+        ColumnSpec("power_output", "f8", Role.INPUT, doc="Output P, MW (→ node gen injection)."),
+        ColumnSpec("reactive_output", "f8", Role.INPUT, doc="Output Q, MVAr."),
+        ColumnSpec("power_min", "f8", Role.INPUT, required=False, doc="Lower P — box/aggregation."),
+        ColumnSpec("power_max", "f8", Role.INPUT, required=False, doc="Upper P — box/aggregation."),
         ColumnSpec(
-            "reactive_min", "f8", Role.INPUT, required=False, doc="Нижняя Q — box/агрегация."
+            "reactive_min", "f8", Role.INPUT, required=False, doc="Lower Q — box/aggregation."
         ),
         ColumnSpec(
-            "reactive_max", "f8", Role.INPUT, required=False, doc="Верхняя Q — box/агрегация."
+            "reactive_max", "f8", Role.INPUT, required=False, doc="Upper Q — box/aggregation."
         ),
         ColumnSpec(
             "status",
             "bool",
             Role.WORKING,
-            doc="Включён ли. Мутирует apply_generator_status_from_node (node off ⇒ gen off).",
+            doc="Whether in service. Mutated by apply_generator_status_from_node (node off ⇒ gen off).",
         ),
     ),
 )
 
 
 # ===========================================================================
-# Доменные числовые таблицы SE-входа (формат-агностичная замена raw
-# reactors/shema_ktr/load_models). Формат-резолв (выбор отпайки РПН, конверсия
-# единиц, агрегация) делается во внешнем источнике данных; сюда приходят уже
-# числовые, формат-агностичные данные. Все колонки KEY/INPUT (ядро их читает,
-# не мутирует).
+# Domain numeric tables of the SE input (a format-agnostic replacement of the raw
+# reactors/shema_ktr/load_models). Format resolution (selecting the on-load tap changer
+# position, unit conversion, aggregation) is done in an external data source; only numeric,
+# format-agnostic data arrives here. All columns are KEY/INPUT (the core reads them,
+# does not mutate them).
 # ===========================================================================
 
 # Tap-changer steps (on-load and off-load): the row is selected outside the core
 # (the producer decides which tap position applies); the core applies it to the
 # branches (tap_ratio/phase_shift) and rescales the branch shunt (shunt_factor).
-# Физика трансформатора остаётся в формат-агностичном ядре.
+# The transformer physics stays in the format-agnostic core.
 TAP_STEPS = TableSchema(
     name="tap_steps",
     key=("id", "branch_id"),
-    doc="Выбранная ступень РПН на ветвь (безразмерная, формат-агностичная).",
+    doc="Selected tap changer step per branch (dimensionless, format-agnostic).",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Идентификатор ступени (0-based)."),
-        ColumnSpec("branch_id", "i4", Role.KEY, doc="Ветвь-трансформатор (FK на branches.id)."),
-        ColumnSpec("ktr_re", "f8", Role.INPUT, doc="Re выбранного коэф. (1/tap-конвенция)."),
-        ColumnSpec("ktr_im", "f8", Role.INPUT, doc="Im выбранного коэф. (фазосдвиг)."),
-        ColumnSpec("tap_ratio", "f8", Role.INPUT, doc="hypot(re,im) — целевой модуль КТ."),
-        ColumnSpec("phase_shift", "f8", Role.INPUT, doc="atan2(im,re) — целевой угол, рад."),
+        ColumnSpec("id", "i4", Role.KEY, doc="Step identifier (0-based)."),
+        ColumnSpec("branch_id", "i4", Role.KEY, doc="Transformer branch (FK to branches.id)."),
+        ColumnSpec("ktr_re", "f8", Role.INPUT, doc="Re of the selected ratio (1/tap convention)."),
+        ColumnSpec("ktr_im", "f8", Role.INPUT, doc="Im of the selected ratio (phase shift)."),
+        ColumnSpec("tap_ratio", "f8", Role.INPUT, doc="hypot(re,im) — target ratio magnitude."),
+        ColumnSpec("phase_shift", "f8", Role.INPUT, doc="atan2(im,re) — target angle, rad."),
         ColumnSpec(
             "shunt_factor",
             "f8",
@@ -595,65 +602,71 @@ TAP_STEPS = TableSchema(
     ),
 )
 
-# Статические характеристики нагрузки P(V)/Q(V) (СХН). Читает apply_load_characteristic
-# (post_processing) по node.load_model_id. immutable INPUT.
+# Static load characteristics P(V)/Q(V). Read by apply_load_characteristic
+# (post_processing) via node.load_model_id. Immutable INPUT.
 LOAD_CHARACTERISTICS = TableSchema(
     name="load_characteristics",
     key=("id",),
-    doc="Полиномиальные СХН P(V)/Q(V); node.load_model_id ссылается сюда (0-based).",
+    doc="Polynomial load characteristics P(V)/Q(V); node.load_model_id refers here (0-based).",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Идентификатор характеристики (0-based)."),
-        ColumnSpec("coeff_p_a0", "f8", Role.INPUT, doc="P: постоянная составляющая."),
-        ColumnSpec("coeff_p_a1", "f8", Role.INPUT, doc="P: линейная по V."),
-        ColumnSpec("coeff_p_a2", "f8", Role.INPUT, doc="P: квадратичная по V."),
-        ColumnSpec("coeff_q_b0", "f8", Role.INPUT, doc="Q: постоянная составляющая."),
-        ColumnSpec("coeff_q_b1", "f8", Role.INPUT, doc="Q: линейная по V."),
-        ColumnSpec("coeff_q_b2", "f8", Role.INPUT, doc="Q: квадратичная по V."),
+        ColumnSpec("id", "i4", Role.KEY, doc="Characteristic identifier (0-based)."),
+        ColumnSpec("coeff_p_a0", "f8", Role.INPUT, doc="P: constant component."),
+        ColumnSpec("coeff_p_a1", "f8", Role.INPUT, doc="P: linear in V."),
+        ColumnSpec("coeff_p_a2", "f8", Role.INPUT, doc="P: quadratic in V."),
+        ColumnSpec("coeff_q_b0", "f8", Role.INPUT, doc="Q: constant component."),
+        ColumnSpec("coeff_q_b1", "f8", Role.INPUT, doc="Q: linear in V."),
+        ColumnSpec("coeff_q_b2", "f8", Role.INPUT, doc="Q: quadratic in V."),
         ColumnSpec(
-            "coeff_p_f", "f8", Role.INPUT, required=False, doc="P: частотная зависимость. Резерв."
+            "coeff_p_f", "f8", Role.INPUT, required=False, doc="P: frequency dependence. Reserved."
         ),
         ColumnSpec(
-            "coeff_q_f", "f8", Role.INPUT, required=False, doc="Q: частотная зависимость. Резерв."
+            "coeff_q_f", "f8", Role.INPUT, required=False, doc="Q: frequency dependence. Reserved."
         ),
     ),
 )
 
-# Шунтирующие устройства (реакторы/БСК), per-устройство. Ядро агрегирует активные
-# в node.shunt_g/b для Y-bus (числовой шаг, замена apply_reactors_to_node_shunt) и
-# в будущем коммутирует ступени (group_id/step — резерв).
+# Shunt devices (reactors/capacitor banks), per device. The core aggregates the active ones
+# into node.shunt_g/b for the Y-bus (a numeric step, replacing apply_reactors_to_node_shunt) and
+# in the future switches steps (group_id/step — reserved).
 SHUNTS = TableSchema(
     name="shunts",
     key=("id",),
-    doc="Шунт-устройства per-объект; ядро агрегирует активные в node.shunt_g/b.",
+    doc="Shunt devices per object; the core aggregates the active ones into node.shunt_g/b.",
     columns=(
-        ColumnSpec("id", "i4", Role.KEY, doc="Идентификатор шунта (0-based)."),
-        ColumnSpec("node_id", "i4", Role.INPUT, doc="Узел подключения (FK на nodes.id)."),
-        ColumnSpec("conductance", "f8", Role.INPUT, doc="G устройства, См (адаптер: мкСм→См)."),
-        ColumnSpec("susceptance", "f8", Role.INPUT, doc="B устройства, См (ШР индуктивный <0)."),
-        ColumnSpec("status", "bool", Role.INPUT, doc="Вкл/выкл (адаптер: ON_LINE-резолв)."),
+        ColumnSpec("id", "i4", Role.KEY, doc="Shunt identifier (0-based)."),
+        ColumnSpec("node_id", "i4", Role.INPUT, doc="Connection node (FK to nodes.id)."),
+        ColumnSpec("conductance", "f8", Role.INPUT, doc="Device G, S (adapter: µS→S)."),
         ColumnSpec(
-            "group_id", "i4", Role.INPUT, required=False, doc="Группа БСК (коммутация). Резерв."
+            "susceptance", "f8", Role.INPUT, doc="Device B, S (inductive shunt reactor <0)."
+        ),
+        ColumnSpec("status", "bool", Role.INPUT, doc="On/off (adapter: ON_LINE resolution)."),
+        ColumnSpec(
+            "group_id",
+            "i4",
+            Role.INPUT,
+            required=False,
+            doc="Capacitor bank group (switching). Reserved.",
         ),
         ColumnSpec(
-            "step", "i4", Role.INPUT, required=False, doc="Текущая ступень в группе. Резерв."
+            "step", "i4", Role.INPUT, required=False, doc="Current step within the group. Reserved."
         ),
     ),
 )
 
 
 # ===========================================================================
-# Контракт верхнего уровня
+# Top-level contract
 # ===========================================================================
 
 
 @dataclass(frozen=True)
 class SEInputSchema:
-    """Схема входного контракта: набор таблиц (роли KEY/INPUT/WORKING).
+    """Input contract schema: a set of tables (roles KEY/INPUT/WORKING).
 
-    Доменные таблицы ``tap_steps``/``load_characteristics``/``shunts`` —
-    формат-агностичные числовые входы (выбор отпайки РПН, конверсия единиц,
-    агрегация шунтов выполняются во внешнем источнике данных). Input-only
-    (роли KEY/INPUT).
+    The domain tables ``tap_steps``/``load_characteristics``/``shunts`` are
+    format-agnostic numeric inputs (tap changer position selection, unit conversion,
+    aggregation of shunts are done in an external data source). Input-only
+    (roles KEY/INPUT).
     """
 
     nodes: TableSchema
@@ -665,20 +678,20 @@ class SEInputSchema:
     shunts: TableSchema
 
     def tables(self) -> tuple[TableSchema, ...]:
-        """Все таблицы в порядке объявления полей (единый источник — dataclass)."""
+        """All tables in the order of field declaration (single source — the dataclass)."""
         return tuple(getattr(self, f.name) for f in fields(self))
 
 
 @dataclass(frozen=True)
 class SEOutputSchema:
-    """Схема выходного контракта: результаты (роли KEY/OUTPUT), keyed по id."""
+    """Output contract schema: results (roles KEY/OUTPUT), keyed by id."""
 
     nodes: TableSchema
     branches: TableSchema
     measurements: TableSchema
 
     def tables(self) -> tuple[TableSchema, ...]:
-        """Все таблицы в порядке объявления полей (единый источник — dataclass)."""
+        """All tables in the order of field declaration (single source — the dataclass)."""
         return tuple(getattr(self, f.name) for f in fields(self))
 
 
