@@ -40,7 +40,7 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
-coverage.xml
+coverage.*
 *.cover
 .pytest_cache/
 cover/
