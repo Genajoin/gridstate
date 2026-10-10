@@ -233,20 +233,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 118,
-     "skipped_no_full_coverage": 0,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -578,20 +564,6 @@
      "node_meas": 0,
      "gen_meas": 0,
      "orphan_object_id": 0
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 118,
-     "skipped_no_full_coverage": 0,
-     "skipped_orphan": 0
     }
    },
    {
@@ -969,20 +941,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 118,
-     "skipped_no_full_coverage": 0,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -1345,20 +1303,6 @@
      "node_meas": 0,
      "gen_meas": 0,
      "orphan_object_id": 0
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 118,
-     "skipped_no_full_coverage": 0,
-     "skipped_orphan": 0
     }
    },
    {
@@ -1746,20 +1690,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 118,
-     "skipped_no_full_coverage": 0,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -2142,20 +2072,6 @@
      "node_meas": 0,
      "gen_meas": 0,
      "orphan_object_id": 0
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 118,
-     "skipped_no_full_coverage": 0,
-     "skipped_orphan": 0
     }
    },
    {

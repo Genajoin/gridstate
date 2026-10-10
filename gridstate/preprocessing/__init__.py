@@ -27,10 +27,6 @@ from gridstate.preprocessing.one_sided import (
     fold_one_sided_branches,
 )
 from gridstate.preprocessing.pseudo_measurements import add_pseudo_measurements
-from gridstate.preprocessing.synth_injection import (
-    synthesize_block_bus_injection_from_branch_xml,
-    synthesize_node_injection_from_branch_flows,
-)
 
 
 __all__ = [
@@ -42,6 +38,4 @@ __all__ = [
     "extract_node_load_props_from_model",
     "fold_one_sided_branches",
     "mirror_voltage_through_unit_tap_links",
-    "synthesize_block_bus_injection_from_branch_xml",
-    "synthesize_node_injection_from_branch_flows",
 ]

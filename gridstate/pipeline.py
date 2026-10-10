@@ -45,7 +45,6 @@ from gridstate.post_processing import refine_anti_overshoot
 from gridstate.preprocessing import (
     add_pseudo_measurements,
     mirror_voltage_through_unit_tap_links,
-    synthesize_node_injection_from_branch_flows,
 )
 from gridstate.resolve_pass import ResolveGuard
 from gridstate.result import SEResult
@@ -347,12 +346,6 @@ class PipelineConfig:
     )
 
     # --- Псевдо-измерения ---
-    synthesize_injections: bool = _toggle(
-        True,
-        group=_G_PSEUDO,
-        label="Синтез P/Q_inj из потоков",
-        help="synthesize_node_injection_from_branch_flows на терминалах без real-meas.",
-    )
     mirror_voltage_unit_tap: bool = _toggle(
         True,
         group=_G_PSEUDO,
@@ -1050,10 +1043,6 @@ def _s_deactivate_orphan_measurements(ctx: _Ctx) -> dict:
     return dict(deactivate_orphan_measurements(ctx.model) or {})
 
 
-def _s_synthesize_injections(ctx: _Ctx) -> dict:
-    return dict(synthesize_node_injection_from_branch_flows(ctx.model) or {})
-
-
 def _s_mirror_voltage(ctx: _Ctx) -> dict:
     return dict(mirror_voltage_through_unit_tap_links(ctx.model) or {})
 
@@ -1487,14 +1476,6 @@ STEPS: list[Step] = [
         "deactivate_orphan_measurements.",
         _s_deactivate_orphan_measurements,
         toggle="deactivate_orphan_measurements",
-    ),
-    Step(
-        "synthesize_injections",
-        "Синтез P/Q_inj из потоков",
-        _G_PSEUDO,
-        "synthesize_node_injection_from_branch_flows.",
-        _s_synthesize_injections,
-        toggle="synthesize_injections",
     ),
     Step(
         "mirror_voltage",

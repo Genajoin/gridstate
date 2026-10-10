@@ -24,14 +24,10 @@ from gridstate.preprocessing.pseudo_measurements import (
     PseudoMeasConfig,
     _add_pseudo_measurements_on_arrays,
 )
-from gridstate.preprocessing.synth_injection import _synthesize_node_injection_on_arrays
 from gridstate.z_vector import (
     KIND_POWER_INJECTION_P,
     KIND_POWER_INJECTION_Q,
-    KIND_POWER_P,
-    KIND_POWER_Q,
     KIND_VOLTAGE,
-    OBJ_BRANCH,
     OBJ_NODE,
 )
 
@@ -372,131 +368,6 @@ def test_adapter_effect_matches_core_plan():
         assert float(me.value) == r["value"]
         assert float(me.variance) == r["variance"]
         assert bool(me.is_pseudo) is True
-
-
-# ---------------------------------------------------------------------------
-# synthesize_node_injection_from_branch_flows: ядро на голых массивах
-# ---------------------------------------------------------------------------
-
-
-def _branch_meas(mid: int, kind: int, value: float) -> dict:
-    return {
-        "id": mid,
-        "object_type": OBJ_BRANCH,
-        "object_id": 0,  # object_id ветви тут не используется (резолв через ti_*)
-        "measurement_type": kind,
-        "value": value,
-        "status": True,
-        "is_pseudo": False,
-    }
-
-
-def test_synth_injection_core_full_coverage():
-    # Узел 1: 2 инцидентные ветви, обе с real P/Q на стороне узла.
-    nodes = _nodes(
-        [{"id": 1, "status": True}, {"id": 2, "status": True}, {"id": 3, "status": True}]
-    )
-    meas = _meas(
-        [
-            _branch_meas(501, KIND_POWER_P, 10.0),  # b100 from-P
-            _branch_meas(502, KIND_POWER_Q, 2.0),  # b100 from-Q
-            _branch_meas(601, KIND_POWER_P, 20.0),  # b200 to-P
-            _branch_meas(602, KIND_POWER_Q, 3.0),  # b200 to-Q
-        ]
-    )
-    branches = _branches(
-        [
-            {
-                "id": 100,
-                "from_node": 1,
-                "to_node": 2,
-                "status": True,
-                "ti_p_from": 501,
-                "ti_q_from": 502,
-            },
-            {
-                "id": 200,
-                "from_node": 3,
-                "to_node": 1,
-                "status": True,
-                "ti_p_to": 601,
-                "ti_q_to": 602,
-            },
-        ]
-    )
-    rows, stats = _synthesize_node_injection_on_arrays(nodes, branches, meas, mid_start=290_000_000)
-    assert stats["nodes_synthesized"] == 1
-    assert stats["skipped_no_full_coverage"] == 2  # узлы 2 и 3 — частичное покрытие
-    assert len(rows) == 2
-    # P_inj = -(10+20) = -30, Q_inj = -(2+3) = -5; σ = max(0.05·hypot(30,5), 5)=5 → var=25
-    assert rows[0]["measurement_type"] == KIND_POWER_INJECTION_P
-    assert rows[0]["object_id"] == 1
-    assert rows[0]["value"] == -30.0
-    assert rows[0]["variance"] == 25.0
-    assert rows[0]["id"] == 290_000_000
-    assert rows[1]["measurement_type"] == KIND_POWER_INJECTION_Q
-    assert rows[1]["value"] == -5.0
-    assert rows[1]["id"] == 290_000_001
-
-
-def test_synth_injection_core_partial_skipped_when_require_all():
-    # Узел 1: одна ветвь с P, но без Q-стороны → full=False → пропуск при require_all.
-    nodes = _nodes([{"id": 1, "status": True}, {"id": 2, "status": True}])
-    meas = _meas([_branch_meas(501, KIND_POWER_P, 10.0)])  # Q отсутствует
-    branches = _branches(
-        [
-            {
-                "id": 100,
-                "from_node": 1,
-                "to_node": 2,
-                "status": True,
-                "ti_p_from": 501,
-                "ti_q_from": 0,
-            }
-        ]
-    )
-    rows, stats = _synthesize_node_injection_on_arrays(
-        nodes, branches, meas, require_all_sides_known=True
-    )
-    assert rows == []
-    assert stats["nodes_synthesized"] == 0
-    # оба узла (1 — нет Q-стороны; 2 — to-side ti=0) имеют неполное покрытие
-    assert stats["skipped_no_full_coverage"] == 2
-
-
-def test_synth_injection_core_skips_node_with_real_pinj():
-    nodes = _nodes([{"id": 1, "status": True}, {"id": 2, "status": True}])
-    meas = _meas(
-        [
-            _branch_meas(501, KIND_POWER_P, 10.0),
-            _branch_meas(502, KIND_POWER_Q, 2.0),
-            # real P_inj на узле 1 → пропуск
-            {
-                "id": 700,
-                "object_type": OBJ_NODE,
-                "object_id": 1,
-                "measurement_type": KIND_POWER_INJECTION_P,
-                "value": 5.0,
-                "status": True,
-                "is_pseudo": False,
-            },
-        ]
-    )
-    branches = _branches(
-        [
-            {
-                "id": 100,
-                "from_node": 1,
-                "to_node": 2,
-                "status": True,
-                "ti_p_from": 501,
-                "ti_q_from": 502,
-            }
-        ]
-    )
-    rows, stats = _synthesize_node_injection_on_arrays(nodes, branches, meas)
-    assert rows == []
-    assert stats["skipped_has_inj"] == 1
 
 
 # ---------------------------------------------------------------------------
