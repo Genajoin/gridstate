@@ -98,6 +98,14 @@ cut by tagging the merged main commit; the version is derived from that tag.
   and non-finite measurements no longer fail the estimate (#43)
 - Add the `py.typed` marker declared in package-data, so wheels advertise the
   inline types (#42)
+- `compute_system_losses`: transformers are identified by the contract column
+  `branch_type`, so the line / transformer split of the series losses
+  (`p/q_line_series`, `p/q_trafo_series`, per-branch `tip`) is correct. The
+  former guess from the p.u. parameters missed transformers with a nominal tap
+  and counted every line whose charging is split between the two sides as a
+  transformer. The guess is kept only for branch tables without `branch_type`,
+  and no longer treats split line charging as a one-sided shunt. Totals are
+  unchanged (#55)
 
 ### Perf
 

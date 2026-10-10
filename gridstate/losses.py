@@ -74,6 +74,8 @@ Breakdown identities (``SystemLosses`` fields):
 * ``total_p_loss_mw = p_line_series + p_trafo_series + p_branch_shunt
   + p_node_shunt``;
 * ``total_q_loss_mvar`` is the same sum for Q;
+* ``*_trafo_series`` covers the branches with ``branch_type == TRANSFORMER``,
+  ``*_line_series`` all the others (lines and series reactors);
 * ``p_branch_shunt`` / ``q_branch_shunt`` -- Pi-model shunts of all branches
   (no-load losses and magnetising Q of transformers, line charging);
 * ``p_node_shunt`` / ``q_node_shunt`` -- node shunts (reactors, capacitors).
@@ -86,13 +88,67 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from gridstate.units import BASE_MVA, model_to_pu
+from gridstate.constants import BranchType
+from gridstate.units import BASE_MVA, NetworkPU, model_to_pu
 from gridstate.utils import id_to_pos_map
 from gridstate.ybus import build_ybus, series_admittance
 
 
 if TYPE_CHECKING:
     from gridstate.working import Working
+
+
+_SHUNT_EPS = 1e-12
+_TAP_EPS = 1e-6
+
+
+def _trafo_heuristic(network_pu: NetworkPU) -> np.ndarray:
+    """Guess transformers from the p.u. parameters (fallback without ``branch_type``).
+
+    A branch is taken for a transformer when its tap is off-nominal, or when its
+    Pi-model shunt sits on the "from" side only (the usual placement of the
+    magnetising branch, see the module docstring). Line charging split between
+    both sides via ``*_from`` / ``*_to`` is not one-sided and does not count.
+    A transformer with a nominal tap and no magnetising branch is
+    indistinguishable from a line here.
+    """
+    off_nominal_tap = np.abs(network_pu.tap_ratio - 1.0) > _TAP_EPS
+    from_side = (np.abs(network_pu.branch_g_from) > _SHUNT_EPS) | (
+        np.abs(network_pu.branch_b_from) > _SHUNT_EPS
+    )
+    to_side = (np.abs(network_pu.branch_g_to) > _SHUNT_EPS) | (
+        np.abs(network_pu.branch_b_to) > _SHUNT_EPS
+    )
+    no_total = (np.abs(network_pu.branch_g) < _SHUNT_EPS) & (
+        np.abs(network_pu.branch_b) < _SHUNT_EPS
+    )
+    shunt_one_sided = no_total & from_side & ~to_side
+    is_trafo: np.ndarray = off_nominal_tap | shunt_one_sided
+    return is_trafo
+
+
+def _branch_is_trafo(branches_arr: np.ndarray, network_pu: NetworkPU) -> np.ndarray:
+    """Per-branch transformer flag aligned with ``network_pu.branch_ids``.
+
+    The contract column ``branch_type`` is authoritative (``TRANSFORMER`` ->
+    transformer; ``LINE`` and ``REACTOR`` -> line series losses). The p.u.
+    heuristic of :func:`_trafo_heuristic` is used only when the column is
+    absent, or for a branch id that is not found in ``branches_arr``.
+    """
+    heuristic = _trafo_heuristic(network_pu)
+    names = branches_arr.dtype.names or ()
+    if "branch_type" not in names or network_pu.n_branch == 0:
+        return heuristic
+    # NetworkPU holds the active branches only; build the map from those rows
+    # so that a switched-off branch sharing an id cannot shadow the active one.
+    rows = branches_arr[branches_arr["status"]] if "status" in names else branches_arr
+    type_by_id = dict(zip(rows["id"].tolist(), rows["branch_type"].tolist(), strict=True))
+    is_trafo: np.ndarray = heuristic.copy()
+    for i, bid in enumerate(network_pu.branch_ids.tolist()):
+        btype = type_by_id.get(int(bid))
+        if btype is not None:
+            is_trafo[i] = int(btype) == BranchType.TRANSFORMER
+    return is_trafo
 
 
 @dataclass
@@ -268,14 +324,7 @@ def compute_system_losses(
     # Shunt part — by difference (s_loss_total = s_series + s_shunt).
     s_shunt = s_loss_total - s_series
 
-    # Per-branch transformer flag (vectorized _branch_is_trafo_pu)
-    off_nominal_tap = np.abs(network_pu.tap_ratio - 1.0) > 1e-6
-    shunt_one_sided = (
-        (np.abs(network_pu.branch_g) < 1e-12)
-        & (np.abs(network_pu.branch_b) < 1e-12)
-        & ((np.abs(network_pu.branch_g_from) > 1e-12) | (np.abs(network_pu.branch_b_from) > 1e-12))
-    )
-    is_trafo = off_nominal_tap | shunt_one_sided
+    is_trafo = _branch_is_trafo(model.branches.to_numpy(), network_pu)
 
     p_ser_mw = s_series.real * BASE_MVA
     q_ser_mvar = s_series.imag * BASE_MVA
