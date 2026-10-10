@@ -74,6 +74,12 @@ OMEGA_CUTOFF = 1e-12
 #: recomputes a row by per-row solves (see the module docstring).
 SELINV_REFINE_BELOW = 1e-2
 
+#: Default ``Ω_ii / σ²_i`` below which a measurement is nearly critical: its
+#: ``r_N`` carries the rounding of ``(H G⁻¹ Hᵀ)_ii`` amplified by more than
+#: 10⁴. Such measurements are reported apart and left out of the residual
+#: rankings (see :func:`near_critical_mask`).
+NEAR_CRITICAL_THRESHOLD = 1e-4
+
 
 @dataclass(frozen=True)
 class NormalizedResiduals:
@@ -173,6 +179,22 @@ def compute_normalized_residuals(
         rn = np.where(bad, np.inf, rn)
         return NormalizedResiduals(rn=rn, omega_ratio=omega_ratio)
     return NormalizedResiduals(rn=np.where(np.isnan(rn), np.inf, rn), omega_ratio=omega_ratio)
+
+
+def near_critical_mask(omega_ratio: np.ndarray, threshold: float) -> np.ndarray:
+    """(m,) bool: rows whose ``Ω_ii / σ²_i`` is below ``threshold``.
+
+    Rows without a ratio (``nan``: outside ``rows_mask`` or a singular ``G``)
+    are never flagged. Critical rows (``Ω_ii`` numerically non-positive) are
+    flagged by any positive threshold. ``threshold <= 0`` flags nothing, so
+    the residual rankings that leave these rows out are then the plain
+    ``r_N`` rankings.
+    """
+    ratio = np.asarray(omega_ratio, dtype=np.float64)
+    if threshold <= 0.0:
+        return np.zeros(ratio.shape, dtype=bool)
+    with np.errstate(invalid="ignore"):
+        return np.asarray(ratio < threshold, dtype=bool)
 
 
 def check_rn_options(method: str, refine_below: float = SELINV_REFINE_BELOW) -> None:

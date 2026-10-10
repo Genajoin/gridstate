@@ -33,7 +33,13 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
-from gridstate.algebra.normalized_residuals import SELINV_REFINE_BELOW, normalized_residuals
+from gridstate.algebra.normalized_residuals import (
+    NEAR_CRITICAL_THRESHOLD,
+    SELINV_REFINE_BELOW,
+    compute_normalized_residuals,
+    near_critical_mask,
+    normalized_residuals,
+)
 from gridstate.api import estimate
 from gridstate.constants import MeasurementQuality
 from gridstate.result import SEResult
@@ -87,16 +93,31 @@ class NormalizedResidualReport:
     a diagnostic snapshot: which measurements are suspicious (r^N > threshold),
     top-N by normalized residual.
 
+    The ranking statistics (``top_records``, ``n_above_threshold``,
+    ``rn_max_finite``) are taken over the informative measurements only:
+    critical ones (``rn = inf``) and nearly critical ones (``Ω_ii / σ²_i``
+    below the near-critical threshold, whose ``rn`` is dominated by rounding)
+    are left out; the latter are listed in ``near_critical_meas_ids``. With a
+    threshold of ``0`` only the critical ones are left out (the former
+    report).
+
     Attributes:
         rn: array of normalized residuals (m,). ``inf`` for non-redundant
-            (``diag(Ω)`` ≤ 0).
+            (``diag(Ω)`` ≤ 0). Not filtered: every row, as computed.
         meas_ids: ``meas_id`` for each element of ``rn`` (the order matches
             the z-vector in the current model).
-        top_records: top-N records by ``|rn|`` (excluding ``inf``) —
-            list of :class:`ResidualTopRecord` (named fields).
-        n_above_threshold: how many measurements (excluding ``inf``) give
+        top_records: top-N records by ``|rn|`` over the informative
+            measurements — list of :class:`ResidualTopRecord` (named fields).
+        n_above_threshold: how many informative measurements give
             ``rn > rn_threshold``.
-        rn_max_finite: ``max(rn[rn<inf])`` — the maximum over the informative ones.
+        rn_max_finite: maximum ``rn`` over the informative measurements
+            (``0.0`` when there are none).
+        omega_ratio: (m,) ``Ω_ii / σ²_i`` of every row (see
+            :class:`gridstate.algebra.normalized_residuals.NormalizedResiduals`).
+        near_critical_meas_ids: ``meas_id`` of the measurements with
+            ``Ω_ii / σ²_i`` below the near-critical threshold, ascending by
+            that ratio (critical ones included); left out of the
+            statistics above.
     """
 
     rn: np.ndarray
@@ -104,6 +125,8 @@ class NormalizedResidualReport:
     top_records: list[ResidualTopRecord]
     n_above_threshold: int
     rn_max_finite: float
+    omega_ratio: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    near_critical_meas_ids: list[int] = field(default_factory=list)
 
 
 def compute_normalized_residuals_report(
@@ -114,6 +137,7 @@ def compute_normalized_residuals_report(
     rn_threshold: float = 3.0,
     rn_method: str = "solve",
     rn_refine_below: float = SELINV_REFINE_BELOW,
+    near_critical_threshold: float = NEAR_CRITICAL_THRESHOLD,
 ) -> NormalizedResidualReport:
     """Build a report on the normalized residuals after SE.
 
@@ -132,9 +156,15 @@ def compute_normalized_residuals_report(
             :mod:`gridstate.algebra.normalized_residuals`).
         rn_refine_below: ``"selected_inversion"`` refinement threshold (see
             :func:`gridstate.algebra.normalized_residuals.normalized_residuals`).
+        near_critical_threshold: ``Ω_ii / σ²_i`` below which a measurement is
+            left out of the ranking statistics and listed in
+            ``near_critical_meas_ids`` (default ``1e-4``, as
+            ``PipelineConfig.near_critical_threshold``). ``0`` leaves out only
+            the critical ones (``rn = inf``).
 
     Returns:
-        ``NormalizedResidualReport``. ``inf`` values are excluded from the top.
+        ``NormalizedResidualReport``. ``inf`` values and nearly critical
+        measurements are excluded from the top and the counts.
     """
     if measurements is None:
         measurements = model.measurements
@@ -149,11 +179,17 @@ def compute_normalized_residuals_report(
             n_above_threshold=0,
             rn_max_finite=0.0,
         )
-    rn = _normalized_residuals(diag, method=rn_method, refine_below=rn_refine_below)
+    normalized = compute_normalized_residuals(
+        diag.r, diag.H, diag.sigma2, method=rn_method, refine_below=rn_refine_below
+    )
+    rn = normalized.rn
     meas_ids = np.asarray(diag.meas_index.meas_id, dtype=np.int64)
-    finite_mask = np.isfinite(rn)
+    near_critical = near_critical_mask(normalized.omega_ratio, near_critical_threshold)
+    finite_mask = np.isfinite(rn) & ~near_critical
     n_above = int(np.sum((rn > rn_threshold) & finite_mask))
     rn_max_finite = float(np.max(rn[finite_mask])) if np.any(finite_mask) else 0.0
+    flagged = np.where(near_critical)[0]
+    flagged = flagged[np.argsort(normalized.omega_ratio[flagged], kind="stable")]
 
     object_kind = np.asarray(diag.meas_index.object_kind, dtype=np.int64)
     kind = np.asarray(diag.meas_index.kind, dtype=np.int64)
@@ -185,6 +221,8 @@ def compute_normalized_residuals_report(
         top_records=top_records,
         n_above_threshold=n_above,
         rn_max_finite=rn_max_finite,
+        omega_ratio=normalized.omega_ratio,
+        near_critical_meas_ids=[int(meas_ids[pos]) for pos in flagged],
     )
 
 
@@ -247,7 +285,9 @@ def remove_bad_data(
            ``status=False, quality=BAD`` and the loop repeats.
 
     Only finite ``r^N`` take part in the test: critical measurements
-    (``r^N = inf``) are kept and listed in ``critical_meas_ids``.
+    (``r^N = inf``) are kept and listed in ``critical_meas_ids``. Nearly
+    critical measurements (small finite ``Ω_ii / σ²_i``), which the reports
+    leave out of their rankings, still take part in the test.
 
     Args:
         model: ``Working`` — updated in place.

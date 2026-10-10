@@ -160,7 +160,9 @@ def estimate(
             below this value are recomputed by per-row solves; those at the
             critical cut-off always are. ``0`` — only those.
         quality_summary_near_critical: ``Ω_ii / σ²_i`` threshold of
-            ``near_critical_measurements``; ``0`` reports none.
+            ``near_critical_measurements``; those measurements are left out
+            of ``worst_residuals``. ``0`` reports none and ranks every
+            finite ``r_N``.
         success_policy: how ``SEResult.success`` is derived. ``"legacy"``
             (default) — the solver's own flag (WLS: step below the tolerance,
             also when the trust region collapsed; IPM: the barrier schedule
@@ -464,9 +466,14 @@ def _populate_quality_summary(
                 is_pseudo=is_pseudo_z,
                 scope=scope,
                 normalized=normalized,
+                near_critical=near_critical,
             )
             result.near_critical_measurements = near_critical_measurements(
-                normalized, meas_index, threshold=near_critical, is_pseudo=is_pseudo_z
+                normalized,
+                meas_index,
+                threshold=near_critical,
+                is_pseudo=is_pseudo_z,
+                network_pu=network_pu,
             )
         result.worst_imbalance = top_worst_imbalance(model, n=top_n)
         result.observability_warnings = observability_warnings_from_H(

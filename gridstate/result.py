@@ -128,7 +128,8 @@ class NearCriticalRow:
     ``1 / omega_ratio`` in ``Ω_ii`` and in the normalized residual, and two
     exact methods of computing it may disagree in the leading digits. The
     measurement is nearly critical: the estimate follows it almost exactly,
-    so its residual says little about its error.
+    so its residual says little about its error. Such measurements are left
+    out of ``SEResult.worst_residuals`` and listed here instead.
 
     Attributes:
         measurement_id: ``Measurement.id`` of the source measurement.
@@ -141,6 +142,11 @@ class NearCriticalRow:
             leaves pseudo-measurements out of ``r_N`` (and so out of this
             report); it can be ``True`` only with
             ``quality_summary_scope="all"``.
+        object_kind: 0=node / 1=branch / 2=generator; ``-1`` — unknown
+            (as in :class:`ResidualRow`).
+        object_id: ``id`` of the measured object (node/branch); ``0`` if
+            unknown.
+        branch_side: branch side (0=from, 1=to, ``-1`` — not a branch).
     """
 
     measurement_id: int
@@ -148,6 +154,9 @@ class NearCriticalRow:
     omega_ratio: float
     normalized_residual: float
     is_pseudo: bool = False
+    object_kind: int = -1
+    object_id: int = 0
+    branch_side: int = -1
 
 
 @dataclass
@@ -284,16 +293,23 @@ class SEResult:
             etc.).
         chi2: summary of the χ² test (``None`` if not computed).
         worst_residuals: top-N measurements by ``|r_N|`` (descending).
-            Empty list if the computation was skipped / there are no measurements.
+            Critical measurements (``r_N = inf``) and the nearly critical
+            ones of ``near_critical_measurements`` are left out: their
+            ``r_N`` is undefined or numerically unreliable. Empty list if
+            the computation was skipped / there are no measurements.
         worst_imbalance: top-N nodes by ``|imbalance_p|`` (descending).
         observability_warnings: list of ``node_id`` of nodes with zero
             ``H`` columns (state variables not covered by measurements).
             Empty if the analysis was not run.
         near_critical_measurements: measurements (in the scope of
             ``worst_residuals``) whose ``Ω_ii / σ²_i`` is below the
-            near-critical threshold, ascending by that ratio; their
-            ``normalized_residual`` is numerically unreliable (see
-            :class:`NearCriticalRow`). Reported only, nothing is changed.
+            near-critical threshold, ascending by that ratio (least
+            reliable first; critical ones, ``r_N = inf``, are included);
+            their ``normalized_residual`` is numerically unreliable (see
+            :class:`NearCriticalRow`), so they are listed here instead of
+            in ``worst_residuals``. A threshold of ``0`` lists none and
+            ranks every finite ``r_N``. Reporting only: the ``r_N`` values
+            and the bad-data test are not affected.
             Pseudo-measurements are excluded from ``r_N`` by construction
             under the default scope ``"real"`` (their ratio is not
             computed), so they never appear here and ``is_pseudo`` is always

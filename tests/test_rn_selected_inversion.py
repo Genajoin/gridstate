@@ -343,11 +343,13 @@ def test_pipeline_uses_the_configured_method(python_kernels) -> None:
     base = run_se(se_in, config=PipelineConfig()).result
     alt = run_se(
         load_se_input_npz(_DATA_DIR / "case30.npz"),
-        config=PipelineConfig(
-            normalized_residuals_method="selected_inversion", near_critical_threshold=1.0
-        ),
+        config=PipelineConfig(normalized_residuals_method="selected_inversion"),
     ).result
-    assert base is not None and alt is not None
+    every = run_se(
+        load_se_input_npz(_DATA_DIR / "case30.npz"),
+        config=PipelineConfig(near_critical_threshold=1.0),
+    ).result
+    assert base is not None and alt is not None and every is not None
     assert [r.measurement_id for r in alt.worst_residuals] == [
         r.measurement_id for r in base.worst_residuals
     ]
@@ -357,7 +359,10 @@ def test_pipeline_uses_the_configured_method(python_kernels) -> None:
         rtol=1e-10,
     )
     assert base.near_critical_measurements == []
-    assert len(alt.near_critical_measurements) > 0
+    # Every ratio is below 1: everything is listed apart, nothing is ranked.
+    assert every.worst_residuals == []
+    listed = {r.measurement_id for r in every.near_critical_measurements}
+    assert {r.measurement_id for r in base.worst_residuals} <= listed
 
 
 # ---------------------------------------------------------------------------

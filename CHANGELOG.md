@@ -74,6 +74,19 @@ cut by tagging the merged main commit; the version is derived from that tag.
 - Private helpers `quality_summary._normalized_residuals`, `_hgh_diag_cholmod`
   and `_hgh_diag_dense` moved to `gridstate.algebra.normalized_residuals` as
   public names (#43)
+- Report: nearly critical measurements (`Ω_ii / σ²_i` below the
+  near-critical threshold, default `1e-4`) are left out of the residual
+  rankings and listed apart, since their `r_N` is numerically unreliable and a
+  few of them could fill the whole top list. `SEResult.worst_residuals` no
+  longer contains the rows of `SEResult.near_critical_measurements`;
+  `compute_normalized_residuals_report` (new argument
+  `near_critical_threshold`) leaves them out of `top_records`,
+  `n_above_threshold` and `rn_max_finite` and lists them in the new
+  `near_critical_meas_ids` (with the ratio of every row in `omega_ratio`).
+  `NearCriticalRow` gains `object_kind` / `object_id` / `branch_side` as in
+  `ResidualRow`. A threshold of `0` restores the previous rankings exactly.
+  The `r_N` values and the bad-data test (`remove_bad_data`) are unchanged
+  (#60)
 
 ### Feat
 
