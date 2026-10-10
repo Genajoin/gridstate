@@ -1,5 +1,5 @@
-"""Единая семантика незаданных границ (gridstate.bounds) + её потребители:
-клип WLS-разноса, агрегация лимитов генераторов, box-vars IPM."""
+"""Uniform semantics of unspecified bounds (gridstate.bounds) and its consumers:
+clipping of runaway WLS estimates, aggregation of generator limits, IPM box vars."""
 
 from __future__ import annotations
 
@@ -33,14 +33,14 @@ def test_resolve_bounds_sentinel_pair_is_unbounded():
 
 
 def test_resolve_bounds_half_sentinel_kept_as_is():
-    """Полусентинельная пара сохраняется (вторая сторона — данные)."""
+    """A half-sentinel pair is kept (the other side is data)."""
     assert resolve_bounds(-9999.0, 120.0) == (-9999.0, 120.0)
     assert resolve_bounds(0.0, 42500.0) == (0.0, 42500.0)
 
 
 def test_resolve_bounds_large_real_pair_is_data():
-    """Реальная пара большого масштаба (узел-эквивалент: load 10..30 ГВт)
-    НЕ трактуется сентинельной — порог |v|>=9000 это ломал."""
+    """A real wide pair (equivalent node: load 10..30 GW)
+    is NOT treated as a sentinel - the |v|>=9000 threshold used to break this."""
     assert resolve_bounds(10000.0, 30000.0) == (10000.0, 30000.0)
 
 
@@ -51,13 +51,13 @@ def test_resolve_bounds_inverted_pair_is_unbounded():
 
 def test_resolve_bounds_valid_pair_passthrough():
     assert resolve_bounds(-50.0, 100.0) == (-50.0, 100.0)
-    # Полупара с нулём — валидна (не оба нули).
+    # A half-pair with zero is valid (not both zeros).
     assert resolve_bounds(0.0, 80.0) == (0.0, 80.0)
 
 
 def test_is_sentinel_exact_value():
-    """Сентинел — ТОЧНОЕ ±9999, не порог: реальные границы того же
-    масштаба (10000, 30000, 42500) — данные, их нельзя съедать."""
+    """The sentinel is EXACTLY ±9999, not a threshold: real bounds of the same
+    magnitude (10000, 30000, 42500) are data and must not be swallowed."""
     assert is_sentinel(9999.0)
     assert is_sentinel(-9999.0)
     assert not is_sentinel(10000.0)
@@ -67,12 +67,12 @@ def test_is_sentinel_exact_value():
 
 
 # ---------------------------------------------------------------------------
-# Клип WLS-разноса: незаданные границы больше не зануляют оценку
+# Clipping of runaway WLS estimates: unspecified bounds no longer zero the estimate
 # ---------------------------------------------------------------------------
 
 
 def _model_unbounded_load():
-    """load-only узел БЕЗ заданных границ (numpy-default 0,0)."""
+    """Load-only node WITHOUT specified bounds (numpy default 0,0)."""
     from gridstate.constants import NodeType
     from gridstate.working import Working
 
@@ -87,14 +87,14 @@ def _model_unbounded_load():
             "exist_load": 1,
             "status": True,
             "node_type": int(NodeType.PQ),
-            # load_*_min/max не задаются — остаются (0, 0).
+            # load_*_min/max are not set - they stay (0, 0).
         }
     )
     return m
 
 
 def test_inj_split_unset_bounds_do_not_zero_estimate():
-    """Раньше пара (0,0) клиповала оценку к нулю — нагрузка терялась."""
+    """Previously the (0,0) pair clipped the estimate to zero - the load was lost."""
     from gridstate.post_processing import write_node_estimates_from_inj
 
     m = _model_unbounded_load()
@@ -123,11 +123,11 @@ def test_inj_split_sentinel_bounds_do_not_clip():
     write_node_estimates_from_inj(m)
     n = m.nodes.get_by_id(1)
     assert n.load_p_estimated == 300.0
-    assert n.load_q_estimated == -90.0  # ёмкостная нагрузка не клипуется хламом
+    assert n.load_q_estimated == -90.0  # a capacitive load is not clipped by junk values
 
 
 def test_inj_split_valid_bounds_still_clip():
-    """Валидные границы продолжают клиповать (регрессия поведения)."""
+    """Valid bounds still clip (behaviour regression)."""
     from gridstate.post_processing import write_node_estimates_from_inj
 
     m = _model_unbounded_load()
@@ -146,7 +146,7 @@ def test_inj_split_valid_bounds_still_clip():
 
 
 # ---------------------------------------------------------------------------
-# Агрегация лимитов генераторов: сентинелы не суммируются
+# Generator limit aggregation: sentinels are not summed
 # ---------------------------------------------------------------------------
 
 
@@ -161,8 +161,8 @@ def _nodes_and_gens(gen_rows):
 
 
 def test_aggregate_sentinel_limits_poison_node_pair():
-    """Один генератор с сентинельными Q-лимитами → узловая Q-пара = ±9999,
-    а не мусорная сумма; P-пара (все валидны) — обычная сумма."""
+    """A single generator with sentinel Q limits -> node Q pair = ±9999,
+    not a junk sum; the P pair (all valid) is the ordinary sum."""
     from gridstate.telemetry.generators import aggregate_generators_to_node
 
     m = _nodes_and_gens(
@@ -196,7 +196,7 @@ def test_aggregate_sentinel_limits_poison_node_pair():
     assert n.generation_p == 70.0
     assert n.generation_q == 15.0
     assert (n.generation_p_min, n.generation_p_max) == (10.0, 100.0)
-    # Q-диапазон неизвестен → сентинел, не [-10049, 10099].
+    # Q range is unknown -> sentinel, not [-10049, 10099].
     assert (n.generation_q_min, n.generation_q_max) == (-9999.0, 9999.0)
     assert stats["sentinel_q_nodes"] == 1
     assert stats["sentinel_p_nodes"] == 0
@@ -237,12 +237,12 @@ def test_aggregate_all_valid_limits_summed():
 
 
 # ---------------------------------------------------------------------------
-# IPM box-vars: полное покрытие exist_*-узлов
+# IPM box vars: full coverage of exist_* nodes
 # ---------------------------------------------------------------------------
 
 
 def _ipm_setup_for(node_kwargs):
-    """build_ipm_setup на минимальной 2-узловой модели (slack + тестовый)."""
+    """build_ipm_setup on a minimal 2-node model (slack + test node)."""
     from scipy.sparse import csr_matrix
 
     from gridstate.constants import NodeType
@@ -299,21 +299,21 @@ def _ipm_setup_for(node_kwargs):
 
 
 def test_ipm_box_created_without_q_bounds():
-    """exist_gen-узел БЕЗ Q-границ всё равно получает Qgen box-var
-    (раньше — нет, и balance-Q прижимал его реактив к нулю)."""
+    """An exist_gen node WITHOUT Q bounds still gets a Qgen box var
+    (previously it did not, and the balance-Q pinned its reactive power to zero)."""
     setup = _ipm_setup_for(
         {
             "exist_gen": 1,
             "generation_p": 50.0,
             "generation_p_min": 0.0,
             "generation_p_max": 100.0,
-            # generation_q_min/max не заданы (0, 0).
+            # generation_q_min/max are not set (0, 0).
         }
     )
     assert setup.layout.pgen_node_pos.size == 1
-    assert setup.layout.qgen_node_pos.size == 1  # ключевое: box-var есть
-    # Дефолтная коробка ±50 p.u.
-    q_idx = setup.layout.pgen_node_pos.size  # qgen-секция после pgen
+    assert setup.layout.qgen_node_pos.size == 1  # the key point: the box var exists
+    # Default box of ±50 p.u.
+    q_idx = setup.layout.pgen_node_pos.size  # the qgen section follows pgen
     assert setup.box_lo[q_idx] == -50.0
     assert setup.box_hi[q_idx] == 50.0
 
@@ -325,8 +325,8 @@ def test_ipm_box_created_for_load_without_bounds():
 
 
 def test_ipm_default_box_no_bus_equiv_prior():
-    """Дефолтная широкая коробка НЕ получает tight BUS-эквивалент prior
-    (ширина 100 p.u. ≥ порога, но это «нет данных», а не эквивалент)."""
+    """The default wide box does NOT get a tight bus-equivalent prior
+    (width 100 p.u. >= threshold, but it means "no data", not an equivalent)."""
     setup = _ipm_setup_for(
         {
             "exist_gen": 1,
@@ -335,14 +335,14 @@ def test_ipm_default_box_no_bus_equiv_prior():
             "generation_p_max": 100.0,
         }
     )
-    # prior-меры в z идут после balance: ни одной prior-строки не должно
-    # появиться (prior_sigma2_normal_pu=0 и default-box не BUS-эквив).
-    n_balance = 2 * 2  # 2 активных узла × (P+Q)
-    assert setup.z.shape[0] == n_balance  # z был пуст; только balance-строки
+    # prior measurements in z come after balance: no prior row
+    # may appear (prior_sigma2_normal_pu=0 and the default box is not a bus equivalent).
+    n_balance = 2 * 2  # 2 active nodes x (P+Q)
+    assert setup.z.shape[0] == n_balance  # z was empty; only balance rows
 
 
 def test_ipm_real_bus_equiv_still_gets_prior():
-    """Реальная широкая коробка из ДАННЫХ по-прежнему BUS-эквивалент."""
+    """A real wide box from DATA is still a bus equivalent."""
     setup = _ipm_setup_for(
         {
             "exist_gen": 1,
@@ -354,27 +354,27 @@ def test_ipm_real_bus_equiv_still_gets_prior():
         }
     )
     n_balance = 2 * 2
-    # Одна prior-строка на pgen (width 425 p.u. > 100) — bus-equiv tight.
+    # One prior row per pgen (width 425 p.u. > 100) - bus-equiv tight.
     assert setup.z.shape[0] == n_balance + 1
 
 
 # ---------------------------------------------------------------------------
-# Компенсаторы: P ровно [0, 0] при заданном Q — данные, а не «не задано»
+# Compensators: P exactly [0, 0] with Q specified is data, not "unspecified"
 # ---------------------------------------------------------------------------
 
 
 def test_reactive_only_generation_detection():
     from gridstate.bounds import is_reactive_only_generation
 
-    assert is_reactive_only_generation(0.0, 0.0, -63.0, 0.0)  # УШР
-    assert is_reactive_only_generation(0.0, 0.0, -66.0, 66.0)  # статком
-    assert not is_reactive_only_generation(0.0, 100.0, -50.0, 50.0)  # машина
-    assert not is_reactive_only_generation(0.0, 0.0, 0.0, 0.0)  # ничего не задано
-    assert not is_reactive_only_generation(0.0, 0.0, 9999.0, -9999.0)  # сентинелы
+    assert is_reactive_only_generation(0.0, 0.0, -63.0, 0.0)  # controlled shunt reactor
+    assert is_reactive_only_generation(0.0, 0.0, -66.0, 66.0)  # STATCOM
+    assert not is_reactive_only_generation(0.0, 100.0, -50.0, 50.0)  # machine
+    assert not is_reactive_only_generation(0.0, 0.0, 0.0, 0.0)  # nothing specified
+    assert not is_reactive_only_generation(0.0, 0.0, 9999.0, -9999.0)  # sentinels
 
 
 def test_ipm_compensator_gets_no_active_power_box():
-    """УШР (P [0, 0], Q [-63, 0]): P-переменной нет, Q-переменная в своём ящике."""
+    """Controlled shunt reactor (P [0, 0], Q [-63, 0]): no P variable, the Q variable has its own box."""
     setup = _ipm_setup_for(
         {
             "exist_gen": 1,

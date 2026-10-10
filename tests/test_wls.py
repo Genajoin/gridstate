@@ -1,16 +1,16 @@
-"""Тесты WLS-алгоритма (``gridstate.algorithms.wls.solve_wls``) и обвязки
+"""Tests of the WLS algorithm (``gridstate.algorithms.wls.solve_wls``) and its wrapper
 ``estimate()``.
 
-Подход к синтетике:
-    1. Берём произвольную сеть и фиксируем «истинное» состояние ``E_true``
-       (V, δ); slack — нулевой угол, V=1.0 p.u.
-    2. Через ``BaseAlgebra.evaluate_h`` получаем «идеальные» измерения
-       ``z = h(E_true)`` без шума.
-    3. Запускаем ``solve_wls`` из flat-старта.
-    4. Проверяем ``E_se ≈ E_true``.
+Approach to the synthetic data:
+    1. Take an arbitrary network and fix the "true" state ``E_true``
+       (V, δ); slack has zero angle, V=1.0 p.u.
+    2. Obtain "ideal" measurements ``z = h(E_true)`` without noise
+       through ``BaseAlgebra.evaluate_h``.
+    3. Run ``solve_wls`` from a flat start.
+    4. Check ``E_se ≈ E_true``.
 
-Критерий сходимости (≤5 итераций, ``max|ΔE|<1e-6``) проверяется на 3-узловой
-сети с переопределённой системой измерений.
+The convergence criterion (<=5 iterations, ``max|ΔE|<1e-6``) is checked on a 3-node
+network with an overdetermined measurement system.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from gridstate.z_vector import (
 
 # ----------------------------------------------------------- helpers
 def _three_bus_for_se():
-    """3-узловая сеть. Slack=1; PQ-узлы 2, 3. Достаточно линий для теста."""
+    """3-node network. Slack=1; PQ nodes 2, 3. Enough lines for the test."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -127,10 +127,10 @@ def _three_bus_for_se():
 
 
 def _generate_ideal_measurements(model, e_true: np.ndarray, layout: StateLayout):
-    """Сгенерировать коллекцию измерений из ``z = h(E_true)``.
+    """Generate a measurement collection from ``z = h(E_true)``.
 
-    Покрытие: V на всех узлах, P/Q инъекции на всех узлах, P/Q на «from» каждой
-    ветви. Измерения — переопределённая система (m > 2n−1).
+    Coverage: V at all nodes, P/Q injections at all nodes, P/Q at the "from" end of each
+    branch. The measurements form an overdetermined system (m > 2n-1).
     """
     from gridstate.working import Working
 
@@ -158,9 +158,9 @@ def _generate_ideal_measurements(model, e_true: np.ndarray, layout: StateLayout)
         )
         next_id += 1
 
-    # P_inj, Q_inj — на всех узлах (slack тоже даём, чтобы система была
-    # переопределена по углам). В реальных задачах обычно дают P/Q инъекции
-    # только на узлах нагрузок/генерации.
+    # P_inj, Q_inj at all nodes (slack included, so that the system is
+    # overdetermined in angles). In real problems P/Q injections are usually given
+    # only at load/generation nodes.
     V = v_true * np.exp(1j * delta_true)
     Sbus = V * np.conj(ybus @ V)
     for pos, node_id in enumerate(pu.bus_ids.tolist()):
@@ -193,7 +193,7 @@ def _generate_ideal_measurements(model, e_true: np.ndarray, layout: StateLayout)
         )
         next_id += 1
 
-    # P_from, Q_from по каждой ветви; ставим ti_p_from / ti_q_from в branch.
+    # P_from, Q_from for each branch; set ti_p_from / ti_q_from in the branch.
     branches_arr = model.branches.to_numpy()
     If = yf @ V
     Sf = V[pu.from_idx] * np.conj(If)
@@ -231,7 +231,7 @@ def _generate_ideal_measurements(model, e_true: np.ndarray, layout: StateLayout)
             }
         )
         next_id += 1
-        # привяжем измерения к ветви через ti_p_from / ti_q_from
+        # bind the measurements to the branch via ti_p_from / ti_q_from
         model.branches.update(branch_id, {"ti_p_from": meas_p_id, "ti_q_from": meas_q_id})
 
     return coll
@@ -239,7 +239,7 @@ def _generate_ideal_measurements(model, e_true: np.ndarray, layout: StateLayout)
 
 # ---------------------------------------------------------- basic recovery
 def test_solve_wls_recovers_true_state_no_noise() -> None:
-    """Без шума WLS должен ровно восстановить ``E_true`` за несколько итераций."""
+    """Without noise WLS must recover ``E_true`` exactly in a few iterations."""
     m = _three_bus_for_se()
     pu = model_to_pu(m)
     layout = StateLayout.from_slack(pu.n_bus, pu.slack_idx)
@@ -251,7 +251,7 @@ def test_solve_wls_recovers_true_state_no_noise() -> None:
     e_true = pack(delta_true, v_true, layout)
 
     coll = _generate_ideal_measurements(m, e_true, layout)
-    pu = model_to_pu(m)  # пересоздаём после .update() ветвей
+    pu = model_to_pu(m)  # recreate after the branch .update()
     ybus, yf, yt = build_ybus(pu)
     z, R, idx = build_z_and_r(m, coll, pu)
 
@@ -270,12 +270,12 @@ def test_solve_wls_recovers_true_state_no_noise() -> None:
         max_iterations=20,
     )
 
-    assert res.success, f"WLS не сошёлся за {res.iterations} итераций"
+    assert res.success, f"WLS did not converge in {res.iterations} iterations"
     np.testing.assert_allclose(res.x, e_true, atol=1e-6)
 
 
 def test_solve_wls_meets_iteration_budget() -> None:
-    """Критерий сходимости: WLS сходится за ≤5 итераций при σ=0.01 p.u."""
+    """Convergence criterion: WLS converges in <=5 iterations at σ=0.01 p.u."""
     m = _three_bus_for_se()
     pu = model_to_pu(m)
     layout = StateLayout.from_slack(pu.n_bus, pu.slack_idx)
@@ -287,7 +287,7 @@ def test_solve_wls_meets_iteration_budget() -> None:
     e_true = pack(delta_true, v_true, layout)
 
     coll = _generate_ideal_measurements(m, e_true, layout)
-    # Добавим небольшой шум.
+    # Add a small amount of noise.
     sigma = 0.01
     for meas in coll:
         noise = rng.normal(0.0, sigma * abs(float(meas.value) + 1e-6))
@@ -311,8 +311,8 @@ def test_solve_wls_meets_iteration_budget() -> None:
         max_iterations=20,
     )
     assert res.success
-    assert res.iterations <= 5, f"требуется ≤5 итераций, фактически {res.iterations}"
-    # Близко к истинному состоянию (разброс ~ σ).
+    assert res.iterations <= 5, f"expected <=5 iterations, got {res.iterations}"
+    # Close to the true state (spread ~ σ).
     np.testing.assert_allclose(res.x, e_true, atol=0.05)
 
 
@@ -333,7 +333,7 @@ def test_estimate_writes_results_back_to_model() -> None:
     assert result.success
     assert result.iterations >= 1
 
-    # Проверяем, что V_kV, δ_rad записаны в модель.
+    # Check that V_kV, δ_rad are written to the model.
     nodes_arr = m.nodes.to_numpy()
     for pos, node_id in enumerate(pu.bus_ids.tolist()):
         row = nodes_arr[nodes_arr["id"] == node_id][0]
@@ -341,7 +341,7 @@ def test_estimate_writes_results_back_to_model() -> None:
         assert row["voltage_magnitude"] == pytest.approx(v_kv_expected, abs=1e-4)
         assert row["voltage_angle"] == pytest.approx(delta_true[pos], abs=1e-6)
 
-    # Перетоки/токи на ветвях должны быть проставлены.
+    # Branch flows/currents must be populated.
     branches_arr = m.branches.to_numpy()
     assert np.all(np.abs(branches_arr["power_from_p"]) > 0)
     assert np.all(np.abs(branches_arr["current_from"]) > 0)
@@ -353,14 +353,14 @@ def test_estimate_init_flat_default() -> None:
     layout = StateLayout.from_slack(pu.n_bus, pu.slack_idx)
     e_true = pack(np.zeros(pu.n_bus), np.ones(pu.n_bus), layout)
     coll = _generate_ideal_measurements(m, e_true, layout)
-    # Тривиальный случай: истина = flat → за 1 итерацию.
+    # Trivial case: truth = flat -> 1 iteration.
     result = estimate(m, coll, init="flat", tolerance=1e-10)
     assert result.success
     assert result.iterations <= 2
 
 
 def test_estimate_init_results_uses_model_state() -> None:
-    """init='results' использует voltage_magnitude/angle из модели."""
+    """init='results' uses voltage_magnitude/angle from the model."""
     m = _three_bus_for_se()
     pu = model_to_pu(m)
     layout = StateLayout.from_slack(pu.n_bus, pu.slack_idx)
@@ -371,7 +371,7 @@ def test_estimate_init_results_uses_model_state() -> None:
     e_true = pack(delta_true, v_true, layout)
     coll = _generate_ideal_measurements(m, e_true, layout)
 
-    # Подставляем в model.nodes текущее состояние, близкое к истине.
+    # Put into model.nodes the current state, close to the truth.
     for pos, node_id in enumerate(pu.bus_ids.tolist()):
         m.nodes.update(
             int(node_id),
@@ -382,7 +382,7 @@ def test_estimate_init_results_uses_model_state() -> None:
         )
     result = estimate(m, coll, init="results", tolerance=1e-10)
     assert result.success
-    # При init из истины — обязано сойтись быстрее flat-start.
+    # Initialising from the truth must converge faster than a flat start.
     assert result.iterations <= 3
 
 
@@ -414,13 +414,13 @@ def test_solve_wls_empty_measurements_warns() -> None:
 
 
 def test_solve_wls_singular_returns_failure() -> None:
-    """При сингулярной gain-matrix WLS должен вернуть ``success=False``,
-    а не «iter=1, J=NaN, success=True» из-за пустого шага.
+    """With a singular gain matrix WLS must return ``success=False``
+    rather than "iter=1, J=NaN, success=True" caused by an empty step.
 
-    Сценарий: в 3-узловой сети ставим всего одно V-измерение — система
-    недоопределена (ранг H ≪ n_state=5). spsolve(G, ...) падает на
-    сингулярной матрице, ранний выход не должен интерпретироваться как
-    успех.
+    Scenario: in the 3-node network place only a single V measurement, so the system is
+    underdetermined (rank H << n_state=5). spsolve(G, ...) fails on the
+    singular matrix; the early exit must not be interpreted as
+    success.
     """
     from gridstate.working import Working
 
@@ -455,5 +455,5 @@ def test_solve_wls_singular_returns_failure() -> None:
         pu,
         max_iterations=10,
     )
-    assert not res.success, "WLS не должен сообщать успех на сингулярной задаче"
-    assert np.isfinite(res.objective), f"J должен быть числом, а не {res.objective}"
+    assert not res.success, "WLS must not report success on a singular problem"
+    assert np.isfinite(res.objective), f"J must be a number, not {res.objective}"

@@ -1,7 +1,7 @@
-"""Тесты ``gridstate.algebra.base.BaseAlgebra``.
+"""Tests of ``gridstate.algebra.base.BaseAlgebra``.
 
-Основная проверка — численная: для случайной сети сравниваем аналитический
-якобиан с конечно-разностной аппроксимацией.
+The main check is numerical: for a random network we compare the analytic
+Jacobian with a finite-difference approximation.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from gridstate.z_vector import (
 
 # ---------------------------------------------------------- helpers
 def _build_three_bus():
-    """3-узловая сеть с двумя ветвями и набором измерений всех типов."""
+    """3-node network with two branches and a set of measurements of all types."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -106,7 +106,7 @@ def _build_three_bus():
         }
     )
 
-    # Измерения: V на всех узлах
+    # Measurements: V at all nodes
     for i, node_id in enumerate([1, 2, 3], start=1):
         m.measurements.add(
             {
@@ -120,7 +120,7 @@ def _build_three_bus():
                 "quality": 0,
             }
         )
-    # P/Q инъекции на не-slack узлах
+    # P/Q injections at non-slack nodes
     m.measurements.add(
         {
             "id": 10,
@@ -157,7 +157,7 @@ def _build_three_bus():
             "quality": 0,
         }
     )
-    # Перетоки по ветвям (from)
+    # Branch flows (from)
     m.measurements.add(
         {
             "id": 1001,
@@ -182,7 +182,7 @@ def _build_three_bus():
             "quality": 0,
         }
     )
-    # Переток (to) на ветви 100
+    # Flow (to) on branch 100
     m.measurements.add(
         {
             "id": 1003,
@@ -253,11 +253,11 @@ def _numeric_jacobian(
 
 @pytest.mark.parametrize("seed", [0, 1, 42])
 def test_jacobian_matches_finite_differences(seed: int) -> None:
-    """Аналитический якобиан совпадает с численным (FD)."""
+    """The analytic Jacobian matches the numerical (FD) one."""
     m = _build_three_bus()
     algebra, pu, layout, _z, _ = _make_algebra(m)
     rng = np.random.default_rng(seed)
-    # Нерасплющенное состояние, чтобы избежать сингулярности |I|=0.
+    # Non-flat state, to avoid the |I|=0 singularity.
     delta = rng.uniform(-0.05, 0.05, size=pu.n_bus)
     delta[layout.slack_idx] = 0.0
     v = 1.0 + rng.uniform(-0.05, 0.05, size=pu.n_bus)
@@ -269,7 +269,7 @@ def test_jacobian_matches_finite_differences(seed: int) -> None:
 
 
 def test_h_voltage_in_kV_correctly_normalized() -> None:
-    """V-измерение vn=110, V_pu=1.0 → ``h = 1.0`` (а не 110)."""
+    """V measurement with vn=110, V_pu=1.0 -> ``h = 1.0`` (not 110)."""
     m = _build_three_bus()
     algebra, pu, _layout, _z, idx = _make_algebra(m)
     delta = np.zeros(pu.n_bus)
@@ -281,19 +281,19 @@ def test_h_voltage_in_kV_correctly_normalized() -> None:
 
 # --------------------------------------------------- branch power direction
 def test_branch_power_to_side_uses_to_node_voltage() -> None:
-    """h(POWER_P, side=TO) ≠ h(POWER_P, side=FROM) при ненулевом перетоке."""
+    """h(POWER_P, side=TO) != h(POWER_P, side=FROM) at a non-zero flow."""
     m = _build_three_bus()
     algebra, _pu, _layout, _z, idx = _make_algebra(m)
-    # Состояние не-flat — нужна разница углов, чтобы был переток.
+    # Non-flat state - an angle difference is needed to get a flow.
     delta = np.array([0.0, -0.05, -0.10])
     v = np.array([1.0, 0.98, 0.95])
     h = algebra.evaluate_h(v, delta)
     p_from = float(h[idx.meas_id == 1001].item())
     p_to = float(h[idx.meas_id == 1003].item())
-    # Активный поток: |P_from + P_to| = потери R·I² ≪ |P_from|.
-    assert p_from > 0  # шлёт от 1 к 2
-    assert p_to < 0  # узел 2 принимает
-    assert abs(p_from + p_to) < 0.05 * abs(p_from)  # потери небольшие
+    # Active flow: |P_from + P_to| = losses R·I² << |P_from|.
+    assert p_from > 0  # sends from 1 to 2
+    assert p_to < 0  # node 2 receives
+    assert abs(p_from + p_to) < 0.05 * abs(p_from)  # losses are small
 
 
 # ------------------------------------------------ degenerate / empty inputs
@@ -301,7 +301,7 @@ def test_empty_measurements_returns_zero_jacobian() -> None:
     m = _build_three_bus()
     pu = model_to_pu(m)
     ybus, yf, yt = build_ybus(pu)
-    # Пустая коллекция измерений
+    # Empty measurement collection
     from gridstate.working import Working
 
     empty = Working.empty().measurements
@@ -328,7 +328,7 @@ def test_balance_meas_h_uses_box_vars() -> None:
     m = _build_three_bus()
     pu = model_to_pu(m)
     ybus, yf, yt = build_ybus(pu)
-    # Layout с box-vars на узле 2 (позиция в bus_ids):
+    # Layout with box vars at node 2 (position in bus_ids):
     pos_node2 = int(np.where(pu.bus_ids == 2)[0][0])
     layout = StateLayout(
         n_bus=pu.n_bus,
@@ -339,7 +339,7 @@ def test_balance_meas_h_uses_box_vars() -> None:
         pnag_node_pos=np.array([pos_node2], dtype=np.int64),
         qnag_node_pos=np.array([pos_node2], dtype=np.int64),
     )
-    # Создаём MeasurementIndex с двумя balance-meas (P, Q) на узле 2.
+    # Create a MeasurementIndex with two balance measurements (P, Q) at node 2.
     idx = MeasurementIndex(
         kind=np.array([KIND_NODE_BALANCE_P, KIND_NODE_BALANCE_Q], dtype=np.int64),
         object_kind=np.array([OBJ_NODE, OBJ_NODE], dtype=np.int64),
@@ -352,11 +352,11 @@ def test_balance_meas_h_uses_box_vars() -> None:
     v = np.array([1.0, 0.99, 0.985])
     delta = np.array([0.0, -0.02, -0.04])
 
-    # Без box-values (None) — balance принимает их как 0:
+    # Without box values (None) - balance takes them as 0:
     # h_balance_P = Sbus.real - 0 = Sbus.real
     h_no_box = algebra.evaluate_h(v, delta)
 
-    # С box-values: pgen=0.6, pnag=0.3 → -(0.6-0.3) = -0.3
+    # With box values: pgen=0.6, pnag=0.3 -> -(0.6-0.3) = -0.3
     h_with_box = algebra.evaluate_h(
         v,
         delta,
@@ -367,12 +367,12 @@ def test_balance_meas_h_uses_box_vars() -> None:
     )
     # h_with_box[0] (P-balance) = Sbus.real − 0.3 = h_no_box[0] − 0.3
     assert h_with_box[0] == pytest.approx(h_no_box[0] - 0.3, abs=1e-9)
-    # Q: pgen=qnag=0 → разница 0
+    # Q: pgen=qnag=0 -> difference 0
     assert h_with_box[1] == pytest.approx(h_no_box[1], abs=1e-9)
 
 
 def test_balance_meas_jacobian_box_columns() -> None:
-    """Balance jacobian: ±1 в нужных box-столбцах, размер с учётом IPM."""
+    """Balance jacobian: ±1 in the relevant box columns, size accounts for IPM."""
     from gridstate.z_vector import (
         KIND_NODE_BALANCE_P,
         SIDE_NONE,
@@ -401,17 +401,17 @@ def test_balance_meas_jacobian_box_columns() -> None:
     v = np.ones(pu.n_bus)
     delta = np.zeros(pu.n_bus)
     H = algebra.evaluate_jacobian(v, delta).toarray()
-    # Размер: (1, 2*n_bus - 1 + 2)  (n_box = 2 — Pgen + Pnag для одного узла)
+    # Size: (1, 2*n_bus - 1 + 2)  (n_box = 2 - Pgen + Pnag for a single node)
     assert H.shape == (1, 2 * pu.n_bus - 1 + 2)
-    # Последние 2 колонки — box-vars (Pgen, Pnag по offset_pgen/pnag).
-    # offset_pgen = 2*n_bus - 1, offset_pnag = 2*n_bus - 1 + 1 (qgen, qnag пусты).
-    # Проверяем: -1 в pgen-столбце, +1 в pnag-столбце.
+    # The last 2 columns are box vars (Pgen, Pnag at offset_pgen/pnag).
+    # offset_pgen = 2*n_bus - 1, offset_pnag = 2*n_bus - 1 + 1 (qgen, qnag are empty).
+    # Check: -1 in the pgen column, +1 in the pnag column.
     assert H[0, 2 * pu.n_bus - 1] == -1.0  # ∂h/∂Pgen[node2] = -1
     assert H[0, 2 * pu.n_bus - 1 + 1] == +1.0  # ∂h/∂Pnag[node2] = +1
 
 
 def test_current_measurement_jacobian_with_finite_difference() -> None:
-    """Якобиан |I| ветви — самый коварный из-за ``conj(I)/|I|``-сингулярности."""
+    """The branch |I| Jacobian is the trickiest because of the ``conj(I)/|I|`` singularity."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -452,7 +452,7 @@ def test_current_measurement_jacobian_with_finite_difference() -> None:
     _z, _R, idx = build_z_and_r(m, m.measurements, pu)
     layout = StateLayout.from_slack(pu.n_bus, pu.slack_idx)
     algebra = BaseAlgebra(ybus, yf, yt, idx, layout, pu)
-    # Ненулевой ток — небольшой перепад
+    # Non-zero current - a small difference
     delta = np.array([0.0, -0.03])
     v = np.array([1.0, 0.97])
     e = pack(delta, v, layout)

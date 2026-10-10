@@ -1,7 +1,7 @@
-"""Тесты σ-floor real-flow мер от шкалы канала (``apply_flow_sigma_floor``).
+"""Tests for the channel-scale σ floor of real-flow measurements (``apply_flow_sigma_floor``).
 
-Мини-модель: 2 узла 500 кВ + ветвь. Floor при kv_frac=0.010:
-σ_min = 0.010·√3·500 ≈ 8.66 МВт → floor² ≈ 75.0 МВт².
+Mini model: two 500 kV nodes + one branch. Floor at kv_frac=0.010:
+σ_min = 0.010·√3·500 ≈ 8.66 MW -> floor² ≈ 75.0 MW².
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from gridstate.telemetry import apply_flow_sigma_floor
 from gridstate.working import Working
 
 
-FLOOR2_500 = (0.010 * np.sqrt(3.0) * 500.0) ** 2  # ≈ 75.0 МВт²
+FLOOR2_500 = (0.010 * np.sqrt(3.0) * 500.0) ** 2  # ≈ 75.0 MW²
 
 
 def _add_meas(model: Working, mid: int, mt: int, *, variance: float, is_pseudo: bool) -> None:
@@ -36,7 +36,7 @@ def _add_meas(model: Working, mid: int, mt: int, *, variance: float, is_pseudo: 
 
 
 def _build() -> Working:
-    """2 узла 500 кВ + ветвь 10; меры добавляют тесты."""
+    """Two 500 kV nodes + branch 10; the tests add the measurements."""
     m = Working.empty()
     for nid in (1, 2):
         m.nodes.add(
@@ -52,7 +52,7 @@ def _build() -> Working:
 
 
 def test_floor_raises_real_flow_not_pseudo() -> None:
-    """Real P/Q-flow с крошечной variance поднимаются до floor²; pseudo — нет."""
+    """Real P/Q flows with a tiny variance are raised to floor²; pseudo ones are not."""
     m = _build()
     _add_meas(m, 1, int(MeasurementType.POWER_P), variance=4.0, is_pseudo=False)
     _add_meas(m, 2, int(MeasurementType.POWER_Q), variance=4.0, is_pseudo=False)
@@ -62,16 +62,16 @@ def test_floor_raises_real_flow_not_pseudo() -> None:
 
     me = m.measurements.to_numpy()
     assert stats == {"checked": 2, "floored": 2}
-    for i in (0, 1):  # real P и Q — подняты
+    for i in (0, 1):  # real P and Q are raised
         assert me[i]["variance"] == pytest.approx(FLOOR2_500)
         assert me[i]["weight"] == pytest.approx(1.0 / FLOOR2_500)
-    # pseudo — не тронута
+    # pseudo is untouched
     assert me[2]["variance"] == pytest.approx(4.0)
     assert me[2]["weight"] == pytest.approx(1.0 / 4.0)
 
 
 def test_floor_keeps_variance_above_floor() -> None:
-    """Variance выше floor² не понижается (floor — нижняя граница, не override)."""
+    """Variance above floor² is not lowered (floor is a lower bound, not an override)."""
     m = _build()
     _add_meas(m, 1, int(MeasurementType.POWER_P), variance=400.0, is_pseudo=False)
 
@@ -83,7 +83,7 @@ def test_floor_keeps_variance_above_floor() -> None:
 
 
 def test_floor_none_is_noop_in_pipeline_step() -> None:
-    """flow_sigma_floor_kv_frac=None (default) → шаг пайплайна не меняет variance."""
+    """flow_sigma_floor_kv_frac=None (default) -> the pipeline step leaves variance unchanged."""
     m = _build()
     _add_meas(m, 1, int(MeasurementType.POWER_P), variance=4.0, is_pseudo=False)
     before = m.measurements.to_numpy().copy()
@@ -99,7 +99,7 @@ def test_floor_none_is_noop_in_pipeline_step() -> None:
 
 
 def test_floor_enabled_in_pipeline_step() -> None:
-    """flow_sigma_floor_kv_frac=0.010 → шаг пайплайна применяет floor к real-мере."""
+    """flow_sigma_floor_kv_frac=0.010 -> the pipeline step applies the floor to a real measurement."""
     m = _build()
     _add_meas(m, 1, int(MeasurementType.POWER_P), variance=4.0, is_pseudo=False)
 

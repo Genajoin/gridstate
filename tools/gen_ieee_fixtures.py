@@ -1,21 +1,21 @@
 #!/usr/bin/env python
-"""Генератор тестовых фикстур SE на стандартных IEEE-моделях (через pandapower).
+"""Generator of SE test fixtures on the standard IEEE models (via pandapower).
 
-Для каждой модели (``case14`` / ``case30`` / ``case118`` из ``pandapower.networks``):
+For each model (``case14`` / ``case30`` / ``case118`` from ``pandapower.networks``):
 
-1. решает power flow (``pp.runpp``, с углами);
-2. строит ``SEInput`` через :func:`gridstate.adapters.from_pandapower`;
-3. синтезирует **избыточный наблюдаемый** z-вектор из решения PF: |V| на всех
-   шинах, P/Q-перетоки обоих концов всех ветвей (line: from/to, trafo: hv/lv),
-   P/Q-инжекции всех узлов — с гауссовым шумом (фиксированный seed) и
+1. solves the power flow (``pp.runpp``, with angles);
+2. builds a ``SEInput`` via :func:`gridstate.adapters.from_pandapower`;
+3. synthesises a **redundant observable** z-vector from the PF solution: |V| at all
+   buses, P/Q branch flows at both ends of every branch (line: from/to, trafo: hv/lv),
+   P/Q injections at all nodes, with Gaussian noise (fixed seed) and
    ``variance = σ²``;
-4. сохраняет вход SE в ``tests/test_data/ieee/caseNN.npz`` (контрактный npz через
+4. saves the SE input to ``tests/test_data/ieee/caseNN.npz`` (contract npz via
    :func:`gridstate.save_se_input`);
-5. сохраняет истину PF (``node_id``/``vm_pu_true``/``va_degree_true``/``slack_id``)
-   в сайдкар ``tests/test_data/ieee/caseNN_truth.npz`` (обычный ``np.savez``).
+5. saves the PF truth (``node_id``/``vm_pu_true``/``va_degree_true``/``slack_id``)
+   to the sidecar ``tests/test_data/ieee/caseNN_truth.npz`` (plain ``np.savez``).
 
-pandapower нужен **только** здесь (генерация); тесты (``tests/test_ieee_cases.py``)
-читают только npz и pandapower не импортируют. Запуск::
+pandapower is needed **only** here (generation); the tests (``tests/test_ieee_cases.py``)
+read only the npz files and do not import pandapower. Run::
 
     .venv/bin/python tools/gen_ieee_fixtures.py
 """
@@ -29,21 +29,21 @@ from typing import Any
 import numpy as np
 
 
-warnings.filterwarnings("ignore")  # глушим numba-предупреждение pandapower
+warnings.filterwarnings("ignore")  # silence the pandapower numba warning
 
-# Корень репо: tools/ → ..
+# Repository root: tools/ -> ..
 _REPO = Path(__file__).resolve().parent.parent
 _OUT_DIR = _REPO / "tests" / "test_data" / "ieee"
 
-# Стандартное σ замеров (инженерные единицы).
-_SIGMA_V_FRAC = 0.005  # σ_V = 0.5% от Vном (кВ)
-_SIGMA_PQ_MW = 2.0  # σ_P/Q = 2 МВт/МВАр (потоки и инжекции)
+# Standard measurement sigma (engineering units).
+_SIGMA_V_FRAC = 0.005  # sigma_V = 0.5% of Vnom (kV)
+_SIGMA_PQ_MW = 2.0  # sigma_P/Q = 2 MW/MVAr (flows and injections)
 
 _SEED = 20260602
 
 
 def _build_measurements(net: Any, rng: np.random.Generator) -> np.ndarray:
-    """Синтезировать наблюдаемый избыточный z-вектор из решения PF (+шум)."""
+    """Synthesise an observable redundant z-vector from the PF solution (+ noise)."""
     from gridstate.adapters import measurement_array
     from gridstate.z_vector import (
         KIND_POWER_INJECTION_P,
@@ -64,17 +64,17 @@ def _build_measurements(net: Any, rng: np.random.Generator) -> np.ndarray:
         rows.append((mid, ot, oid, mt, float(noisy), float(sigma * sigma), side))
         mid += 1
 
-    # |V| на всех шинах (кВ).
+    # |V| at all buses (kV).
     for bus in net.bus.index:
         vn = float(net.bus.vn_kv[bus])
         add(OBJ_NODE, int(bus), KIND_VOLTAGE, net.res_bus.vm_pu[bus] * vn, _SIGMA_V_FRAC * vn)
 
-    # P/Q-инжекции всех узлов (gen − load = −res_bus.p_mw, consumer-знак инвертирован).
+    # P/Q injections at all nodes (gen - load = -res_bus.p_mw, the consumer sign is inverted).
     for bus in net.bus.index:
         add(OBJ_NODE, int(bus), KIND_POWER_INJECTION_P, -net.res_bus.p_mw[bus], _SIGMA_PQ_MW)
         add(OBJ_NODE, int(bus), KIND_POWER_INJECTION_Q, -net.res_bus.q_mvar[bus], _SIGMA_PQ_MW)
 
-    # Перетоки обоих концов всех линий (branch id 1..n_line — порядок адаптера).
+    # Flows at both ends of all lines (branch id 1..n_line - adapter order).
     n_line = len(net.line)
     for k, li in enumerate(net.line.index):
         bid = k + 1
@@ -83,7 +83,7 @@ def _build_measurements(net: Any, rng: np.random.Generator) -> np.ndarray:
         add(OBJ_BRANCH, bid, KIND_POWER_P, net.res_line.p_to_mw[li], _SIGMA_PQ_MW, 1)
         add(OBJ_BRANCH, bid, KIND_POWER_Q, net.res_line.q_to_mvar[li], _SIGMA_PQ_MW, 1)
 
-    # Перетоки обоих концов всех трансформаторов (hv→from, lv→to).
+    # Flows at both ends of all transformers (hv->from, lv->to).
     for k, ti in enumerate(net.trafo.index):
         bid = n_line + k + 1
         add(OBJ_BRANCH, bid, KIND_POWER_P, net.res_trafo.p_hv_mw[ti], _SIGMA_PQ_MW, 0)
@@ -106,7 +106,7 @@ def _build_measurements(net: Any, rng: np.random.Generator) -> np.ndarray:
 
 
 def _truth_array(net: Any) -> dict[str, np.ndarray]:
-    """Истина PF: node_id / vm_pu_true / va_degree_true + id slack-узла."""
+    """PF truth: node_id / vm_pu_true / va_degree_true + slack node id."""
     bus_ids = np.asarray(list(net.bus.index), dtype=np.int64)
     vm_pu = np.array([float(net.res_bus.vm_pu[b]) for b in net.bus.index], dtype=np.float64)
     va_deg = np.array([float(net.res_bus.va_degree[b]) for b in net.bus.index], dtype=np.float64)
@@ -120,15 +120,15 @@ def _truth_array(net: Any) -> dict[str, np.ndarray]:
 
 
 def _recompress_npz(path: Path) -> None:
-    """Пересохранить npz со сжатием (содержимое идентично, читается ``np.load``)."""
+    """Re-save the npz compressed (identical content, readable by ``np.load``)."""
     with np.load(path, allow_pickle=False) as npz:
         arrays = {k: npz[k] for k in npz.files}
     np.savez_compressed(path, **arrays)
-    # numpy дописывает .npz к savez_compressed, если расширения нет; здесь оно есть.
+    # numpy appends .npz to savez_compressed if there is no extension; here there is one.
 
 
 def generate_case(name: str, ctor: Any) -> None:
-    """Сгенерировать пару фикстур (вход .npz + истина _truth.npz) для одной модели."""
+    """Generate a pair of fixtures (input .npz + truth _truth.npz) for one model."""
     import pandapower as pp
 
     from gridstate.adapters import from_pandapower
@@ -137,7 +137,7 @@ def generate_case(name: str, ctor: Any) -> None:
     net = ctor()
     pp.runpp(net, calculate_voltage_angles=True)
     if not bool(net.converged):
-        raise RuntimeError(f"{name}: power flow не сошёлся")
+        raise RuntimeError(f"{name}: power flow did not converge")
 
     rng = np.random.default_rng(_SEED)
     meas = _build_measurements(net, rng)
@@ -145,10 +145,10 @@ def generate_case(name: str, ctor: Any) -> None:
 
     _OUT_DIR.mkdir(parents=True, exist_ok=True)
     npz_path = save_se_input(se_in, _OUT_DIR / f"{name}.npz")
-    # Контрактный ``save_se_input`` пишет несжатый npz; пустые строковые поля
-    # (name/formula/guid, U128/U256) раздувают файл в десятки раз. Пересохраняем
-    # сжатым (``np.load`` читает прозрачно — проверено round-trip-тестом), чтобы
-    # фикстуры в репо были маленькими.
+    # The contract ``save_se_input`` writes an uncompressed npz; empty string fields
+    # (name/formula/guid, U128/U256) inflate the file tens of times over. We re-save it
+    # compressed (``np.load`` reads it transparently - checked by a round-trip test) so that
+    # the fixtures in the repo stay small.
     _recompress_npz(npz_path)
     truth_path = _OUT_DIR / f"{name}_truth.npz"
     np.savez_compressed(truth_path, **_truth_array(net))
@@ -168,7 +168,7 @@ def main() -> None:
     cases = [("case14", nw.case14), ("case30", nw.case30), ("case118", nw.case118)]
     for name, ctor in cases:
         generate_case(name, ctor)
-    print(f"Готово: фикстуры в {_OUT_DIR}")
+    print(f"Done: fixtures in {_OUT_DIR}")
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
-"""Юнит-тесты ``gridstate.v_refine`` + шаг пайплайна.
+"""Unit tests for ``gridstate.v_refine`` + the pipeline step.
 
-Классификация тестируется на синтетических массивах (без solve): согласованная
-real V-мера попадает в tighten, конфликтная — нет, pseudo и non-V не трогаются.
-Шаг ``v_refine`` в ``run()`` проверяется e2e: на модели без real V-мер план
-пуст → no-op (решение бит-в-бит с выключенным шагом); на модели с согласованными
-V — variance ужесточается, re-solve успешен.
+Classification is tested on synthetic arrays (no solve): a consistent
+real V measurement goes into tighten, a conflicting one does not, pseudo and non-V are left alone.
+The ``v_refine`` step in ``run()`` is checked end to end: on a model without real V measurements the plan is
+empty -> no-op (solution bit-identical to the step switched off); on a model with consistent
+V -- variance is tightened, the re-solve succeeds.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from test_pipeline_idempotent import _make_model_with_reactor
 
 
 # ---------------------------------------------------------------------------
-# Сборка синтетики
+# Synthetic builder
 # ---------------------------------------------------------------------------
 
 
@@ -109,7 +109,7 @@ def _classify(m: Working, rn: float = 3.0) -> VRefinePlan:
 
 
 def test_consistent_v_selected():
-    """Согласованная real V (|z−h|/σ < rn) → tighten."""
+    """Consistent real V (|z-h|/sigma < rn) -> tighten."""
     m = _build_working()
     _add_meas(m, 1, KIND_VOLTAGE, 1, z=110.5, h=110.0, sigma=1.0)  # rn=0.5
     plan = _classify(m)
@@ -119,7 +119,7 @@ def test_consistent_v_selected():
 
 
 def test_conflicting_v_excluded():
-    """Конфликтная V (большой остаток, битый замер) НЕ ужесточается."""
+    """A conflicting V (large residual, broken measurement) is NOT tightened."""
     m = _build_working()
     _add_meas(m, 1, KIND_VOLTAGE, 1, z=130.0, h=110.0, sigma=1.0)  # rn=20
     plan = _classify(m)
@@ -129,7 +129,7 @@ def test_conflicting_v_excluded():
 
 
 def test_pseudo_v_ignored():
-    """Pseudo-V (приор) не участвует — ужесточаем только телеметрию."""
+    """A pseudo-V (prior) does not take part -- only telemetry is tightened."""
     m = _build_working()
     _add_meas(m, 1, KIND_VOLTAGE, 1, z=110.0, h=110.0, sigma=1.0, is_pseudo=True)
     plan = _classify(m)
@@ -137,7 +137,7 @@ def test_pseudo_v_ignored():
 
 
 def test_non_v_ignored():
-    """P-flow (даже согласованный) — не V, не трогаем."""
+    """A P-flow (even a consistent one) is not V, left alone."""
     m = _build_working()
     _add_meas(m, 1, KIND_POWER_P, 100, z=50.0, h=50.0, sigma=5.0)
     plan = _classify(m)
@@ -145,7 +145,7 @@ def test_non_v_ignored():
 
 
 def test_disabled_v_ignored():
-    """status=False V не попадает в план."""
+    """A V with status=False does not enter the plan."""
     m = _build_working()
     _add_meas(m, 1, KIND_VOLTAGE, 1, z=110.0, h=110.0, sigma=1.0)
     arr = m.measurements.to_numpy()
@@ -156,7 +156,7 @@ def test_disabled_v_ignored():
 
 
 def test_threshold_boundary():
-    """rn ровно на пороге — НЕ согласована (строгое <)."""
+    """rn exactly at the threshold -- NOT consistent (strict <)."""
     m = _build_working()
     _add_meas(m, 1, KIND_VOLTAGE, 1, z=113.0, h=110.0, sigma=1.0)  # rn=3.0
     plan = _classify(m, rn=3.0)
@@ -171,14 +171,14 @@ def test_threshold_boundary():
 def test_apply_plan_tightens_variance():
     m = _build_working()
     _add_meas(m, 1, KIND_VOLTAGE, 1, z=110.5, h=110.0, sigma=2.0)
-    _add_meas(m, 2, KIND_VOLTAGE, 2, z=130.0, h=110.0, sigma=2.0)  # конфликт
+    _add_meas(m, 2, KIND_VOLTAGE, 2, z=130.0, h=110.0, sigma=2.0)  # conflict
     plan = VRefinePlan(tighten_ids=frozenset({1}), n_consistent=1, n_conflicting=1)
 
     stats = apply_v_refine_plan(m, plan, factor=0.7)
 
     me = {int(r["id"]): r for r in m.measurements.to_numpy()}
-    assert float(me[1]["variance"]) == 4.0 * 0.7**2  # σ²×factor² (0.7² в double ≠ 0.49)
-    assert float(me[2]["variance"]) == 4.0  # конфликтная не тронута
+    assert float(me[1]["variance"]) == 4.0 * 0.7**2  # sigma^2*factor^2 (0.7^2 in double != 0.49)
+    assert float(me[2]["variance"]) == 4.0  # the conflicting one is untouched
     assert stats == {"tightened": 1, "conflicting": 1}
 
 
@@ -188,16 +188,16 @@ def test_apply_empty_plan_noop():
     plan = VRefinePlan(tighten_ids=frozenset(), n_consistent=0, n_conflicting=0)
     stats = apply_v_refine_plan(m, plan, factor=0.7)
     assert stats["tightened"] == 0
-    assert float(m.measurements.to_numpy()[0]["variance"]) == 4.0  # не тронута
+    assert float(m.measurements.to_numpy()[0]["variance"]) == 4.0  # untouched
 
 
 # ---------------------------------------------------------------------------
-# Шаг пайплайна
+# Pipeline step
 # ---------------------------------------------------------------------------
 
 
 def test_step_skips_on_unusable_solution():
-    """success=False → классификация не зовётся (остатки ненадёжны)."""
+    """success=False -> classification is not called (residuals are unreliable)."""
     ctx = _Ctx(model=None, cfg=PipelineConfig(v_refine=True))
     ctx.result = SimpleNamespace(success=False)
     stats = _s_v_refine(ctx)
@@ -205,16 +205,16 @@ def test_step_skips_on_unusable_solution():
 
 
 def _drop_real_v(m):
-    """Убрать real V-меры (на месте) — наблюдаемость V держится pseudo-приорами
-    (is_pseudo), которые classify_v_refine игнорирует → план v_refine пуст."""
+    """Remove the real V measurements (in place) -- V observability is held by pseudo priors
+    (is_pseudo), which classify_v_refine ignores -> the v_refine plan is empty."""
     arr = m.measurements.to_numpy()
     m.measurements.update_from_array(arr[arr["measurement_type"] != KIND_VOLTAGE])
     return m
 
 
 def test_run_noop_without_real_v_bit_exact():
-    """Модель без real V-мер (только pseudo-V): план пуст → решение бит-в-бит
-    с v_refine=False, re-solve не вызывается."""
+    """A model without real V measurements (pseudo-V only): the plan is empty -> solution bit-identical
+    to v_refine=False, no re-solve."""
     m = _drop_real_v(_make_model_with_reactor(susceptance_uS=0.0))
     r_off = run(m, config=PipelineConfig(algorithm="wls"))
 
@@ -237,9 +237,9 @@ def test_run_noop_without_real_v_bit_exact():
 
 
 def test_run_v_refine_tightens_and_resolves():
-    """Модель с согласованной real V-мерой: σ ужесточается, re-solve успешен."""
+    """A model with a consistent real V measurement: sigma is tightened, the re-solve succeeds."""
     m = _make_model_with_reactor(susceptance_uS=0.0)
-    # Добавить real V-меру на slack (узел 1), близкую к решению.
+    # Add a real V measurement at the slack (node 1) close to the solution.
     arr = m.nodes.to_numpy()
     slack = arr[arr["node_type"] == int(NodeType.SLACK)][0]
     vmag = float(slack["voltage_magnitude"]) or float(slack["voltage_nominal"])

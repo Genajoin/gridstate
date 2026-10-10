@@ -1,7 +1,7 @@
-"""Unit-тесты ``aggregate_generators_to_node``.
+"""Unit tests of ``aggregate_generators_to_node``.
 
-Проверяет агрегацию параметров генераторов в node-таблицу с учётом
-статуса и нескольких генераторов на узле.
+Checks the aggregation of generator parameters into the node table, taking
+status and several generators per node into account.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from gridstate.telemetry import aggregate_generators_to_node
 
 @pytest.fixture
 def model_two_nodes_multi_gen():
-    """Модель из 2 узлов: на узле 1 три генератора (mix статусов),
-    на узле 2 один off-генератор."""
+    """Model with 2 nodes: node 1 has three generators (mixed statuses),
+    node 2 has one off generator."""
     from gridstate.constants import NodeType
     from gridstate.working import Working
 
@@ -39,7 +39,7 @@ def model_two_nodes_multi_gen():
             "node_type": int(NodeType.PQ),
         }
     )
-    # Узел 1: G1 ON, G2 ON, G3 OFF
+    # Node 1: G1 ON, G2 ON, G3 OFF
     m.generators.add(
         {
             "id": 11,
@@ -71,15 +71,15 @@ def model_two_nodes_multi_gen():
             "id": 13,
             "node_id": 1,
             "power_output": 999.0,
-            "reactive_output": 999.0,  # игнор
+            "reactive_output": 999.0,  # ignored
             "power_min": 999.0,
             "power_max": 999.0,
             "reactive_min": 999.0,
             "reactive_max": 999.0,
-            "status": False,  # OFF — должен быть исключён
+            "status": False,  # OFF - must be excluded
         }
     )
-    # Узел 2: только OFF
+    # Node 2: OFF only
     m.generators.add(
         {
             "id": 21,
@@ -97,7 +97,7 @@ def model_two_nodes_multi_gen():
 
 
 def test_aggregates_only_active_generators(model_two_nodes_multi_gen) -> None:
-    """Σ по active генераторам, off-генераторы исключены."""
+    """Sum over active generators, off generators excluded."""
     m = model_two_nodes_multi_gen
     stats = aggregate_generators_to_node(m)
 
@@ -106,7 +106,7 @@ def test_aggregates_only_active_generators(model_two_nodes_multi_gen) -> None:
     assert stats["updated_nodes"] == 1
 
     n1 = m.nodes.get_by_id(1)
-    # G1 + G2 (G3 off исключён)
+    # G1 + G2 (G3 is off, excluded)
     assert n1.generation_p == pytest.approx(50.0 + 30.0)
     assert n1.generation_q == pytest.approx(20.0 + 10.0)
     assert n1.generation_p_min == pytest.approx(10.0 + 5.0)
@@ -116,11 +116,11 @@ def test_aggregates_only_active_generators(model_two_nodes_multi_gen) -> None:
 
 
 def test_node_with_only_off_generators_untouched(model_two_nodes_multi_gen) -> None:
-    """Узлы где все генераторы off — не обновляются.
+    """Nodes where all generators are off are not updated.
 
-    Узел 2 имеет только OFF-ген: aggregate не должна трогать поля
-    ``generation_*`` — что было в NODE_DTYPE (после ``nodes.add()``)
-    остаётся как есть.
+    Node 2 has only an OFF generator: aggregate must not touch the
+    ``generation_*`` fields - whatever NODE_DTYPE held (after ``nodes.add()``)
+    stays as is.
     """
     m = model_two_nodes_multi_gen
     n2_before = m.nodes.get_by_id(2)
@@ -139,7 +139,7 @@ def test_node_with_only_off_generators_untouched(model_two_nodes_multi_gen) -> N
 
 
 def test_idempotent(model_two_nodes_multi_gen) -> None:
-    """Повторный вызов даёт тот же результат."""
+    """A repeated call gives the same result."""
     m = model_two_nodes_multi_gen
     aggregate_generators_to_node(m)
     n1_after_first = (
@@ -157,7 +157,7 @@ def test_idempotent(model_two_nodes_multi_gen) -> None:
 
 
 def test_empty_generators() -> None:
-    """Модель без генераторов: stats нулевые, узел не тронут."""
+    """A model without generators: stats are zero, the node is untouched."""
     from gridstate.constants import NodeType
     from gridstate.working import Working
 
@@ -179,7 +179,7 @@ def test_empty_generators() -> None:
 
 
 def test_missing_node_in_generators() -> None:
-    """Генератор с node_id, которого нет в model.nodes — учтён в stats."""
+    """A generator whose node_id is absent from model.nodes is counted in stats."""
     from gridstate.constants import NodeType
     from gridstate.working import Working
 
@@ -197,7 +197,7 @@ def test_missing_node_in_generators() -> None:
     m.generators.add(
         {
             "id": 99,
-            "node_id": 999,  # сирота
+            "node_id": 999,  # orphan
             "power_output": 50.0,
             "reactive_output": 20.0,
             "power_min": 0.0,
@@ -213,13 +213,13 @@ def test_missing_node_in_generators() -> None:
 
 
 def test_exist_gen_raised_for_node_declaring_no_generation() -> None:
-    """Узел с ``exist_gen=0``, но с активной машиной, получает флаг.
+    """A node with ``exist_gen=0`` but with an active machine gets the flag.
 
-    Схема вправе объявить генерацию отдельным объектом и не повторять её на
-    узле: вывод блока приходит с нулевым ``exist_gen`` и узким ящиком нагрузки
-    (собственные нужды), а способность машины — только записью каталога. Без
-    флага IPM не заводит box-переменную генерации, и измеренная выдача упирается
-    в ящик нагрузки.
+    The schema may declare generation as a separate object and not repeat it on
+    the node: the unit output arrives with a zero ``exist_gen`` and a narrow load box
+    (auxiliary load), while the machine capability is given only by a catalogue record. Without
+    the flag the IPM does not introduce a generation box variable, and the measured output hits
+    the load box.
     """
     from gridstate.constants import NodeType
     from gridstate.working import Working
@@ -257,12 +257,12 @@ def test_exist_gen_raised_for_node_declaring_no_generation() -> None:
     n1 = m.nodes.get_by_id(1)
     assert bool(n1.exist_gen)
     assert n1.generation_p_max == pytest.approx(1080.0)
-    # Ящик нагрузки не тронут: узел остаётся и потребителем собственных нужд.
+    # The load box is untouched: the node remains an auxiliary-load consumer.
     assert n1.load_p_max == pytest.approx(55.0)
 
 
 def test_exist_gen_not_raised_when_all_generators_off() -> None:
-    """Все машины сняты — узел не трогается, флаг не поднимается."""
+    """All machines are off - the node is untouched, the flag is not raised."""
     from gridstate.constants import NodeType
     from gridstate.working import Working
 

@@ -1,10 +1,10 @@
-"""Тесты анализа наблюдаемости (``gridstate.validation.observability``).
+"""Tests for observability analysis (``gridstate.validation.observability``).
 
-Проверки:
-    - переопределённая 3-узловая сеть полностью наблюдаема;
+Checks:
+    - an overdetermined 3-node network is fully observable;
     - ``n_meas < n_state`` → ``is_observable == False``;
-    - узел без измерений → попадает в ``unobservable_buses``;
-    - пустая коллекция измерений → отчёт об отсутствии измерений.
+    - a node without measurements -> goes into ``unobservable_buses``;
+    - an empty measurement collection -> a report that there are no measurements.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from gridstate.z_vector import (
 
 # ----------------------------------------------------------- helpers
 def _build_two_bus_observable():
-    """2-узловая сеть, переопределённая системой измерений."""
+    """A 2-node network overdetermined by the measurement system."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -61,7 +61,7 @@ def _build_two_bus_observable():
             "branch_type": int(BranchType.LINE),
         }
     )
-    # 3 измерения на 2-узлов: V на каждом узле + P_inj на узле 2.
+    # 3 measurements on 2 nodes: V at each node + P_inj at node 2.
     # n_state = 2*2 - 1 = 3.
     m.measurements.add(
         {
@@ -127,7 +127,7 @@ def test_two_bus_observable_when_fully_covered() -> None:
 
 
 def test_three_bus_with_full_measurements_is_observable() -> None:
-    """3-узловая с переопределённой системой — наблюдаема."""
+    """A 3-node network with an overdetermined system -- observable."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -169,7 +169,7 @@ def test_three_bus_with_full_measurements_is_observable() -> None:
             "branch_type": int(BranchType.LINE),
         }
     )
-    # V на всех + P/Q-инъекции на 2 и 3
+    # V at all nodes + P/Q injections at 2 and 3
     next_id = 1
     for node_id in (1, 2, 3):
         m.measurements.add(
@@ -208,7 +208,7 @@ def test_three_bus_with_full_measurements_is_observable() -> None:
 
 # --------------------------------------------------------- negative cases
 def test_too_few_measurements_unobservable() -> None:
-    """``m < n_state`` → не наблюдаема."""
+    """``m < n_state`` -> not observable."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -230,7 +230,7 @@ def test_too_few_measurements_unobservable() -> None:
             "branch_type": int(BranchType.LINE),
         }
     )
-    # Только одно V на slack → m=1, n_state=3
+    # Only one V at the slack -> m=1, n_state=3
     m.measurements.add(
         {
             "id": 1,
@@ -247,7 +247,7 @@ def test_too_few_measurements_unobservable() -> None:
     assert not rep.is_observable
     assert rep.n_measurements == 1
     assert rep.rank_H <= 1
-    # Узел 2 — δ и V не покрыты.
+    # Node 2 -- delta and V are not covered.
     assert 2 in rep.unobservable_buses
 
 
@@ -269,7 +269,7 @@ def test_empty_measurements_returns_no_observability() -> None:
 
 
 def test_observable_island_unmeasured_bus_in_diagnostics() -> None:
-    """3 узла + V на узлах 1 и 2; узел 3 не покрыт измерением V."""
+    """3 nodes + V at nodes 1 and 2; node 3 is not covered by a V measurement."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -309,7 +309,7 @@ def test_observable_island_unmeasured_bus_in_diagnostics() -> None:
             "branch_type": int(BranchType.LINE),
         }
     )
-    # Только V на 1 и 2 → измерения есть только на части сети.
+    # Only V at 1 and 2 -> measurements exist only on part of the network.
     m.measurements.add(
         {
             "id": 1,
@@ -336,6 +336,6 @@ def test_observable_island_unmeasured_bus_in_diagnostics() -> None:
     )
     rep = analyze_observability(m)
     assert not rep.is_observable
-    # Узел 3 точно неосвещён (нет вообще никакой инъекции/перетока, что зависело
-    # бы от его δ или V).
+    # Node 3 is definitely unlit (no injection or flow at all that would depend
+    # on its delta or V).
     assert 3 in rep.unobservable_buses

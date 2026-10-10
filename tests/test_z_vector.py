@@ -1,4 +1,4 @@
-"""Тесты сборки вектора измерений (``gridstate.z_vector``)."""
+"""Tests of the measurement vector assembly (``gridstate.z_vector``)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from gridstate.z_vector import (
 
 # ----------------------------------------------------------- helpers
 def _build_two_bus_with_measurements():
-    """Сеть из 2 узлов и 1 ветви + набор измерений всех типов."""
+    """Network of 2 nodes and 1 branch + a set of measurements of all types."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -53,7 +53,7 @@ def _build_two_bus_with_measurements():
         }
     )
 
-    # Связь измерений ↔ ветви через ti_*-поля
+    # Link measurements <-> branches via the ti_* fields
     m.branches.add(
         {
             "id": 100,
@@ -65,14 +65,14 @@ def _build_two_bus_with_measurements():
             "phase_shift": 0.0,
             "status": True,
             "branch_type": int(BranchType.LINE),
-            "ti_p_from": 1001,  # связь с измерением id=1001
+            "ti_p_from": 1001,  # link to the measurement id=1001
             "ti_q_from": 1002,
             "ti_p_to": 1003,
             "ti_q_to": 1004,
         }
     )
 
-    # Узловые измерения
+    # Node measurements
     m.measurements.add(
         {
             "id": 1,
@@ -121,7 +121,7 @@ def _build_two_bus_with_measurements():
             "quality": 0,
         }
     )
-    # Ветвевые измерения с известными side
+    # Branch measurements with known side
     m.measurements.add(
         {
             "id": 1001,
@@ -166,7 +166,7 @@ class TestUnitConversion:
         pu = model_to_pu(m)
         z, _, idx = build_z_and_r(m, m.measurements, pu)
         v_pos = np.where(idx.kind == KIND_VOLTAGE)[0]
-        # Узлы 1 и 2: vn=110 кВ, value=110.5 → 1.00454
+        # Nodes 1 and 2: vn=110 kV, value=110.5 -> 1.00454
         for i in v_pos:
             assert 0.99 < z[i] < 1.01
 
@@ -175,17 +175,17 @@ class TestUnitConversion:
         pu = model_to_pu(m)
         _, R, idx = build_z_and_r(m, m.measurements, pu)
         v_pos = np.where(idx.kind == KIND_VOLTAGE)[0][0]
-        # variance=0.01 кВ², vn=110 → σ²_pu = 0.01 / 110² ≈ 8.26e-7
+        # variance=0.01 kV², vn=110 -> σ²_pu = 0.01 / 110² ≈ 8.26e-7
         assert R.diagonal()[v_pos] == pytest.approx(0.01 / (110.0**2))
 
     def test_power_mw_to_pu(self) -> None:
         m = _build_two_bus_with_measurements()
         pu = model_to_pu(m)
         z, _, idx = build_z_and_r(m, m.measurements, pu)
-        # POWER_INJECTION_P=50 МВт → 0.5 p.u.
+        # POWER_INJECTION_P=50 MW -> 0.5 p.u.
         p_inj_pos = np.where(idx.kind == KIND_POWER_INJECTION_P)[0][0]
         assert z[p_inj_pos] == pytest.approx(50.0 / BASE_MVA)
-        # Перетоковая POWER_P (id=1001, value=28) → 0.28 p.u.
+        # Flow POWER_P (id=1001, value=28) -> 0.28 p.u.
         p_branch = np.where((idx.kind == KIND_POWER_P) & (idx.branch_side == SIDE_FROM))[0][0]
         assert z[p_branch] == pytest.approx(28.0 / BASE_MVA)
 
@@ -209,7 +209,7 @@ class TestBranchSide:
 
     def test_unresolvable_side_skipped(self, caplog) -> None:
         m = _build_two_bus_with_measurements()
-        # Добавим ветвевое измерение, не привязанное ни к одному ti_*
+        # Add a branch measurement not linked to any ti_*
         m.measurements.add(
             {
                 "id": 9999,
@@ -225,7 +225,7 @@ class TestBranchSide:
         pu = model_to_pu(m)
         with caplog.at_level("WARNING"):
             _, _, idx = build_z_and_r(m, m.measurements, pu)
-        # Должно прийти 6 валидных + 0 невалидных
+        # 6 valid + 0 invalid must come back
         assert 9999 not in idx.meas_id.tolist()
 
 
@@ -233,7 +233,7 @@ class TestBranchSide:
 class TestFiltering:
     def test_inactive_status_skipped(self) -> None:
         m = _build_two_bus_with_measurements()
-        # Помечаем измерение id=1 как неактивное.
+        # Mark measurement id=1 as inactive.
         m.measurements.get_by_id(1).status = False
         pu = model_to_pu(m)
         z, _, idx = build_z_and_r(m, m.measurements, pu)
@@ -261,7 +261,7 @@ def test_meas_index_uses_positional_indices() -> None:
     m = _build_two_bus_with_measurements()
     pu = model_to_pu(m)
     _, _, idx = build_z_and_r(m, m.measurements, pu)
-    # Узловые измерения должны иметь object_pos в [0, n_bus)
+    # Node measurements must have object_pos in [0, n_bus)
     for k, op in zip(idx.object_kind, idx.object_pos, strict=False):
         if k == OBJ_NODE:
             assert 0 <= op < pu.n_bus
@@ -271,7 +271,7 @@ def test_meas_index_uses_positional_indices() -> None:
 
 # --------------------------------------------------------- empty input
 def test_empty_collection_returns_zeros() -> None:
-    """Сеть без измерений: z пуст, R 0×0."""
+    """Network without measurements: z is empty, R is 0x0."""
     from gridstate.constants import NodeType
     from gridstate.working import Working
 
@@ -299,7 +299,7 @@ def test_measurement_on_unknown_node_skipped() -> None:
         {
             "id": 5,
             "object_type": OBJ_NODE,
-            "object_id": 999,  # узла 999 нет
+            "object_id": 999,  # there is no node 999
             "measurement_type": KIND_VOLTAGE,
             "value": 110.0,
             "variance": 0.01,

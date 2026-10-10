@@ -94,7 +94,7 @@ def test_vrf_in_range_untouched():
     )
     stats = _voltage_range_filter_on_arrays(meas, nodes, **VR_KW)
     assert stats["checked"] == 1 and stats["out_of_range"] == 0
-    assert float(meas[0]["variance"]) == 1.0  # не тронут
+    assert float(meas[0]["variance"]) == 1.0  # untouched
     assert int(meas[0]["quality"]) == 0
 
 
@@ -119,11 +119,11 @@ def test_vrf_above_hi_downweighted():
     assert float(meas[0]["variance"]) == 100.0  # ×multiplier
     assert float(meas[0]["weight"]) == pytest.approx(0.01)
     assert int(meas[0]["quality"]) == 1
-    assert bool(meas[0]["status"]) is True  # downweight, не деактивация
+    assert bool(meas[0]["status"]) is True  # downweight, not deactivation
 
 
 def test_vrf_nonphysical_over_deactivated():
-    """deactivate_nonphysical: V>Vnom·factor (нефизично) → status=False, не downweight."""
+    """deactivate_nonphysical: V>Vnom·factor (non-physical) -> status=False, not downweight."""
     nodes = _nodes(
         [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
     )
@@ -143,12 +143,12 @@ def test_vrf_nonphysical_over_deactivated():
         meas, nodes, **VR_KW, deactivate_nonphysical=True, nonphysical_upper_factor=1.5
     )
     assert stats["out_of_range"] == 1 and stats["hard_deactivated"] == 1
-    assert bool(meas[0]["status"]) is False  # деактивирован, НЕ downweight
-    assert float(meas[0]["variance"]) == 1.0  # variance не трогали (status=False)
+    assert bool(meas[0]["status"]) is False  # deactivated, NOT downweighted
+    assert float(meas[0]["variance"]) == 1.0  # variance not touched (status=False)
 
 
 def test_vrf_nonphysical_negative_deactivated():
-    """deactivate_nonphysical: V<=0 → status=False (отрицательное невозможно как напряжение)."""
+    """deactivate_nonphysical: V<=0 -> status=False (a non-positive value is impossible as a voltage)."""
     nodes = _nodes(
         [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
     )
@@ -177,7 +177,7 @@ def test_vrf_nonphysical_negative_deactivated():
 
 
 def test_vrf_nonphysical_deep_low_deactivated():
-    """deactivate_nonphysical: V<Vnom·lower_factor (pu=0.27) → status=False (симметрия снизу)."""
+    """deactivate_nonphysical: V<Vnom·lower_factor (pu=0.27) -> status=False (symmetry from below)."""
     nodes = _nodes(
         [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
     )
@@ -203,15 +203,15 @@ def test_vrf_nonphysical_deep_low_deactivated():
     )
     assert stats["hard_deactivated"] == 1
     assert bool(meas[0]["status"]) is False
-    assert float(meas[0]["variance"]) == 1.0  # variance не трогали
+    assert float(meas[0]["variance"]) == 1.0  # variance not touched
 
 
 def test_vrf_mild_over_still_downweight_with_flag():
-    """deactivate_nonphysical=True: мягкое out-of-range (hi<V<Vnom·factor) → downweight, не kill."""
+    """deactivate_nonphysical=True: soft out-of-range (hi<V<Vnom·factor) -> downweight, not kill."""
     nodes = _nodes(
         [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
     )
-    # hi = 121·1.1 = 133.1; Vnom·1.5 = 165 → value=150 между ними: мягкий edge.
+    # hi = 121·1.1 = 133.1; Vnom·1.5 = 165 -> value=150 lies between them: soft edge.
     meas = _meas(
         [
             {
@@ -291,11 +291,11 @@ def test_vrf_v_le_zero_guard():
     )
     stats = _voltage_range_filter_on_arrays(meas, nodes, **VR_KW)
     assert stats["out_of_range"] == 1
-    assert int(meas[0]["quality"]) == 1  # V≤0 guard, не зависит от lo/hi
+    assert int(meas[0]["quality"]) == 1  # V≤0 guard, independent of lo/hi
 
 
 def test_vrf_skip_low_vnom():
-    # vnom=10 < min_voltage_nominal_kv=110 → пропускается (ген-шина).
+    # vnom=10 < min_voltage_nominal_kv=110 -> skipped (generator bus).
     nodes = _nodes(
         [{"id": 1, "voltage_nominal": 10.0, "voltage_critical": 5.0, "voltage_max": 11.0}]
     )
@@ -422,7 +422,9 @@ def test_vc_slack_target():
 
 
 def test_vc_skip_non_target():
-    nodes = _nodes([{"id": 1, "node_type": 1, "generation_p_max": 0.0}])  # не slack, нет ген.
+    nodes = _nodes(
+        [{"id": 1, "node_type": 1, "generation_p_max": 0.0}]
+    )  # not slack, no generators.
     meas = _meas(
         [
             {
@@ -437,7 +439,7 @@ def test_vc_skip_non_target():
     )
     stats = _voltage_meas_calibration_on_arrays(meas, nodes, **VC_KW)
     assert stats["updated_meas"] == 0
-    assert float(meas[0]["variance"]) == 9.0  # не тронут
+    assert float(meas[0]["variance"]) == 9.0  # untouched
 
 
 def test_vc_skip_off_node():
@@ -462,7 +464,7 @@ def test_vc_skip_off_node():
 
 
 def test_do_node_orphan_deactivated():
-    nodes = _nodes([{"id": 1, "status": False}])  # узел off
+    nodes = _nodes([{"id": 1, "status": False}])  # node off
     meas = _meas([{"id": 10, "object_type": OT_NODE, "object_id": 1, "measurement_type": MT_V}])
     stats = _deactivate_orphan_on_arrays(meas, nodes, _branches([]), _gens([]))
     assert bool(meas[0]["status"]) is False and stats["node_meas"] == 1
@@ -483,7 +485,7 @@ def test_do_gen_orphan_deactivated():
 
 
 def test_do_active_object_kept():
-    nodes = _nodes([{"id": 1}])  # активен
+    nodes = _nodes([{"id": 1}])  # active
     meas = _meas([{"id": 10, "object_type": OT_NODE, "object_id": 1, "measurement_type": MT_V}])
     stats = _deactivate_orphan_on_arrays(meas, nodes, _branches([]), _gens([]))
     assert bool(meas[0]["status"]) is True and stats["node_meas"] == 0
@@ -493,4 +495,4 @@ def test_do_unknown_object_type_counted():
     meas = _meas([{"id": 10, "object_type": 9, "object_id": 1, "measurement_type": MT_V}])
     stats = _deactivate_orphan_on_arrays(meas, _nodes([]), _branches([]), _gens([]))
     assert stats["orphan_object_id"] == 1
-    assert bool(meas[0]["status"]) is True  # неизвестный ot не трогается
+    assert bool(meas[0]["status"]) is True  # unknown ot is left untouched

@@ -1,14 +1,14 @@
-"""Решающие ядра топологии работают на контрактных массивах (vendor-free).
+"""The topology decision kernels work on contract arrays (vendor-free).
 
 Complements ``test_topology_port.py``, which covers the public functions of
-``gridstate.topology``. Здесь проверяем новую способность: каждое ``_*``-ядро
+``gridstate.topology``. Here we check the new capability: each ``_*`` kernel
 
-* исполняется на «голых» массивах схемы контракта (``SE_INPUT.*.input_dtype()``),
-  без полноценной модели — то есть зависит только от контрактных колонок (если бы
-  ядро читало неконтрактную колонку, оно бы упало на голом массиве);
-* возвращает корректный **план** (id объектов под смену статуса/типа);
-* план ядра совпадает с фактическим эффектом публичного адаптера на модели
-  (связка ядро↔адаптер).
+* runs on "bare" arrays of the contract schema (``SE_INPUT.*.input_dtype()``),
+  without a full model, i.e. it depends only on contract columns (a kernel that
+  read a non-contract column would fail on a bare array);
+* returns a correct **plan** (ids of objects whose status/type changes);
+* the kernel plan matches the actual effect of the public adapter on a model
+  (kernel <-> adapter link).
 """
 
 from __future__ import annotations
@@ -33,19 +33,19 @@ from gridstate.topology import (
 
 _SLACK, _PQ = 2, 0
 
-# Сценарий-близнец _build_model из test_topology_port (multi-slack, gen→PV, orphan,
-# disconnected island {6,7}, isolated {5}), но как «голые» контрактные массивы.
+# Twin scenario of _build_model from test_topology_port (multi-slack, gen->PV, orphan,
+# disconnected island {6,7}, isolated {5}), but as "bare" contract arrays.
 _NODES = [
     # (id, node_type, balance_priority, status)
-    (1, _SLACK, 1, True),  # выбранный slack (min bp)
-    (2, _SLACK, 2, True),  # демотируется в PQ
+    (1, _SLACK, 1, True),  # selected slack (min bp)
+    (2, _SLACK, 2, True),  # demoted to PQ
     (3, _PQ, 0, True),
-    (4, _PQ, 0, True),  # имеет генератор → PV
-    (5, _PQ, 0, True),  # изолированный (ветвь 107 off)
-    (6, _PQ, 0, True),  # disconnected pair с 7
+    (4, _PQ, 0, True),  # has a generator -> PV
+    (5, _PQ, 0, True),  # isolated (branch 107 off)
+    (6, _PQ, 0, True),  # disconnected pair with 7
     (7, _PQ, 0, True),
-    (8, _PQ, 0, True),  # в главном острове, источник orphan
-    (9, _PQ, 0, False),  # off-узел, цель orphan-ветви
+    (8, _PQ, 0, True),  # in the main island, source of the orphan branch
+    (9, _PQ, 0, False),  # off node, target of the orphan branch
 ]
 _BRANCHES = [
     # (id, from_node, to_node, status)
@@ -55,7 +55,7 @@ _BRANCHES = [
     (104, 6, 7, True),  # disconnected island
     (105, 8, 3, True),
     (106, 8, 9, True),  # orphan (9 off)
-    (107, 5, 3, False),  # off → узел 5 изолирован
+    (107, 5, 3, False),  # off -> node 5 isolated
 ]
 _GENS = [(1, 4, True)]  # (id, node_id, status)
 
@@ -90,7 +90,7 @@ def _bare_gens() -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Ядра на голых контрактных массивах (без модели)
+# Kernels on bare contract arrays (no model)
 # ---------------------------------------------------------------------------
 
 
@@ -103,30 +103,30 @@ def test_gen_promote_core_on_bare_arrays():
 
 
 def test_orphan_branches_core_on_bare_arrays():
-    # ветвь 106 (8→9) указывает на off-узел 9.
+    # branch 106 (8->9) points to off node 9.
     assert _orphan_branches_to_disable(_bare_nodes(), _bare_branches()) == [106]
 
 
 def test_isolated_nodes_core_on_bare_arrays():
-    # узел 5: единственная инцидентная ветвь 107 — off.
+    # node 5: the only incident branch 107 is off.
     assert _isolated_nodes_to_disable(_bare_nodes(), _bare_branches()) == [5]
 
 
 def test_disconnected_nodes_core_on_bare_arrays():
-    # острова {5} (isolated) и {6,7} не имеют active-пути к slack {1,2}.
+    # islands {5} (isolated) and {6,7} have no active path to slack {1,2}.
     plan = _disconnected_nodes_to_disable(_bare_nodes(), _bare_branches())
     assert set(plan) == {5, 6, 7}
-    assert len(plan) == 3  # без дублей
+    assert len(plan) == 3  # no duplicates
 
 
 def test_disconnected_core_no_slack_returns_empty():
     nodes = _bare_nodes()
-    nodes["node_type"] = _PQ  # снять все slack
+    nodes["node_type"] = _PQ  # clear all slack
     assert _disconnected_nodes_to_disable(nodes, _bare_branches()) == []
 
 
 # ---------------------------------------------------------------------------
-# План ядра == эффект адаптера на модели (связка ядро↔адаптер)
+# Kernel plan == adapter effect on the model (kernel <-> adapter link)
 # ---------------------------------------------------------------------------
 
 
@@ -165,7 +165,7 @@ def _build_model():
 
 
 def test_adapter_effect_matches_core_plan():
-    """Каждый адаптер меняет ровно те id, что вернуло его ядро (на исходном состоянии)."""
+    """Each adapter changes exactly the ids its kernel returned (on the initial state)."""
     m = _build_model()
 
     # slack→PQ
@@ -176,7 +176,7 @@ def test_adapter_effect_matches_core_plan():
     for nid in plan:
         assert types[nid] == _PQ
 
-    # gen→PV (после refine_slack, как в pipeline)
+    # gen->PV (after refine_slack, as in the pipeline)
     plan = _gen_nodes_to_promote(m.nodes.to_numpy(), m.generators.to_numpy())
     n = refine_node_types_from_generators(m)
     assert n["promoted"] == len(plan)
@@ -207,7 +207,7 @@ def test_adapter_effect_matches_core_plan():
 
 
 def test_gen_demote_core_pv_without_active_generator():
-    """PV-узел, чьи генераторы все выключены, возвращается в PQ; PV без каталога — нет."""
+    """A PV node whose generators are all off returns to PQ; a PV node without a catalogue does not."""
     nodes = np.zeros(3, dtype=SE_INPUT.nodes.input_dtype())
     nodes["id"] = [10, 20, 30]
     nodes["node_type"] = 1  # PV
@@ -216,19 +216,19 @@ def test_gen_demote_core_pv_without_active_generator():
     gens["id"] = [1, 2, 3]
     gens["node_id"] = [10, 20, 20]
     gens["status"] = [False, False, True]
-    # 10: единственный ген off → PQ; 20: один ген активен → остаётся PV;
-    # 30: генераторов нет вовсе (PV из входа) → не трогается.
+    # 10: the only generator is off -> PQ; 20: one generator active -> stays PV;
+    # 30: no generators at all (PV from the input) -> untouched.
     assert _gen_nodes_to_demote(nodes, gens) == [10]
 
 
 def test_refine_node_types_order_independent():
-    """Тип узла не зависит от того, выключен ген во входе или каскадом позже."""
+    """Node type does not depend on whether the generator is off in the input or switched off by a cascade later."""
     m = _build_model()
     refine_slack_to_one(m)
-    refine_node_types_from_generators(m)  # первый проход: ген активен → PV
+    refine_node_types_from_generators(m)  # first pass: generator active -> PV
     arr = m.generators.to_numpy().copy()
-    arr["status"] = False  # каскад выключил все машины
+    arr["status"] = False  # the cascade switched all machines off
     m.generators.update_from_array(arr)
-    stats = refine_node_types_from_generators(m)  # второй проход
+    stats = refine_node_types_from_generators(m)  # second pass
     assert stats["demoted"] >= 1
     assert all(int(r["node_type"]) != 1 for r in m.nodes.to_numpy())

@@ -1,9 +1,9 @@
-"""Юнит-тесты ``gridstate.shunt_sanity`` (research-шаг try-off/flip шунтов).
+"""Unit tests for ``gridstate.shunt_sanity`` (research step: try-off/flip of shunts).
 
-Классификация на синтетике: кандидат = активный шунт на узле, чья node-V-мера
-расходится с решением (|z−h| > v_frac·Vnom). Гейты: нет шунта / малая невязка /
-неправдоподобное z — не кандидат; ранжирование по невязке + кап. Правки
-``edit_shunt`` (off/flip) и скаляр ``sum_rn2``. The step itself is orchestrated
+Classification on synthetic data: candidate = an active shunt on a node whose
+node-V measurement disagrees with the solution (|z−h| > v_frac·Vnom). Gates: no
+shunt / small residual / implausible z -> not a candidate; ranking by residual
+plus a cap. Edits ``edit_shunt`` (off/flip) and the scalar ``sum_rn2``. The step itself is orchestrated
 by contract.run as a research option with full re-runs; default OFF (the
 golden regression covers it).
 """
@@ -70,7 +70,7 @@ def _classify(m: Working, *, v_frac: float = 0.012, max_candidates: int = 6):
 
 
 def test_candidate_found():
-    # |z−h| = 10 кВ = 1.33% Vnom > 1.2% → кандидат
+    # |z−h| = 10 kV = 1.33% Vnom > 1.2% -> candidate
     plan = _classify(_build())
     assert plan.candidates == (7,)
     assert not plan.empty
@@ -87,19 +87,19 @@ def test_inactive_shunt_not_candidate():
 
 
 def test_small_deviation_not_candidate():
-    # |z−h| = 5 кВ = 0.67% Vnom < 1.2%
+    # |z−h| = 5 kV = 0.67% Vnom < 1.2%
     plan = _classify(_build(z=755.3))
     assert plan.empty
 
 
 def test_implausible_z_ignored():
-    # z вне 0.5–1.5 Vnom (мусор/ноль) — не кандидат
+    # z outside 0.5-1.5 Vnom (garbage/zero) -> not a candidate
     plan = _classify(_build(z=0.0))
     assert plan.empty
 
 
 def test_ranking_and_cap():
-    m = _build()  # узел 7: невязка 10
+    m = _build()  # node 7: residual 10
     m.nodes.add({"id": 8, "voltage_nominal": 750.0, "voltage_magnitude": 750.0, "status": True})
     m.shunts.add({"id": 2, "node_id": 8, "susceptance": 1e-4, "status": True})
     m.measurements.add(
@@ -108,7 +108,7 @@ def test_ranking_and_cap():
             "object_type": OBJ_NODE,
             "object_id": 8,
             "measurement_type": KIND_VOLTAGE,
-            "value": 780.0,  # невязка 30 > 10 → узел 8 первый
+            "value": 780.0,  # residual 30 > 10 -> node 8 first
             "variance": 4.0,
             "status": True,
             "is_pseudo": False,
@@ -128,7 +128,7 @@ def test_edit_shunt_off_and_flip():
     assert edit_shunt(m, 7, "flip") == 1
     arr = m.shunts.to_numpy()
     assert arr["susceptance"][0] == np.float64(5.33e-4)
-    assert edit_shunt(m, 999, "off") == 0  # нет шунтов узла — no-op
+    assert edit_shunt(m, 999, "off") == 0  # no shunts on the node -> no-op
 
 
 def test_sum_rn2_live_real_only():
@@ -137,14 +137,14 @@ def test_sum_rn2_live_real_only():
     arr["estimated_si"][0] = 750.3  # (760.3−750.3)²/4 = 25
     m.measurements.update_from_array(arr)
     assert np.isclose(sum_rn2(m.measurements.to_numpy()), 25.0)
-    # выключенная мера не участвует
+    # a switched-off measurement does not participate
     arr["status"][0] = False
     m.measurements.update_from_array(arr)
     assert sum_rn2(m.measurements.to_numpy()) == 0.0
 
 
 def test_toggle_default_off_and_not_a_step():
-    # Оркестрация — на уровне contract.run (полные re-run'ы), НЕ шаг пайплайна.
+    # Orchestration lives in contract.run (full re-runs); it is NOT a pipeline step.
     assert PipelineConfig().shunt_sanity is False
     assert "shunt_sanity" not in [s.name for s in STEPS]
 

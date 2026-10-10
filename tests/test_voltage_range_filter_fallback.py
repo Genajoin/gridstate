@@ -1,4 +1,4 @@
-"""Тесты fallback-логики ``apply_voltage_range_filter``.
+"""Tests for the fallback logic of ``apply_voltage_range_filter``.
 
 They cover placeholder limits found in real inputs (a critical limit of 1.0 on
 500 kV nodes, a missing upper limit and the like).
@@ -30,7 +30,7 @@ def _add_v_meas(model, node_id: int, value: float, mid: int) -> None:
 
 
 def _build(node_attrs: dict, v_meas: float):
-    """Минимальная модель: 1 активный узел + 1 V-мера."""
+    """Minimal model: one active node + one V measurement."""
     from gridstate.constants import NodeType
     from gridstate.working import Working
 
@@ -52,7 +52,7 @@ def test_critical_placeholder_falls_through_to_min_limit() -> None:
     m = _build({"voltage_critical": 1.0, "voltage_min": 350.0}, v_meas=400.0)
     stats = apply_voltage_range_filter(m)
     me = m.measurements.to_numpy()
-    # 400 > 350 → V в диапазоне → status=True
+    # 400 > 350 -> V in range -> status=True
     assert bool(me[0]["status"]) is True
     assert me[0]["variance"] == pytest.approx(100.0)
     assert stats["out_of_range"] == 0
@@ -72,7 +72,7 @@ def test_critical_and_min_placeholders_use_half_vnom() -> None:
     m = _build({"voltage_critical": 1.0, "voltage_min": 1.0}, v_meas=200.0)
     stats = apply_voltage_range_filter(m)
     m.measurements.to_numpy()
-    # 200 < 250 (=V_ном/2) → out-of-range
+    # 200 < 250 (=V_nom/2) -> out-of-range
     assert stats["out_of_range"] == 1
     # 260 > 250 → ok
     m2 = _build({"voltage_critical": 1.0, "voltage_min": 1.0}, v_meas=260.0)
@@ -89,7 +89,7 @@ def test_valid_critical_limit_used_directly() -> None:
 
 
 def test_missing_upper_limit_uses_factor_fallback() -> None:
-    """voltage_max=0 → fallback 1.4·V_ном = 700."""
+    """voltage_max=0 -> fallback 1.4·V_nom = 700."""
     m = _build(
         {"voltage_critical": 350.0, "voltage_min": 350.0, "voltage_max": 0.0},
         v_meas=750.0,
@@ -121,7 +121,7 @@ def test_upper_limit_set_takes_precedence() -> None:
 
 
 def test_custom_upper_fallback_factor() -> None:
-    """Передача upper_fallback_factor меняет верхнюю границу."""
+    """Passing upper_fallback_factor changes the upper bound."""
     m = _build(
         {"voltage_critical": 350.0, "voltage_min": 350.0, "voltage_max": 0.0},
         v_meas=750.0,
@@ -131,7 +131,7 @@ def test_custom_upper_fallback_factor() -> None:
 
 
 def test_deactivate_action() -> None:
-    """action=deactivate ставит status=False вместо downweight."""
+    """action=deactivate sets status=False instead of downweighting."""
     m = _build({"voltage_critical": 350.0, "voltage_min": 350.0}, v_meas=300.0)
     apply_voltage_range_filter(m, action="deactivate")
     me = m.measurements.to_numpy()
@@ -139,26 +139,26 @@ def test_deactivate_action() -> None:
 
 
 def test_min_voltage_nominal_kv_default_skips_lv() -> None:
-    """Дефолт min_voltage_nominal_kv=110: LV-узел (11 кВ) не проверяется вовсе."""
+    """Default min_voltage_nominal_kv=110: an LV node (11 kV) is not checked at all."""
     m = _build({"voltage_nominal": 11.0, "voltage_critical": 0.0}, v_meas=21.2)
     stats = apply_voltage_range_filter(m)
     me = m.measurements.to_numpy()
-    # 21.2 кВ на 11 кВ шине (1.93 pu) — мусор, но класс < 110 кВ пропущен
+    # 21.2 kV on an 11 kV bus (1.93 pu) is garbage, but the < 110 kV class is skipped
     assert bool(me[0]["status"]) is True
     assert me[0]["variance"] == pytest.approx(100.0)
     assert stats["checked"] == 0
 
 
 def test_min_voltage_nominal_kv_zero_checks_lv() -> None:
-    """min_voltage_nominal_kv=0: LV-класс проверяется — датчик чужого класса ×~2
-    (реальный кейс СК-2: 21.2 кВ на 11 кВ шине) downweight'ится."""
+    """min_voltage_nominal_kv=0: the LV class is checked, so a sensor of a foreign class
+    reading ×~2 (a real case: 21.2 kV on an 11 kV bus) is downweighted."""
     m = _build({"voltage_nominal": 11.0, "voltage_critical": 0.0}, v_meas=21.2)
     stats = apply_voltage_range_filter(m, min_voltage_nominal_kv=0.0)
     me = m.measurements.to_numpy()
     # hi = 11·1.4 = 15.4 < 21.2 → out_of_range → downweight σ²×100
     assert stats["out_of_range"] == 1
     assert me[0]["variance"] == pytest.approx(100.0 * 100.0)
-    # валидная LV-мера при этом проходит
+    # a valid LV measurement still passes
     m2 = _build({"voltage_nominal": 11.0, "voltage_critical": 0.0}, v_meas=10.8)
     stats2 = apply_voltage_range_filter(m2, min_voltage_nominal_kv=0.0)
     assert stats2["out_of_range"] == 0

@@ -1,11 +1,11 @@
-"""Юнит-тесты ``gridstate.bad_data_repass`` + шаг пайплайна.
+"""Unit tests for ``gridstate.bad_data_repass`` + the pipeline step.
 
-Классификация тестируется на синтетических массивах (без solve): каждая
-ветка механизма — flip знак-флипа, reject битого нуля, парный иммунитет,
-демпф Qinj, guard покрытия домена — детерминированно изолирована. Шаг
-``bad_data_repass`` в ``run()`` проверяется e2e: на чистой модели план
-пуст → no-op (решение бит-в-бит с выключенным шагом, второй solve не
-вызывается).
+Classification is tested on synthetic arrays (no solve): every branch of the
+mechanism -- sign flip, reject of a broken zero, pair immunity, Qinj damping,
+domain-coverage guard -- is isolated deterministically. The
+``bad_data_repass`` step in ``run()`` is checked end to end: on a clean model the
+plan is empty -> no-op (solution bit-identical to the step switched off, the
+second solve is not called).
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from test_pipeline_idempotent import _make_model_with_reactor
 
 
 # ---------------------------------------------------------------------------
-# Сборка синтетики: Working с ветвью 1-2 и мерами с заданными (z, h, σ).
+# Synthetic builder: Working with branch 1-2 and measurements with given (z, h, sigma).
 # ---------------------------------------------------------------------------
 
 
@@ -112,7 +112,7 @@ def _classify(m: Working) -> BadDataPlan:
 
 
 def _add_domain_anchors(m: Working, next_id: int = 900) -> None:
-    """Согласованные Pinj/Qinj на обоих узлах — покрытие доменов, не кандидаты."""
+    """Consistent Pinj/Qinj at both nodes -- domain coverage, not candidates."""
     for nid in (1, 2):
         _add_meas(m, next_id, KIND_POWER_INJECTION_P, nid, z=10.0, h=10.0, sigma=5.0)
         _add_meas(m, next_id + 1, KIND_POWER_INJECTION_Q, nid, z=5.0, h=5.0, sigma=5.0)
@@ -125,7 +125,7 @@ def _add_domain_anchors(m: Working, next_id: int = 900) -> None:
 
 
 def test_flip_detects_sign_flipped_flow():
-    """Знак-флипнутый P-flow (z≈−h) лечится flip'ом, не reject'ом."""
+    """A sign-flipped P-flow (z ~ -h) is cured by a flip, not a reject."""
     m = _build_working()
     _add_domain_anchors(m)
     _add_meas(m, 1, KIND_POWER_P, 100, z=-100.0, h=98.0, sigma=5.0)
@@ -138,7 +138,7 @@ def test_flip_detects_sign_flipped_flow():
 
 
 def test_reject_dead_zero_flow():
-    """Битый нуль (z=0 при h=200) отбраковывается (flip нуля бессмыслен)."""
+    """A broken zero (z=0 at h=200) is rejected (flipping a zero is meaningless)."""
     m = _build_working()
     _add_domain_anchors(m)
     _add_meas(m, 1, KIND_POWER_P, 100, z=0.0, h=200.0, sigma=10.0)
@@ -150,7 +150,7 @@ def test_reject_dead_zero_flow():
 
 
 def test_pair_immunity_protects_consistent_pair():
-    """Согласованная branch-пара с большими остатками иммунна (анти-circular)."""
+    """A consistent branch pair with large residuals is immune (anti-circular)."""
     m = _build_working()
     _add_meas(m, 1, KIND_POWER_P, 100, z=600.0, h=100.0, sigma=20.0, side=0)
     _add_meas(m, 2, KIND_POWER_P, 100, z=-590.0, h=-95.0, sigma=20.0, side=1)
@@ -163,7 +163,7 @@ def test_pair_immunity_protects_consistent_pair():
 
 
 def test_zero_pair_gets_no_immunity():
-    """Нулевая пара (z=0/0 при больших h) НЕ иммунна: z=0 не несёт свидетельства."""
+    """A zero pair (z=0/0 at large h) is NOT immune: z=0 carries no evidence."""
     m = _build_working()
     _add_domain_anchors(m)
     _add_meas(m, 1, KIND_POWER_P, 100, z=0.0, h=200.0, sigma=10.0, side=0)
@@ -176,7 +176,7 @@ def test_zero_pair_gets_no_immunity():
 
 
 def test_qinj_damped_never_rejected():
-    """Монстр-Qinj демпфируется (σ×k), а не отключается (кейс слепой кромки)."""
+    """A monster Qinj is damped (sigma*k), not disabled (blind-edge case)."""
     m = _build_working()
     _add_domain_anchors(m)
     _add_meas(m, 1, KIND_POWER_INJECTION_Q, 2, z=1400.0, h=0.0, sigma=70.0)
@@ -188,9 +188,9 @@ def test_qinj_damped_never_rejected():
 
 
 def test_coverage_guard_restores_last_domain_measure():
-    """Узел не теряет последнюю real-меру P-домена — reject отменяется."""
+    """A node does not lose its last real P-domain measurement -- the reject is cancelled."""
     m = _build_working()
-    # Единственная P-мера узла 2 — монстр-Pinj; Q-домен покрыт.
+    # The only P measurement of node 2 is a monster Pinj; the Q domain is covered.
     _add_meas(m, 1, KIND_POWER_INJECTION_P, 2, z=500.0, h=0.0, sigma=10.0)
     _add_meas(m, 2, KIND_POWER_INJECTION_Q, 2, z=5.0, h=5.0, sigma=5.0)
 
@@ -201,7 +201,7 @@ def test_coverage_guard_restores_last_domain_measure():
 
 
 def test_clean_model_yields_empty_plan():
-    """Согласованные меры → кандидатов нет, план пуст."""
+    """Consistent measurements -> no candidates, the plan is empty."""
     m = _build_working()
     _add_domain_anchors(m)
     _add_meas(m, 1, KIND_POWER_P, 100, z=50.0, h=49.0, sigma=5.0)
@@ -213,10 +213,10 @@ def test_clean_model_yields_empty_plan():
 
 
 def test_pseudo_and_voltage_measures_ignored():
-    """Pseudo-меры и V-меры не участвуют в детекции."""
+    """Pseudo-measurements and V measurements do not take part in detection."""
     m = _build_working()
     _add_domain_anchors(m)
-    # Грубая V-мера и грубый pseudo-Pinj — оба вне DETECTABLE real-набора.
+    # A coarse V measurement and a coarse pseudo-Pinj -- both outside the DETECTABLE real set.
     _add_meas(m, 1, KIND_VOLTAGE, 2, z=200.0, h=110.0, sigma=1.0, obj_type=OBJ_NODE)
     m.measurements.add(
         {
@@ -259,9 +259,9 @@ def test_apply_plan_mutates_measurements():
     stats = apply_bad_data_plan(m, plan, damp_factor=5.0)
 
     me = {int(r["id"]): r for r in m.measurements.to_numpy()}
-    assert float(me[1]["value"]) == 100.0  # флип знака
-    assert bool(me[2]["status"]) is False  # деактивация
-    assert bool(me[3]["status"]) is True  # Qinj осталась активной
+    assert float(me[1]["value"]) == 100.0  # sign flip
+    assert bool(me[2]["status"]) is False  # deactivation
+    assert bool(me[3]["status"]) is True  # Qinj stayed active
     assert float(me[3]["variance"]) == 70.0 * 70.0 * 25.0  # σ×5 → variance×25
     assert stats == {
         "flips": 1,
@@ -274,12 +274,12 @@ def test_apply_plan_mutates_measurements():
 
 
 # ---------------------------------------------------------------------------
-# Шаг пайплайна
+# Pipeline step
 # ---------------------------------------------------------------------------
 
 
 def test_step_skips_on_unusable_solution():
-    """completed=False → классификация не зовётся (остатки ненадёжны)."""
+    """completed=False -> classification is not called (residuals are unreliable)."""
     ctx = _Ctx(model=None, cfg=PipelineConfig(bad_data=True))
     ctx.result = SimpleNamespace(success=False)
 
@@ -289,8 +289,8 @@ def test_step_skips_on_unusable_solution():
 
 
 def test_run_noop_on_clean_model_bit_exact():
-    """На согласованной модели (без шунта: плоское состояние = точное решение)
-    план пуст: решение бит-в-бит с bad_data=False, re-solve не вызывается."""
+    """On a consistent model (no shunt: flat state = exact solution)
+    the plan is empty: solution bit-identical to bad_data=False, no re-solve."""
     m = _make_model_with_reactor(susceptance_uS=0.0)
     r_off = run(m, config=PipelineConfig(algorithm="wls"))
 
@@ -313,8 +313,8 @@ def test_run_noop_on_clean_model_bit_exact():
 
 
 def test_run_repass_on_conflicting_model():
-    """Модель с ШР 605 МВАр против нулевых Qinj-мер: конфликт детектируется,
-    Qinj демпфируются (не reject), re-solve проходит успешно."""
+    """A model with a 605 MVAr shunt reactor against zero Qinj measurements: the conflict is detected,
+    Qinj are damped (not rejected), the re-solve succeeds."""
     m = _make_model_with_reactor()
 
     events: list[dict] = []

@@ -1,6 +1,6 @@
-"""Тесты IPM-solver'а на синтетических задачах.
+"""Tests of the IPM solver on synthetic problems.
 
-Не зависят от модели сети: проверяют чистую механику log-barrier WLS.
+They do not depend on the network model: they exercise the bare mechanics of log-barrier WLS.
 """
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ class TestBarrierHelpers:
         lo = np.array([0.0, 0.0, 0.0])
         hi = np.array([1.0, 1.0, 10.0])
         out = _project_to_interior(x, idx, lo, hi, eps=0.01)
-        # idx=2 (x=0.5) не в box_idx → не меняется
+        # idx=2 (x=0.5) is not in box_idx -> unchanged
         assert out[2] == 0.5
-        # все остальные строго внутри [lo + 0.01, hi - 0.01]
+        # all the others lie strictly inside [lo + 0.01, hi - 0.01]
         assert 0.01 <= out[0] <= 0.99
         assert 0.01 <= out[1] <= 0.99
         assert 0.1 <= out[3] <= 9.9
@@ -46,7 +46,7 @@ class TestBarrierHelpers:
         assert v == pytest.approx(2.0 * np.log(2.0), abs=1e-12)
 
     def test_barrier_value_outside_is_inf(self) -> None:
-        x = np.array([1.5])  # вне [0, 1]
+        x = np.array([1.5])  # outside [0, 1]
         idx = np.array([0])
         lo = np.array([0.0])
         hi = np.array([1.0])
@@ -54,20 +54,20 @@ class TestBarrierHelpers:
         assert v == float("inf")
 
     def test_barrier_grad_correct_sign(self) -> None:
-        # x ближе к нижней границе → grad должен толкать вверх (положительный)
+        # x is closer to the lower bound -> grad must push upward (positive)
         x = np.array([0.1])
         idx = np.array([0])
         lo = np.array([0.0])
         hi = np.array([1.0])
         g, h = _barrier_grad_hess(x, idx, lo, hi, mu=1.0)
         # dB/dx = -μ/(x-lo) + μ/(hi-x) = -1/0.1 + 1/0.9 ≈ -10 + 1.11 = -8.89
-        # Это градиент B; чтобы минимизировать B, нужно идти в -grad → +8.89 > 0 ✓
-        assert g[0] < 0  # B уменьшается при движении вправо (от lo)
-        assert h[0] > 0  # выпуклость barrier'а
+        # This is the gradient of B; to minimise B one moves along -grad -> +8.89 > 0 ✓
+        assert g[0] < 0  # B decreases when moving to the right (away from lo)
+        assert h[0] > 0  # convexity of the barrier
 
     def test_max_step_to_boundary(self) -> None:
         x = np.array([0.5])
-        dx = np.array([0.4])  # к hi=1.0; α_max = (1-0.5)/0.4 = 1.25
+        dx = np.array([0.4])  # towards hi=1.0; α_max = (1-0.5)/0.4 = 1.25
         idx = np.array([0])
         lo = np.array([0.0])
         hi = np.array([1.0])
@@ -87,7 +87,7 @@ class TestBarrierHelpers:
 
 # ---------------------------------------------------------------- 1D tests
 class Test1DScalarFit:
-    """Минимальная задача: оценить скаляр x по одному «измерению» z = x + ε."""
+    """Minimal problem: estimate a scalar x from a single "measurement" z = x + ε."""
 
     def _make_1d_problem(
         self,
@@ -101,13 +101,13 @@ class Test1DScalarFit:
             return z - np.array([x[0]])
 
         def jac(x: np.ndarray) -> csr_matrix:
-            # H = ∂h/∂x где h(x) = x → H = 1 (как в WLS, не ∂r/∂x).
+            # H = ∂h/∂x where h(x) = x -> H = 1 (as in WLS, not ∂r/∂x).
             return csr_matrix(np.array([[1.0]]))
 
         return residual, jac, r_inv
 
     def test_unconstrained_recovers_measurement(self) -> None:
-        """Без боксов IPM = WLS, ответ = z."""
+        """Without boxes IPM = WLS, the answer is z."""
         residual, jac, r_inv = self._make_1d_problem(z_value=3.0)
         result = solve_ipm(
             x_init=np.array([0.0]),
@@ -119,7 +119,7 @@ class Test1DScalarFit:
         assert result.x[0] == pytest.approx(3.0, abs=1e-6)
 
     def test_constraint_inactive_recovers_measurement(self) -> None:
-        """Box [0, 10] — не активен (z=3 внутри): ответ = z."""
+        """Box [0, 10] is inactive (z=3 lies inside): the answer is z."""
         residual, jac, r_inv = self._make_1d_problem(z_value=3.0)
         result = solve_ipm(
             x_init=np.array([0.5]),
@@ -134,7 +134,7 @@ class Test1DScalarFit:
         assert result.x[0] == pytest.approx(3.0, abs=1e-3)
 
     def test_constraint_active_upper(self) -> None:
-        """Box [0, 2] активен сверху (z=10 вне): x → 2− (упирается в hi)."""
+        """Box [0, 2] is active from above (z=10 is outside): x -> 2- (pressed against hi)."""
         residual, jac, r_inv = self._make_1d_problem(z_value=10.0)
         result = solve_ipm(
             x_init=np.array([1.0]),
@@ -147,11 +147,11 @@ class Test1DScalarFit:
             mu_min=1e-8,
         )
         assert result.x[0] < 2.0
-        # При μ→0 решение должно подойти к 2 близко.
+        # As μ->0 the solution must come close to 2.
         assert result.x[0] > 1.95, f"got {result.x[0]}"
 
     def test_constraint_active_lower(self) -> None:
-        """Box [5, 10] активен снизу (z=−1 вне): x → 5+."""
+        """Box [5, 10] is active from below (z=-1 is outside): x -> 5+."""
         residual, jac, r_inv = self._make_1d_problem(z_value=-1.0)
         result = solve_ipm(
             x_init=np.array([7.0]),
@@ -169,10 +169,10 @@ class Test1DScalarFit:
 
 # ---------------------------------------------------------------- 2D tests
 class Test2DOverdetermined:
-    """y = x + noise (2 измерения одной переменной + 1 переменной без)."""
+    """y = x + noise (2 measurements of one variable + 1 variable without)."""
 
     def test_two_measurements_average(self) -> None:
-        """Без боксов: x* = ½(z1+z2)."""
+        """Without boxes: x* = ½(z1+z2)."""
         z = np.array([2.0, 4.0])
         r_inv = np.array([1.0, 1.0])
 
@@ -192,7 +192,7 @@ class Test2DOverdetermined:
         assert result.x[0] == pytest.approx(3.0, abs=1e-6)
 
     def test_two_vars_decoupled(self) -> None:
-        """2 переменные, по 1 измерению каждая. Только x[1] под box."""
+        """2 variables, 1 measurement each. Only x[1] is boxed."""
         z = np.array([5.0, 15.0])
         r_inv = np.array([1.0, 1.0])
 
@@ -209,12 +209,12 @@ class Test2DOverdetermined:
             r_inv_diag=r_inv,
             box_idx=np.array([1]),
             box_lo=np.array([0.0]),
-            box_hi=np.array([10.0]),  # x[1] упирается в 10
+            box_hi=np.array([10.0]),  # x[1] is pressed against 10
             mu_min=1e-8,
         )
-        # x[0] свободна → должна попасть в z[0]=5 точно
+        # x[0] is free -> must land exactly on z[0]=5
         assert result.x[0] == pytest.approx(5.0, abs=1e-3)
-        # x[1] упирается в 10
+        # x[1] is pressed against 10
         assert result.x[1] < 10.0
         assert result.x[1] > 9.9
 
@@ -222,7 +222,7 @@ class Test2DOverdetermined:
 # ---------------------------------------------------------------- WLS-equivalence
 class TestWLSEquivalence:
     def test_no_box_one_outer_pass(self) -> None:
-        """Без box-vars outer-loop делает 1 проход (WLS-режим)."""
+        """Without box vars the outer loop makes a single pass (WLS mode)."""
         z = np.array([3.0])
         r_inv = np.array([1.0])
 
@@ -230,7 +230,7 @@ class TestWLSEquivalence:
             return z - np.array([x[0]])
 
         def jac(x: np.ndarray) -> csr_matrix:
-            # H = ∂h/∂x где h(x) = x → H = 1 (как в WLS, не ∂r/∂x).
+            # H = ∂h/∂x where h(x) = x -> H = 1 (as in WLS, not ∂r/∂x).
             return csr_matrix(np.array([[1.0]]))
 
         result = solve_ipm(
@@ -240,11 +240,11 @@ class TestWLSEquivalence:
             r_inv_diag=r_inv,
         )
         assert result.iterations_outer == 1
-        assert result.mu_final == 0.0  # WLS-режим обнуляет μ
+        assert result.mu_final == 0.0  # WLS mode zeroes μ
 
 
 class TestConvergenceStatus:
-    """Двухуровневый статус: kkt / completed / stalled / error."""
+    """Two-level status: kkt / completed / stalled / error."""
 
     @staticmethod
     def _problem(z_value: float):
@@ -274,11 +274,11 @@ class TestConvergenceStatus:
         assert result.success
 
     def test_schedule_done_loose_kkt_is_completed_and_success(self) -> None:
-        """μ-расписание пройдено, но строгий KKT не достигнут → completed,
-        success=True (раньше — ложный «не сошёлся»)."""
+        """The μ schedule is exhausted but the strict KKT is not reached -> completed,
+        success=True (previously a false "did not converge")."""
         residual, jac, r_inv = self._problem(10.0)
-        # Активная граница + крошечный inner_max: grad у барьера не
-        # успевает стать < tol, но μ доходит до mu_min.
+        # Active bound + tiny inner_max: the barrier gradient does not
+        # get below tol in time, but μ reaches mu_min.
         result = solve_ipm(
             x_init=np.array([1.0]),
             residual_fn=residual,
@@ -287,28 +287,28 @@ class TestConvergenceStatus:
             box_idx=np.array([0]),
             box_lo=np.array([0.0]),
             box_hi=np.array([2.0]),
-            inner_tol=1e-12,  # заведомо недостижимый строгий порог
+            inner_tol=1e-12,  # deliberately unreachable strict threshold
             outer_max=200,
         )
         assert result.mu_final <= 1e-6
-        if result.status != "kkt":  # при экстремальном tol ожидаем completed
+        if result.status != "kkt":  # with an extreme tol we expect completed
             assert result.status == "completed"
             assert result.success
         assert "μ_final" in result.message
 
     def test_start_at_solution_is_converged_not_stalled(self) -> None:
-        """Старт в точном решении (после promote результата во вход) →
-        converged, а не ложный «stalled».
+        """Start at the exact solution (after promoting the result into the input) ->
+        converged, not a false "stalled".
 
         Regression: the very first Newton step < inner_tol → inner break
         without accepted steps → lazy break down to μ_min → status='stalled'
         with ANY iteration limit (reproduced on a large production model,
         2026-06-10).
-        Сходимость inner по толерансу — НЕ стагнация: μ-расписание
-        должно дойти до mu_min → kkt/completed.
+        Inner convergence by tolerance is NOT stagnation: the μ schedule
+        must reach mu_min -> kkt/completed.
         """
         residual, jac, r_inv = self._problem(3.0)
-        # Шаг 1: решаем с нейтрального старта.
+        # Step 1: solve from a neutral start.
         first = solve_ipm(
             x_init=np.array([0.5]),
             residual_fn=residual,
@@ -319,7 +319,7 @@ class TestConvergenceStatus:
             box_hi=np.array([10.0]),
         )
         assert first.success
-        # Шаг 2: перезапуск из найденного решения («старт в решении»).
+        # Step 2: restart from the solution found ("start at the solution").
         second = solve_ipm(
             x_init=first.x.copy(),
             residual_fn=residual,
@@ -331,12 +331,12 @@ class TestConvergenceStatus:
         )
         assert second.status in ("kkt", "completed"), second.message
         assert second.success
-        assert second.mu_final <= 1e-6  # μ-расписание дошло до конца
+        assert second.mu_final <= 1e-6  # the μ schedule ran to the end
         assert second.x[0] == pytest.approx(first.x[0], abs=1e-3)
 
     def test_real_stall_armijo_fail_stays_stalled(self) -> None:
-        """Настоящая стагнация (Armijo не находит шаг вдали от оптимума)
-        по-прежнему даёт stalled — фикс не ослабляет stall-детекцию."""
+        """Genuine stagnation (Armijo finds no step far from the optimum)
+        still yields stalled: the fix does not weaken stall detection."""
         z = np.array([10.0])
         r_inv = np.array([1.0])
 
@@ -344,8 +344,8 @@ class TestConvergenceStatus:
             return z - np.array([x[0]])
 
         def jac_wrong_sign(x: np.ndarray) -> csr_matrix:
-            # Неверный знак якобиана → Newton-«спуск» идёт в подъём:
-            # Armijo не примет ни одного шага, grad большой, μ > μ_min.
+            # Wrong Jacobian sign -> the Newton "descent" goes uphill:
+            # Armijo accepts no step, grad is large, μ > μ_min.
             return csr_matrix(np.array([[-1.0]]))
 
         result = solve_ipm(
@@ -368,7 +368,7 @@ class TestConvergenceStatus:
             return z - np.array([x[0]])
 
         def jac_bad(x: np.ndarray) -> csr_matrix:
-            return csr_matrix(np.array([[np.nan]]))  # nan → non-finite шаг
+            return csr_matrix(np.array([[np.nan]]))  # nan -> non-finite step
 
         result = solve_ipm(
             x_init=np.array([0.5]),

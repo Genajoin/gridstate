@@ -1,7 +1,7 @@
-"""Тесты библиотечной обёртки ``gridstate.pipeline``.
+"""Tests of the library wrapper ``gridstate.pipeline``.
 
-* manifest-консистентность (структура, JSON-сериализуемость, toggle↔config);
-* production-дефолты ``PipelineConfig``.
+* manifest consistency (structure, JSON serialisability, toggle <-> config);
+* production defaults of ``PipelineConfig``.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from gridstate import pipeline as P  # noqa: N812
 
 
 # ---------------------------------------------------------------------------
-# Манифест / реестр (без данных)
+# Manifest / registry (no data)
 # ---------------------------------------------------------------------------
 
 
 def test_manifest_is_json_serializable():
     man = P.manifest()
-    json.dumps(man)  # не должно бросить
+    json.dumps(man)  # must not raise
     assert set(man) == {"steps", "params", "groups"}
     assert man["steps"] and man["params"] and man["groups"]
 
@@ -38,7 +38,7 @@ def test_manifest_steps_have_required_fields():
             "default_enabled",
             "needs_derived",
         }
-        # optional ⟺ есть toggle-поле
+        # optional <=> there is a toggle field
         assert s["optional"] == (s["toggle"] is not None)
 
 
@@ -52,7 +52,7 @@ def test_every_step_toggle_references_real_config_field():
     cfg_fields = {f.name for f in fields(P.PipelineConfig)}
     for step in P.STEPS:
         if step.toggle is not None:
-            assert step.toggle in cfg_fields, f"{step.name}: нет поля {step.toggle}"
+            assert step.toggle in cfg_fields, f"{step.name}: no field {step.toggle}"
 
 
 def test_manifest_default_enabled_matches_config():
@@ -154,7 +154,7 @@ def test_step_names_unique():
 
 
 # ---------------------------------------------------------------------------
-# Production-дефолты (единственный источник истины)
+# Production defaults (single source of truth)
 # ---------------------------------------------------------------------------
 
 
@@ -175,7 +175,7 @@ def test_effective_huber_c_auto():
 
 
 # ---------------------------------------------------------------------------
-# Страж согласованности config ↔ derived («cfg дважды»)
+# Config <-> derived consistency guard ("cfg twice")
 # ---------------------------------------------------------------------------
 
 
@@ -201,7 +201,7 @@ def test_derived_consistency_rejects_missing_topology_plan():
     d.topology_resolved = None
     with pytest.raises(ValueError, match="topology"):
         P._check_derived_consistency(P.PipelineConfig(apply_topology=True), d)
-    # выключенный toggle делает отсутствие плана легальным
+    # a disabled toggle makes a missing plan legal
     P._check_derived_consistency(P.PipelineConfig(apply_topology=False), d)
 
 
@@ -215,8 +215,8 @@ def test_derived_consistency_rejects_missing_telemetry_plan():
 
 
 def test_derived_consistency_network_only_skips_telemetry():
-    # prepare_network исполняет только network=True шаги: telemetry не из них,
-    # её план в этом режиме не обязателен.
+    # prepare_network runs only network=True steps: telemetry is not one of them,
+    # so its plan is not required in this mode.
     d = _full_derived()
     d.telemetry_resolved = None
     P._check_derived_consistency(P.PipelineConfig(), d, network_only=True)

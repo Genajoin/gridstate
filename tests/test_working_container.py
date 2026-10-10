@@ -1,12 +1,12 @@
-"""Бит-в-бит эквивалентность ``gridstate.working.Working`` модели-источнику.
+"""Bit-for-bit equivalence of ``gridstate.working.Working`` to the source model.
 
-Контейнер ``Working`` (numpy-backed + row-proxy) обязан воспроизводить ровно ту
-поверхность model-API, которую читает/пишет working-слой ``pipeline.run``, и быть
-бит-в-бит совместимым с моделью-источником на ней.
+The ``Working`` container (numpy-backed + row proxy) must reproduce exactly the
+model-API surface that the working layer of ``pipeline.run`` reads/writes, and be
+bit-for-bit compatible with the source model on it.
 
-Субъект — небольшая модель, собранная программно: проверяем поле-в-поле
-равенство ``to_numpy()`` и атрибутов прокси для всех строк (включая
-``measurement.weight`` — единственную производную-колонку).
+The subject is a small model built programmatically: we check field-by-field
+equality of ``to_numpy()`` and proxy attributes for all rows (including
+``measurement.weight``, the only derived column).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from gridstate.working import (
 )
 
 
-# Атрибуты Measurement, читаемые в 4 object-итерация-местах + units + result.
+# Measurement attributes read in the 4 object-iteration places + units + result.
 MEAS_READ_ATTRS = (
     "id",
     "status",
@@ -43,24 +43,24 @@ MEAS_READ_ATTRS = (
     "estimated_si",
     "residual",
 )
-# ``name`` НЕ включён: это строковое поле, усекаемое по ширине U-dtype колонки
-# контракта. Пайплайн в object-итерации (z_vector/post_processing) читает только
-# numeric-атрибуты (не усекаются); бит-в-бит самой ``name``-колонки (репрезентация
-# массива, на которой работает пайплайн) проверяется в to_numpy-тестах.
-# Сравнивать proxy.name (репрезентация массива) с объектом-источником.name (полная строка)
-# некорректно — это расхождение лишь ширины dtype, не контейнера.
+# ``name`` is NOT included: it is a string field truncated to the width of the
+# contract U-dtype column. The pipeline in object iteration (z_vector/post_processing) reads only
+# numeric attributes (not truncated); the bit-for-bit state of the ``name`` column itself (the array
+# representation the pipeline works on) is checked in the to_numpy tests.
+# Comparing proxy.name (array representation) with the source object .name (full string)
+# is incorrect - that is only a dtype-width discrepancy, not a container one.
 
 
-# --- фикстуры моделей --------------------------------------------------------
+# --- model fixtures ----------------------------------------------------------
 
 
 @pytest.fixture
 def small_model():
-    """Маленькая модель-источник: 3 узла, 2 ветви, 2 генератора, 4 измерения.
+    """Small source model: 3 nodes, 2 branches, 2 generators, 4 measurements.
 
-    Покрывает все ветки proxy-типов: int (id/object_type), bool (status/
-    is_pseudo), float (value/variance/voltage_magnitude), str (name), и
-    измерение БЕЗ явного weight (weight посчитается как 1/variance).
+    Covers all proxy type branches: int (id/object_type), bool (status/
+    is_pseudo), float (value/variance/voltage_magnitude), str (name), and a
+    measurement WITHOUT an explicit weight (weight is computed as 1/variance).
     """
     m = Working.empty()
     m.nodes.add(
@@ -131,7 +131,7 @@ def small_model():
     m.generators.add(
         {"id": 101, "node_id": 2, "power_output": 0.0, "reactive_output": 0.0, "status": False}
     )
-    # U на узле; P на ветви (from); Q-injection на узле; bad-quality мера.
+    # U at a node; P on a branch (from); Q injection at a node; a bad-quality measurement.
     m.measurements.add(
         {
             "id": 1000,
@@ -192,21 +192,21 @@ def small_model():
     return m
 
 
-# --- тесты -------------------------------------------------------------------
+# --- tests -------------------------------------------------------------------
 
 
 def test_from_model_to_numpy_field_for_field(small_model):
-    """(1) ``to_numpy()`` каждой коллекции поле-в-поле == источник."""
+    """(1) ``to_numpy()`` of each collection field-by-field == source."""
     w = Working.from_model(small_model)
     for name in ("nodes", "branches", "measurements", "generators"):
         src_arr = getattr(small_model, name).to_numpy()
         w_arr = getattr(w, name).to_numpy()
         assert w_arr.dtype == src_arr.dtype, name
-        assert np.array_equal(w_arr, src_arr), f"{name} массивы не идентичны"
+        assert np.array_equal(w_arr, src_arr), f"{name} arrays are not identical"
 
 
 def test_measurement_iteration_attrs_match_source(small_model):
-    """(2) Итерация measurements: все читаемые атрибуты == источник, тот же порядок."""
+    """(2) Iterating measurements: all read attributes == source, same order."""
     w = Working.from_model(small_model)
     src_list = list(small_model.measurements)
     w_list = list(w.measurements)
@@ -215,7 +215,7 @@ def test_measurement_iteration_attrs_match_source(small_model):
         for attr in MEAS_READ_ATTRS:
             src_v = getattr(src_m, attr)
             w_v = getattr(w_m, attr)
-            assert type(w_v) is type(src_v), f"{attr}: тип {type(w_v)} != {type(src_v)}"
+            assert type(w_v) is type(src_v), f"{attr}: type {type(w_v)} != {type(src_v)}"
             if isinstance(src_v, float):
                 assert w_v == pytest.approx(src_v), f"{attr}: {w_v} != {src_v}"
             else:
@@ -223,17 +223,17 @@ def test_measurement_iteration_attrs_match_source(small_model):
 
 
 def test_measurement_weight_is_property_value(small_model):
-    """``weight`` (= 1/variance) материализован в колонку идентично."""
+    """``weight`` (= 1/variance) is materialised into the column identically."""
     w = Working.from_model(small_model)
     for src_m, w_m in zip(list(small_model.measurements), list(w.measurements), strict=True):
         assert w_m.weight == pytest.approx(src_m.weight)
-    # узел id=1000 variance=0.25 -> weight=4.0
+    # node id=1000 variance=0.25 -> weight=4.0
     m1000 = w.measurements.get_by_id(1000)
     assert m1000.weight == pytest.approx(4.0)
 
 
 def test_node_get_by_id_and_update(small_model):
-    """(3) get_by_id().V == источник; update точечно меняет только одну строку."""
+    """(3) get_by_id().V == source; update changes only one row, pointwise."""
     w = Working.from_model(small_model)
     for nid in (1, 2, 3):
         src_n = small_model.nodes.get_by_id(nid)
@@ -245,26 +245,26 @@ def test_node_get_by_id_and_update(small_model):
     assert w.nodes.get_by_id(99999) is None
 
     before = w.nodes.to_numpy()
-    # dict-стиль (позиционный dict)
+    # dict style (positional dict)
     w.nodes.update(2, {"voltage_magnitude": 100.0})
-    # kwargs-стиль
+    # kwargs style
     w.nodes.update(2, voltage_angle=-0.2)
     arr = w.nodes.to_numpy()
     idx2 = {int(r["id"]): i for i, r in enumerate(arr)}[2]
     assert arr[idx2]["voltage_magnitude"] == pytest.approx(100.0)
     assert arr[idx2]["voltage_angle"] == pytest.approx(-0.2)
-    # другие строки нетронуты
+    # other rows are untouched
     for i in range(len(arr)):
         if i == idx2:
             continue
-        assert np.array_equal(arr[i], before[i]), "update задел чужую строку"
-    # запись через get_by_id-прокси тоже видна в to_numpy
+        assert np.array_equal(arr[i], before[i]), "update touched another row"
+    # a write via the get_by_id proxy is also visible in to_numpy
     w.nodes.get_by_id(1).voltage_magnitude = 111.0
     assert w.nodes.to_numpy()[0]["voltage_magnitude"] == pytest.approx(111.0)
 
 
 def test_branch_get_by_id(small_model):
-    """get_by_id на ветвях: ключевые/working-колонки == источник."""
+    """get_by_id on branches: key/working columns == source."""
     w = Working.from_model(small_model)
     for bid in (10, 11):
         src_b = small_model.branches.get_by_id(bid)
@@ -290,7 +290,7 @@ def test_branch_get_by_id(small_model):
 
 
 def test_add_measurement_appends_and_uniqueness(small_model):
-    """(4) add → новый id, len+1, в конце to_numpy, виден итерацией; дубль → ValueError."""
+    """(4) add -> new id, len+1, at the end of to_numpy, visible by iteration; duplicate -> ValueError."""
     w = Working.from_model(small_model)
     n0 = len(w.measurements)
     new_id = w.measurements.add(
@@ -309,15 +309,15 @@ def test_add_measurement_appends_and_uniqueness(small_model):
     assert new_id == 2000
     assert len(w.measurements) == n0 + 1
     arr = w.measurements.to_numpy()
-    assert int(arr[-1]["id"]) == 2000  # появилась в КОНЦЕ
+    assert int(arr[-1]["id"]) == 2000  # appeared at the END
     assert arr[-1]["name"] == "synthetic"
     assert bool(arr[-1]["is_pseudo"]) is True
-    # незаданные поля — ноль dtype
+    # unset fields are dtype zero
     assert arr[-1]["quality"] == 0
-    # видна итерацией, по правильному idx
+    # visible by iteration, at the right idx
     assert [int(r.id) for r in w.measurements][-1] == 2000
     assert w.measurements.get_by_id(2000) is not None
-    # дубль id → ValueError
+    # duplicate id -> ValueError
     with pytest.raises(ValueError):
         w.measurements.add(
             {"id": 2000, "object_type": 0, "object_id": 1, "measurement_type": 2, "value": 1.0}
@@ -325,7 +325,7 @@ def test_add_measurement_appends_and_uniqueness(small_model):
 
 
 def test_add_matches_source_semantics(small_model):
-    """add в исходный и в производный Working дают идентичный to_numpy()."""
+    """add to the source and to the derived Working give an identical to_numpy()."""
     w = Working.from_model(small_model)
     row = {
         "id": 2001,
@@ -344,9 +344,9 @@ def test_add_matches_source_semantics(small_model):
 
 
 def test_add_many_matches_per_row_add(small_model):
-    """add_many(rows) бит-в-бит эквивалентен последовательным add(): та же
-    to_numpy(), тот же порядок, те же id-индексы. (O(n²)→O(n) оптимизация
-    вставки псевдо-измерений должна быть поведенчески нейтральной.)"""
+    """add_many(rows) is bit-for-bit equivalent to sequential add(): the same
+    to_numpy(), the same order, the same id indices. (The O(n^2)->O(n) optimisation
+    of pseudo-measurement insertion must be behaviourally neutral.)"""
     rows = [
         {
             "id": 3000 + i,
@@ -355,7 +355,7 @@ def test_add_many_matches_per_row_add(small_model):
             "object_id": i,
             "measurement_type": 4,
             "value": float(i),
-            "variance": 2.0,  # weight = 1/variance = 0.5 (вес не задан явно)
+            "variance": 2.0,  # weight = 1/variance = 0.5 (weight not given explicitly)
             "status": True,
             "is_pseudo": True,
         }
@@ -369,30 +369,30 @@ def test_add_many_matches_per_row_add(small_model):
 
     assert returned == [3000 + i for i in range(5)]
     assert np.array_equal(w_bulk.measurements.to_numpy(), w_seq.measurements.to_numpy())
-    # weight посчитан из variance так же, как в add()
+    # weight is computed from variance the same way as in add()
     assert float(w_bulk.measurements.to_numpy()[-1]["weight"]) == 0.5
-    # id-индекс согласован: get_by_id находит все вставленные
+    # the id index is consistent: get_by_id finds all inserted rows
     for i in range(5):
         assert w_bulk.measurements.get_by_id(3000 + i) is not None
 
 
 def test_add_many_rejects_duplicate_ids(small_model):
-    """add_many ловит дубль и с уже существующим id, и внутри пакета."""
+    """add_many catches a duplicate both with an existing id and within the batch."""
     w = Working.from_model(small_model)
     existing = int(w.measurements.to_numpy()[0]["id"])
     base = {"object_type": 0, "object_id": 1, "measurement_type": 4, "value": 1.0}
-    # дубль с существующим
+    # duplicate with an existing one
     with pytest.raises(ValueError):
         w.measurements.add_many([{"id": existing, **base}])
-    # дубль внутри пакета
+    # duplicate within the batch
     with pytest.raises(ValueError):
         w.measurements.add_many([{"id": 4000, **base}, {"id": 4000, **base}])
-    # пустой пакет — no-op
+    # empty batch is a no-op
     assert w.measurements.add_many([]) == []
 
 
 def test_update_from_array_roundtrip(small_model):
-    """(5) update_from_array: модификация колонки отражается, id→idx корректен."""
+    """(5) update_from_array: a column modification is reflected, id->idx is correct."""
     w = Working.from_model(small_model)
     arr = w.nodes.to_numpy()
     arr["voltage_magnitude"] = arr["voltage_magnitude"] + 1.0
@@ -400,19 +400,19 @@ def test_update_from_array_roundtrip(small_model):
     w.nodes.update_from_array(arr)
     out = w.nodes.to_numpy()
     assert np.array_equal(out, arr)
-    # индекс пересобран: get_by_id по-прежнему адресует правильную строку
+    # the index is rebuilt: get_by_id still addresses the right row
     n2 = w.nodes.get_by_id(2)
     assert n2.voltage_magnitude == pytest.approx(
         arr["voltage_magnitude"][{int(r["id"]): i for i, r in enumerate(arr)}[2]]
     )
     assert w.nodes.get_by_id(1).status is False
-    # dtype-strict: чужой dtype отвергается
+    # dtype-strict: a foreign dtype is rejected
     with pytest.raises(ValueError):
         w.nodes.update_from_array(w.measurements.to_numpy())
 
 
 def test_iteration_order_matches_to_numpy_and_source(small_model):
-    """(6) порядок итерации == порядок to_numpy == порядок list(источник)."""
+    """(6) iteration order == to_numpy order == list(source) order."""
     w = Working.from_model(small_model)
     for name in ("nodes", "branches", "measurements", "generators"):
         coll = getattr(w, name)
@@ -437,7 +437,7 @@ def test_len_and_getitem(small_model):
 
 
 def test_from_model_does_not_mutate_input(small_model):
-    """Working независим от Input: правки working не текут в модель-источник."""
+    """Working is independent of the Input: edits to working do not leak into the source model."""
     w = Working.from_model(small_model)
     src_before = small_model.nodes.to_numpy()
     w.nodes.update(1, {"voltage_magnitude": 222.0})
@@ -446,7 +446,7 @@ def test_from_model_does_not_mutate_input(small_model):
 
 
 def test_array_collection_direct_construction():
-    """``_ArrayCollection`` принимает голый structured-массив, dtype фиксируется."""
+    """``_ArrayCollection`` accepts a bare structured array; the dtype is fixed."""
     dt = np.dtype([("id", "i4"), ("value", "f8"), ("status", "bool")])
     arr = np.array([(1, 1.5, True), (2, 2.5, False)], dtype=dt)
     coll = _ArrayCollection(arr)
@@ -454,7 +454,7 @@ def test_array_collection_direct_construction():
     assert coll.dtype == dt
     assert coll.get_by_id(2).value == pytest.approx(2.5)
     assert coll.get_by_id(2).status is False
-    # копия: мутация исходного arr не задевает коллекцию
+    # copy: mutating the original arr does not affect the collection
     arr[0]["value"] = 99.0
     assert coll.get_by_id(1).value == pytest.approx(1.5)
 

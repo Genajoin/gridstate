@@ -1,14 +1,14 @@
-"""Юнит-тесты для quality summary в ``SEResult``.
+"""Unit tests for the quality summary in ``SEResult``.
 
-Покрывает:
-    * заполнение полей ``chi2``/``worst_residuals``/``worst_imbalance``/
-      ``observability_warnings`` после ``estimate()``;
-    * сортировку ``worst_residuals`` по убыванию ``|r_N|``;
-    * сходимость ``chi2.value > 0`` и ``dof = m − n_state``;
-    * backward-compat: ``include_quality_summary=False`` оставляет defaults.
+Covers:
+    * filling of the ``chi2``/``worst_residuals``/``worst_imbalance``/
+      ``observability_warnings`` fields after ``estimate()``;
+    * sorting of ``worst_residuals`` by descending ``|r_N|``;
+    * convergence ``chi2.value > 0`` and ``dof = m - n_state``;
+    * backward compatibility: ``include_quality_summary=False`` keeps the defaults.
 
-Используется та же 3-узловая сеть, что и в ``tests/test_bad_data.py``,
-без шума на чистых синтетических измерениях.
+The same 3-node network as in ``tests/test_bad_data.py`` is used,
+with no noise on clean synthetic measurements.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from tests.test_bad_data import _three_bus_with_clean_measurements
 
 
 def test_seresult_quality_summary_populated() -> None:
-    """После ``estimate()`` chi2/worst_*/observability должны быть заполнены."""
+    """After ``estimate()`` chi2/worst_*/observability must be filled."""
     m, _, _ = _three_bus_with_clean_measurements()
     res = estimate(m, tolerance=1e-10)
 
@@ -35,9 +35,9 @@ def test_seresult_quality_summary_populated() -> None:
     assert isinstance(res.chi2, Chi2Summary)
     assert res.chi2.dof > 0
     assert res.chi2.value >= 0.0
-    # На чистых данных без шума J ≈ 0 → должен пройти порог.
+    # On clean noiseless data J ~ 0 -> must pass the threshold.
     assert res.chi2.passes
-    # threshold не nan при dof>0
+    # threshold is not nan when dof>0
     assert np.isfinite(res.chi2.threshold)
 
     # worst_residuals
@@ -45,11 +45,11 @@ def test_seresult_quality_summary_populated() -> None:
     assert len(res.worst_residuals) > 0
     assert all(isinstance(row, ResidualRow) for row in res.worst_residuals)
 
-    # отсортированы по убыванию |r_N|
+    # sorted by descending |r_N|
     rns = [abs(row.normalized_residual) for row in res.worst_residuals]
     assert rns == sorted(rns, reverse=True)
 
-    # каждый row имеет валидный label
+    # every row has a valid label
     valid_kinds = {"V", "P", "Q", "I", "P_inj", "Q_inj", "?"}
     for row in res.worst_residuals:
         assert row.kind in valid_kinds or row.kind.endswith("_pr") or row.kind.endswith("bal")
@@ -57,19 +57,19 @@ def test_seresult_quality_summary_populated() -> None:
         assert np.isfinite(row.value)
         assert np.isfinite(row.expected)
         assert np.isfinite(row.residual)
-        # На чистых данных r ≈ value − expected
+        # On clean data r ~ value - expected
         assert abs((row.value - row.expected) - row.residual) < 1e-6
 
     # worst_imbalance
     assert isinstance(res.worst_imbalance, list)
     assert all(isinstance(row, ImbalanceRow) for row in res.worst_imbalance)
-    # 3-узловая сеть: топ-10 == 3 узла
+    # 3-node network: top-10 == 3 nodes
     assert len(res.worst_imbalance) == 3
-    # отсортированы по |imbalance_p|
+    # sorted by |imbalance_p|
     imbs = [abs(row.imbalance_p_mw) for row in res.worst_imbalance]
     assert imbs == sorted(imbs, reverse=True)
 
-    # observability_warnings — пуст для полностью наблюдаемой сети
+    # observability_warnings - empty for a fully observable network
     assert isinstance(res.observability_warnings, list)
     assert res.observability_warnings == []
 
@@ -81,12 +81,12 @@ def test_seresult_chi2_dof_matches_m_minus_n() -> None:
     assert res.chi2 is not None
 
     n_meas = sum(1 for me in m.measurements if me.status)
-    n_state = 2 * 3 - 1  # 3 узла → state size = 5
+    n_state = 2 * 3 - 1  # 3 nodes -> state size = 5
     assert res.chi2.dof == n_meas - n_state
 
 
 def test_seresult_quality_summary_disabled() -> None:
-    """``include_quality_summary=False`` оставляет defaults."""
+    """``include_quality_summary=False`` keeps the defaults."""
     m, _, _ = _three_bus_with_clean_measurements()
     res = estimate(m, tolerance=1e-10, include_quality_summary=False)
 
@@ -99,9 +99,9 @@ def test_seresult_quality_summary_disabled() -> None:
 
 
 def test_seresult_backward_compat_default_construction() -> None:
-    """``SEResult(model=...)`` без новых полей продолжает работать."""
+    """``SEResult(model=...)`` keeps working without the new fields."""
 
-    # Минимальная mock-модель — нужна только ссылка для dataclass.
+    # Minimal mock model - only a reference is needed for the dataclass.
     class _Stub:
         pass
 
@@ -109,7 +109,7 @@ def test_seresult_backward_compat_default_construction() -> None:
     res = SEResult(model=stub)  # type: ignore[arg-type]
     assert res.success is False
     assert res.iterations == 0
-    # Все новые поля имеют backward-compat defaults.
+    # All new fields have backward-compat defaults.
     assert res.chi2 is None
     assert res.worst_residuals == []
     assert res.worst_imbalance == []
@@ -117,7 +117,7 @@ def test_seresult_backward_compat_default_construction() -> None:
 
 
 def test_seresult_worst_residuals_top_n_kwarg() -> None:
-    """``quality_summary_top_n`` ограничивает размер топа."""
+    """``quality_summary_top_n`` limits the size of the top list."""
     m, _, _ = _three_bus_with_clean_measurements()
     res = estimate(m, tolerance=1e-10, quality_summary_top_n=3)
     assert res.success
@@ -126,7 +126,7 @@ def test_seresult_worst_residuals_top_n_kwarg() -> None:
 
 
 def test_seresult_worst_residuals_object_binding() -> None:
-    """``ResidualRow`` несёт объектную привязку: object_kind/object_id/σ/is_pseudo."""
+    """``ResidualRow`` carries the object binding: object_kind/object_id/sigma/is_pseudo."""
     m, _, _ = _three_bus_with_clean_measurements()
     res = estimate(m, tolerance=1e-10)
     assert res.success
@@ -143,7 +143,7 @@ def test_seresult_worst_residuals_object_binding() -> None:
             assert row.object_id in branch_ids
             assert row.branch_side in (0, 1)
         assert np.isfinite(row.sigma) and row.sigma > 0
-        # Синтетические измерения — не псевдо.
+        # Synthetic measurements are not pseudo.
         assert row.is_pseudo is False
 
 

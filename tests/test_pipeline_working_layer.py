@@ -1,15 +1,15 @@
-"""Страж границы рабочего слоя: INPUT/KEY-колонки контракта НЕ мутируются
-пайплайном — мутируется только WORKING/OUTPUT.
+"""Working-layer boundary guard: INPUT/KEY columns of the contract are NOT mutated
+by the pipeline - only WORKING/OUTPUT ones are.
 
-Это **инвариант, оправдывающий «узкий clone»** (копировать лишь WORKING+KEY,
-INPUT держать shared/read-only): если хоть один production-шаг пишет в колонку,
-помеченную в контракте ``Role.INPUT``/``Role.KEY`` (gridstate/contract/tables.py),
-— это либо неверная разметка контракта, либо шаг, который при снятии clone начнёт
-мутировать Input. Страж ловит оба случая.
+This is the **invariant that justifies the "narrow clone"** (copy only WORKING+KEY,
+keep INPUT shared/read-only): if even one production step writes to a column
+marked ``Role.INPUT``/``Role.KEY`` in the contract (gridstate/contract/tables.py),
+then either the contract markup is wrong, or the step will start mutating the
+Input once the clone is removed. The guard catches both cases.
 
-Метод: прогнать полный ``run`` (Input read-only → working-копия в ``result.model``),
-сверить по ключу ``id`` все INPUT+KEY-колонки 4 коллекций между Input и working-
-финалом.
+Method: run a full ``run`` (Input read-only -> working copy in ``result.model``),
+compare all INPUT+KEY columns of the 4 collections by ``id`` between the Input and the working
+final state.
 """
 
 from __future__ import annotations
@@ -20,16 +20,16 @@ import pytest
 from gridstate.contract import SE_INPUT, Role
 from gridstate.pipeline import PipelineConfig, run
 
-# Переиспользуем синтетику из idempotent-сьюта.
+# Reuse the synthetic model from the idempotency suite.
 from tests.test_pipeline_idempotent import _make_model_with_reactor
 
 
 def _assert_input_key_columns_unchanged(input_model, working_model) -> int:
-    """Сверить: каждая INPUT/KEY-колонка контракта бит-в-бит между Input и working.
+    """Check that every INPUT/KEY column of the contract is bit-for-bit equal between Input and working.
 
-    Сопоставление по ``id`` (measurements в working могут иметь ДОБАВЛЕННЫЕ
-    pseudo-строки — их не проверяем; исходные id обязаны сохраниться). Возвращает
-    число проверенных (collection, column) пар — для liveness-проверки.
+    Matching is by ``id`` (measurements in working may have ADDED
+    pseudo rows - those are not checked; the original ids must be preserved). Returns
+    the number of (collection, column) pairs checked - for a liveness check.
     """
     pairs = [
         (SE_INPUT.nodes, input_model.nodes, working_model.nodes),
@@ -48,13 +48,13 @@ def _assert_input_key_columns_unchanged(input_model, working_model) -> int:
         wk_by_id = {int(row["id"]): row for row in wk_arr}
         for row in in_arr:
             rid = int(row["id"])
-            assert rid in wk_by_id, f"{schema.name} id={rid} исчез в working-копии"
+            assert rid in wk_by_id, f"{schema.name} id={rid} vanished from the working copy"
             wrow = wk_by_id[rid]
             for c in cols:
                 assert np.array_equal(row[c], wrow[c]), (
-                    f"{schema.name}.{c} (роль INPUT/KEY) изменилась на id={rid}: "
-                    f"{row[c]!r} → {wrow[c]!r} — либо неверная разметка контракта, "
-                    f"либо шаг мутирует Input"
+                    f"{schema.name}.{c} (role INPUT/KEY) changed at id={rid}: "
+                    f"{row[c]!r} -> {wrow[c]!r} - either the contract markup is wrong, "
+                    f"or a step mutates the Input"
                 )
             checked += len(cols)
     return checked
@@ -67,24 +67,24 @@ def _assert_input_key_columns_unchanged(input_model, working_model) -> int:
 
 @pytest.mark.parametrize("algorithm", ["wls", "ipm"])
 def test_input_key_columns_immutable_synthetic(algorithm):
-    """Полный run на синтетике: INPUT/KEY-колонки 4 коллекций не тронуты."""
+    """Full run on the synthetic model: INPUT/KEY columns of the 4 collections untouched."""
     m = _make_model_with_reactor()
     n_meas_in = len(m.measurements.to_numpy())
 
     r = run(m, config=PipelineConfig(algorithm=algorithm))
 
     checked = _assert_input_key_columns_unchanged(m, r.model)
-    assert checked > 0, "страж ничего не проверил — список INPUT/KEY-колонок пуст?"
-    # Liveness: пайплайн реально что-то сделал в WORKING-слое (добавил pseudo-меры
-    # и/или записал shunt) — иначе страж проходил бы вакуумно.
+    assert checked > 0, "the guard checked nothing - is the INPUT/KEY column list empty?"
+    # Liveness: the pipeline really did something in the WORKING layer (added pseudo-measurements
+    # and/or wrote a shunt) - otherwise the guard would pass vacuously.
     assert len(r.model.measurements.to_numpy()) >= n_meas_in
 
 
 def test_working_columns_do_change_synthetic():
-    """Контроль: WORKING-колонки (shunt_b от реактора) действительно меняются —
-    подтверждает, что страж выше не вакуумен (Input/working вообще различимы)."""
+    """Control: WORKING columns (reactor shunt_b) do change -
+    confirms the guard above is not vacuous (Input and working are distinguishable)."""
     m = _make_model_with_reactor()
     r = run(m, config=PipelineConfig(algorithm="wls"))
-    # реактор на узле 1 → working shunt_b != 0, Input shunt_b == 0.
+    # reactor at node 1 -> working shunt_b != 0, Input shunt_b == 0.
     assert float(m.nodes.get_by_id(1).shunt_b) == pytest.approx(0.0)
     assert float(r.model.nodes.get_by_id(1).shunt_b) != pytest.approx(0.0)

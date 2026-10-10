@@ -1,4 +1,4 @@
-"""Тесты построения матриц проводимостей (``gridstate.ybus``).
+"""Tests of the admittance matrix construction (``gridstate.ybus``).
 
 Checks on simple networks where the Y-bus is known analytically. The comparison
 with a full pandapower model lives in the WLS integration test on IEEE 14-bus
@@ -27,8 +27,8 @@ def _toy_two_bus(
     shift: float = 0.0,
     bus_b_shunt: tuple[float, float] = (0.0, 0.0),
 ):
-    """Сборка ``NetworkPU`` напрямую (без полноценной модели) — нужно для
-    точечных проверок Y-bus формул в p.u.
+    """Build a ``NetworkPU`` directly (without a full model) - needed for
+    targeted checks of the Y-bus formulas in p.u.
     """
     from gridstate.units import BASE_MVA, NetworkPU
 
@@ -62,7 +62,7 @@ def _toy_two_bus(
 
 # ------------------------------------------------------- pure line
 class TestPureLine:
-    """Линия без шунта, без трансформации."""
+    """Line without shunt, without transformation."""
 
     def test_purely_inductive_line(self) -> None:
         # X=0.5 p.u., R=0 → Ys = -2j. Yff=Ytt=-2j, Yft=Ytf=2j.
@@ -75,17 +75,17 @@ class TestPureLine:
         np.testing.assert_allclose(ybus_d[0, 1], 2j)
         np.testing.assert_allclose(ybus_d[1, 0], 2j)
 
-        # Yf @ V = I_from. Для симметричной линии и V=[1,1] I_from = 0.
+        # Yf @ V = I_from. For a symmetric line and V=[1,1], I_from = 0.
         v = np.array([1.0, 1.0], dtype=complex)
         i_from = yf @ v
         np.testing.assert_allclose(i_from, [0.0])
-        # Для V=[1, exp(-j·0.1)]: I = (V_f - V_t) * Ys = (1 - cos(0.1) + j·sin(0.1)) * (-2j)
+        # For V=[1, exp(-j·0.1)]: I = (V_f - V_t) * Ys = (1 - cos(0.1) + j·sin(0.1)) * (-2j)
         v = np.array([1.0, np.exp(-0.1j)], dtype=complex)
         expected_i = (v[0] - v[1]) * (1 / 0.5j)
         np.testing.assert_allclose((yf @ v)[0], expected_i, rtol=1e-12)
 
     def test_total_pi_shunt_split_evenly(self) -> None:
-        # B_total = 0.4 p.u. → каждая сторона получает 0.2j.
+        # B_total = 0.4 p.u. -> each side gets 0.2j.
         # Yff = Ys + 0.2j = (1/0.5j) + 0.2j = -2j + 0.2j = -1.8j
         net = _toy_two_bus(r=0.0, x=0.5, bcf_total=0.4)
         ybus, _, _ = build_ybus(net)
@@ -94,8 +94,8 @@ class TestPureLine:
         np.testing.assert_allclose(d[1, 1], -1.8j)
 
     def test_asymmetric_shunts(self) -> None:
-        # Только шунт со стороны "от": b_from = 0.3 → Yff = -2j + 0.3j = -1.7j,
-        # а Ytt = -2j (без to-шунта).
+        # Only the shunt on the "from" side: b_from = 0.3 -> Yff = -2j + 0.3j = -1.7j,
+        # and Ytt = -2j (no to-side shunt).
         net = _toy_two_bus(r=0.0, x=0.5, b_from=0.3)
         ybus, _, _ = build_ybus(net)
         d = ybus.toarray()
@@ -106,14 +106,14 @@ class TestPureLine:
         net = _toy_two_bus(r=0.0, x=0.5, bus_b_shunt=(0.05, -0.03))
         ybus, _, _ = build_ybus(net)
         d = ybus.toarray()
-        # Диагональ = ветвевая часть + узловой шунт
+        # Diagonal = branch part + node shunt
         np.testing.assert_allclose(d[0, 0], -2j + 0.05j)
         np.testing.assert_allclose(d[1, 1], -2j - 0.03j)
 
 
 # ------------------------------------------------------- transformer
 class TestTransformer:
-    """Идеальный (без шунтов) трансформатор."""
+    """Ideal (shunt-free) transformer."""
 
     def test_unit_tap_equals_pure_line(self) -> None:
         line = build_ybus(_toy_two_bus(x=0.5, tap=1.0))[0].toarray()
@@ -121,7 +121,7 @@ class TestTransformer:
         np.testing.assert_allclose(line, line_no_t)
 
     def test_step_down_tap_impedance_on_from_side(self) -> None:
-        # Сопротивление на стороне «от», tap=2.0, Ysf = -2j:
+        # Impedance on the "from" side, tap=2.0, Ysf = -2j:
         # Yff = Ysf = -2j; Yft = Ytf = -Ysf·t = 4j; Ytt = Ysf·|t|² = -8j.
         net = _toy_two_bus(x=0.5, tap=2.0)
         ybus, _, _ = build_ybus(net)
@@ -132,8 +132,8 @@ class TestTransformer:
         np.testing.assert_allclose(d[1, 1], -8.0j, atol=1e-12)
 
     def test_series_current_through_from_side_impedance(self) -> None:
-        # Ток «от» — через сопротивление стороны «от»: I = (V_f − t·V_t)/z.
-        # Не зависит от того, насколько коэффициент ушёл от номинала.
+        # The "from" current flows through the "from"-side impedance: I = (V_f - t·V_t)/z.
+        # It does not depend on how far the ratio is from nominal.
         z = 0.02 + 0.5j
         v = np.array([1.02, 0.95 * np.exp(-0.08j)], dtype=complex)
         for tap in (0.9, 1.0, 1.196):
@@ -143,11 +143,11 @@ class TestTransformer:
 
     def test_phase_shift_only(self) -> None:
         # tap=1.0, shift=π/6: |tap|²=1, conj(tap)=exp(−jπ/6).
-        # Yff = Ysf = -2j (как в линии)
+        # Yff = Ysf = -2j (as for a line)
         # Yft = -Ysf / conj(tap) = -(-2j) / exp(-jπ/6) = 2j · exp(jπ/6)
         # Ytf = -Ysf / tap     = -(-2j) / exp(jπ/6)  = 2j · exp(-jπ/6)
         # Ytt = Ysf = -2j
-        # ВАЖНО: в результате Ybus НЕсимметричен (Yft != Ytf).
+        # IMPORTANT: the resulting Ybus is NOT symmetric (Yft != Ytf).
         net = _toy_two_bus(x=0.5, tap=1.0, shift=np.pi / 6)
         ybus, _, _ = build_ybus(net)
         d = ybus.toarray()
@@ -155,14 +155,14 @@ class TestTransformer:
         np.testing.assert_allclose(d[1, 1], -2j, atol=1e-12)
         np.testing.assert_allclose(d[0, 1], 2j * np.exp(1j * np.pi / 6), atol=1e-12)
         np.testing.assert_allclose(d[1, 0], 2j * np.exp(-1j * np.pi / 6), atol=1e-12)
-        # Несимметричность — отличительный признак фазоповоротного
+        # Asymmetry is the distinguishing feature of a phase-shifting transformer
         assert not np.allclose(d, d.T)
 
 
 # --------------------------------------------------- topology / multi-branch
 class TestParallelBranches:
     def test_two_parallel_lines_sum(self) -> None:
-        """Две параллельные одинаковые линии → проводимости удваиваются."""
+        """Two parallel identical lines -> admittances double."""
         from gridstate.units import BASE_MVA, NetworkPU
 
         net = NetworkPU(
@@ -193,7 +193,7 @@ class TestParallelBranches:
         )
         ybus, _, _ = build_ybus(net)
         d = ybus.toarray()
-        # Каждая линия даёт диагональ -2j → суммарно -4j.
+        # Each line contributes -2j to the diagonal -> -4j in total.
         np.testing.assert_allclose(d[0, 0], -4j)
         np.testing.assert_allclose(d[1, 1], -4j)
         np.testing.assert_allclose(d[0, 1], 4j)
@@ -246,20 +246,20 @@ class TestErrors:
 # ----------------------------------------------------- Yf / Yt consistency
 class TestYfYtConsistency:
     def test_currents_via_yf_match_direct(self) -> None:
-        """Yf @ V для конкретной V совпадает с (Yff·V_f + Yft·V_t) поэлементно."""
+        """Yf @ V for a specific V matches (Yff·V_f + Yft·V_t) element by element."""
         net = _toy_two_bus(x=0.5, tap=1.5, shift=0.1, b_from=0.05)
         _, yf, yt = build_ybus(net)
         v = np.array([1.0, 0.97 * np.exp(-0.05j)], dtype=complex)
         i_from = yf @ v
         i_to = yt @ v
 
-        # Прямой расчёт: сопротивление на стороне «от», шунт «от» / |t|².
+        # Direct calculation: impedance on the "from" side, "from" shunt / |t|².
         ysf = 1 / (0.0 + 0.5j)
         yc_from = 0.05j  # b_from
         tap_c = 1.5 * np.exp(0.1j)
         yff = ysf + yc_from / (tap_c * np.conj(tap_c))
         yft = -ysf * tap_c
         ytf = -ysf * np.conj(tap_c)
-        ytt = ysf * abs(tap_c) ** 2 + 0.0  # без to-шунта
+        ytt = ysf * abs(tap_c) ** 2 + 0.0  # no to-side shunt
         np.testing.assert_allclose(i_from[0], yff * v[0] + yft * v[1], rtol=1e-12)
         np.testing.assert_allclose(i_to[0], ytf * v[0] + ytt * v[1], rtol=1e-12)

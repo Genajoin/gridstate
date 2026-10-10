@@ -29,7 +29,7 @@ from tests.test_units import _build_toy_3bus_model
 
 
 # --------------------------------------------------------------------------
-# read-ядро ≡ model_to_pu (бит-в-бит)
+# read kernel == model_to_pu (bit for bit)
 # --------------------------------------------------------------------------
 
 _NETWORK_PU_ARRAY_FIELDS = (
@@ -73,7 +73,7 @@ def test_network_pu_from_tables_bit_identical_to_model_to_pu():
 
 
 def test_read_core_runs_on_bare_contract_tables_without_model():
-    """read-ядро потребляет таблицы входного слоя контракта без полноценной модели."""
+    """The read kernel consumes the contract input-layer tables without a full model."""
     nodes = np.zeros(2, dtype=SE_INPUT.nodes.input_dtype())
     nodes["id"] = [1, 2]
     nodes["voltage_nominal"] = [110.0, 110.0]
@@ -102,18 +102,18 @@ def test_read_core_runs_on_bare_contract_tables_without_model():
     z_base = 110.0**2 / BASE_MVA
     assert math.isclose(pu.branch_r[0], 12.1 / z_base)
     assert math.isclose(pu.branch_x[0], 60.5 / z_base)
-    # инъекции = (gen - load) / base_mva
+    # injections = (gen - load) / base_mva
     assert math.isclose(pu.bus_p_injection[1], (0.0 - 30.0) / BASE_MVA)
 
 
 def test_read_core_multi_slack_picks_min_priority_on_bare_tables():
-    """Ветка multi-slack (argmin balance_priority) на голых контрактных массивах."""
+    """Multi-slack branch (argmin balance_priority) on bare contract arrays."""
     nodes = np.zeros(2, dtype=SE_INPUT.nodes.input_dtype())
     nodes["id"] = [1, 2]
     nodes["voltage_nominal"] = [110.0, 110.0]
     nodes["status"] = [True, True]
-    nodes["node_type"] = [2, 2]  # оба slack
-    nodes["balance_priority"] = [5, 1]  # первичный — узел 2 (min priority)
+    nodes["node_type"] = [2, 2]  # both slack
+    nodes["balance_priority"] = [5, 1]  # primary is node 2 (min priority)
     branches = np.zeros(0, dtype=SE_INPUT.branches.input_dtype())
 
     pu = network_pu_from_tables(nodes, branches)
@@ -126,7 +126,7 @@ def test_read_core_multi_slack_picks_min_priority_on_bare_tables():
 
 
 def _solution(pu):
-    """Детерминированное «решение» (не flat) для проверки формул."""
+    """Deterministic (non-flat) "solution" for checking the formulas."""
     rng_v = 1.0 + 0.01 * np.arange(pu.n_bus, dtype=np.float64)
     rng_d = 0.02 * np.arange(pu.n_bus, dtype=np.float64)
     return rng_v, rng_d
@@ -186,11 +186,11 @@ def test_compute_branch_results_pu_matches_reference():
 
 
 def test_write_results_to_model_imbalance_path_bit_identical():
-    """Прямой путь записи с ybus: p_inj_calc/imbalance через ядро ≡ запись в модель.
+    """Direct write path with ybus: p_inj_calc/imbalance via the kernel == write into the model.
 
-    Toy-модель несёт НЕнулевые gen/load (node1 +50, node2 −30, node3 +20 по P) —
-    значит вычитание ``p_calc − (gen − load)`` ассертится с ненулевым уменьшаемым,
-    исполняя изменённую строку гварда узлового цикла.
+    The toy model carries NON-zero gen/load (node1 +50, node2 -30, node3 +20 in P), so
+    the subtraction ``p_calc - (gen - load)`` is asserted with a non-zero minuend,
+    exercising the modified guard line of the node loop.
     """
     m = _build_toy_3bus_model()
     pu = model_to_pu(m)
@@ -215,7 +215,7 @@ def test_write_results_to_model_imbalance_path_bit_identical():
         ],
         dtype=np.float64,
     )
-    assert np.any(net_p != 0.0)  # путь действительно нетривиален
+    assert np.any(net_p != 0.0)  # the path is genuinely non-trivial
 
     write_results_to_model(m, v_pu, delta, pu, yf=yf, yt=yt, ybus=ybus)
 

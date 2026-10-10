@@ -18,8 +18,8 @@ from gridstate.contract import SE_INPUT
 from gridstate.telemetry.apply_resolved import _materialize_area_on_arrays
 
 
-# Поле «нагрузка P» как репрезентативный канал (адаптер вызывает ядро 4× для
-# load_p/load_q/generation_p/generation_q с теми же контрактными именами колонок).
+# The "load P" field serves as a representative channel (the adapter calls the kernel 4x for
+# load_p/load_q/generation_p/generation_q with the same contract column names).
 LOAD_KW = {
     "max_col": "load_p_max",
     "min_col": "load_p_min",
@@ -33,7 +33,7 @@ LOAD_KW = {
 
 def _nodes(rows: list[dict]) -> np.ndarray:
     arr = np.zeros(len(rows), dtype=SE_INPUT.nodes.input_dtype())
-    arr["status"] = True  # default ON; строка может переопределить
+    arr["status"] = True  # default ON; a row may override
     for i, row in enumerate(rows):
         for k, v in row.items():
             arr[i][k] = v
@@ -41,7 +41,7 @@ def _nodes(rows: list[dict]) -> np.ndarray:
 
 
 def test_mat_core_verbatim_observed():
-    # Наблюдаемый узел → set_col = obs вербатим; прочие нетронуты.
+    # Observed node -> set_col = obs verbatim; others untouched.
     nodes = _nodes([{"id": 1}, {"id": 2}])
     stats = _materialize_area_on_arrays(nodes, {1: 50.0}, **LOAD_KW)
     assert float(nodes[0]["load_p"]) == 50.0
@@ -51,7 +51,7 @@ def test_mat_core_verbatim_observed():
 
 
 def test_mat_core_area_fill_k_from_calibrator():
-    # Калибратор района: obs=50, max=100 → k_area=0.5; fill-узел max=200 → 0.5·200=100.
+    # Area calibrator: obs=50, max=100 -> k_area=0.5; fill node max=200 -> 0.5·200=100.
     nodes = _nodes(
         [
             {"id": 1, "area_id": 7, "load_p_max": 100.0, "exist_load": 1},
@@ -65,7 +65,7 @@ def test_mat_core_area_fill_k_from_calibrator():
 
 
 def test_mat_core_fill_clamped_to_max():
-    # k=1.5 (obs=150,max=100) → fill 1.5·200=300 > max=200 → clamp к wmax.
+    # k=1.5 (obs=150,max=100) -> fill 1.5·200=300 > max=200 -> clamp to wmax.
     nodes = _nodes(
         [
             {"id": 1, "area_id": 7, "load_p_max": 100.0, "exist_load": 1},
@@ -77,7 +77,7 @@ def test_mat_core_fill_clamped_to_max():
 
 
 def test_mat_core_fill_clamped_to_min():
-    # k=0.1 → fill 0.1·200=20, но wmin=50 → clamp к wmin (min(max(20,50),200)=50).
+    # k=0.1 -> fill 0.1·200=20, but wmin=50 -> clamp to wmin (min(max(20,50),200)=50).
     nodes = _nodes(
         [
             {"id": 1, "area_id": 7, "load_p_max": 100.0, "load_p_min": 0.0, "exist_load": 1},
@@ -89,7 +89,7 @@ def test_mat_core_fill_clamped_to_min():
 
 
 def test_mat_core_fill_skipped_when_max_zero():
-    # wmax=0 → не _ok → fill-узел НЕ заполняется.
+    # wmax=0 -> not _ok -> the fill node is NOT filled.
     nodes = _nodes(
         [
             {"id": 1, "area_id": 7, "load_p_max": 100.0, "exist_load": 1},
@@ -102,7 +102,7 @@ def test_mat_core_fill_skipped_when_max_zero():
 
 
 def test_mat_core_fill_false_verbatim_only():
-    # fill=False → только вербатим наблюдаемых; ненаблюдаемые exist не разносятся.
+    # fill=False -> only observed values verbatim; unobserved ones are not spread over exist.
     nodes = _nodes(
         [
             {"id": 1, "area_id": 7, "load_p_max": 100.0, "exist_load": 1},
@@ -116,7 +116,7 @@ def test_mat_core_fill_false_verbatim_only():
 
 
 def test_mat_core_status_off_skipped():
-    # Узел OFF не пишется, даже будучи в obs.
+    # An OFF node is not written even if it is in obs.
     nodes = _nodes(
         [
             {"id": 1, "load_p_max": 100.0, "exist_load": 1},
@@ -129,7 +129,7 @@ def test_mat_core_status_off_skipped():
 
 
 def test_mat_core_global_fallback_for_uncalibrated_area():
-    # Район без калибратора → glob = median(all_rat) = 0.5; fill 0.5·200=100.
+    # Area without a calibrator -> glob = median(all_rat) = 0.5; fill 0.5·200=100.
     nodes = _nodes(
         [
             {"id": 1, "area_id": 7, "load_p_max": 100.0, "exist_load": 1},
@@ -141,7 +141,7 @@ def test_mat_core_global_fallback_for_uncalibrated_area():
 
 
 def test_mat_core_global_is_flat_median_not_median_of_medians():
-    # glob = median ПЛОСКОГО списка всех ratio, НЕ median-of-medians.
+    # glob = median of the FLAT list of all ratios, NOT median-of-medians.
     # area1: ratios [0.1,0.2,0.3]; area2: [0.9]. flat-median=0.25 vs med-of-med=0.55.
     nodes = _nodes(
         [
@@ -149,7 +149,7 @@ def test_mat_core_global_is_flat_median_not_median_of_medians():
             {"id": 2, "area_id": 1, "load_p_max": 100.0, "exist_load": 1},
             {"id": 3, "area_id": 1, "load_p_max": 100.0, "exist_load": 1},
             {"id": 4, "area_id": 2, "load_p_max": 100.0, "exist_load": 1},
-            {"id": 5, "area_id": 3, "load_p_max": 100.0, "exist_load": 1},  # fill, без калибратора
+            {"id": 5, "area_id": 3, "load_p_max": 100.0, "exist_load": 1},  # fill, no calibrator
         ]
     )
     _materialize_area_on_arrays(nodes, {1: 10.0, 2: 20.0, 3: 30.0, 4: 90.0}, **LOAD_KW)
@@ -157,7 +157,7 @@ def test_mat_core_global_is_flat_median_not_median_of_medians():
 
 
 def test_mat_core_no_exist_not_filled():
-    # Ненаблюдаемый без exist_load → не заполняется.
+    # Unobserved without exist_load -> not filled.
     nodes = _nodes(
         [
             {"id": 1, "area_id": 7, "load_p_max": 100.0, "exist_load": 1},
@@ -176,7 +176,7 @@ def test_mat_core_sum_rounded_to_one_decimal():
 
 
 def test_mat_core_gen_negative_min_allowed_with_inf_skip():
-    # Ген-путь: skip_neg_min=-1e18 пропускает generation_q_min<0 (норма реактива).
+    # Generator path: skip_neg_min=-1e18 lets generation_q_min<0 through (normal for reactive power).
     gen_kw = {
         "max_col": "generation_q_max",
         "min_col": "generation_q_min",
@@ -204,7 +204,7 @@ def test_mat_core_gen_negative_min_allowed_with_inf_skip():
             },
         ]
     )
-    # node1 калибратор _ok (wmin=-500 ≥ -1e18) → k=40/100=0.4; node2 fill 0.4·200=80.
+    # node1 calibrator _ok (wmin=-500 ≥ -1e18) -> k=40/100=0.4; node2 fill 0.4·200=80.
     stats = _materialize_area_on_arrays(nodes, {1: 40.0}, fill=True, **gen_kw)
     assert float(nodes[1]["generation_q"]) == pytest.approx(80.0)
     assert stats["n_fill"] == 1
