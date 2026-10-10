@@ -15,11 +15,6 @@ from gridstate.telemetry.generators import (
     aggregate_generators_to_node,
     apply_generator_status_from_node,
 )
-from gridstate.telemetry.loss_filter import (
-    BranchLossReport,
-    analyze_branch_loss_consistency,
-    compute_branch_loss_formulas,
-)
 from gridstate.telemetry.measurements import deactivate_orphan_measurements
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.quality import (
@@ -55,10 +50,8 @@ __all__ = [
     "QUALITY_BAD",
     "QUALITY_GOOD",
     "QUALITY_QUESTIONABLE",
-    "BranchLossReport",
     "aggregate_generators_to_node",
     "aggregate_qualities",
-    "analyze_branch_loss_consistency",
     "apply_flow_sigma_floor",
     "apply_generator_status_from_node",
     "apply_materialize_resolved",
@@ -69,7 +62,6 @@ __all__ = [
     "apply_voltage_meas_calibration_for_gen_nodes",
     "apply_voltage_nominal_resolved",
     "apply_voltage_range_filter",
-    "compute_branch_loss_formulas",
     "deactivate_orphan_measurements",
     "inverse_classifier",
     "normalize_breaker_reactance",
