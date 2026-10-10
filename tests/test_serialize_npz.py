@@ -123,11 +123,14 @@ def test_roundtrip_derived_plans(tmp_path):
     from gridstate.contract.derived import DerivedInputs
 
     derived = DerivedInputs(
-        topology_resolved=[("LINE", 100, False, None), ("NODE", 2, True, None)],
-        telemetry_resolved={(1, "PN"): (12.5, 2, "guid-1", 0), (100, "QBEG"): (-3.0, 1, "g2", 1)},
-        telemetry_arg_keys=[(1, "PN"), (100, "QBEG")],
+        topology_resolved=[("branch", 100, False, None), ("node", 2, True, None)],
+        telemetry_resolved={
+            (1, "p_load"): (12.5, 2, "guid-1", 0),
+            (100, "q_from"): (-3.0, 1, "g2", 1),
+        },
+        telemetry_arg_keys=[(1, "p_load"), (100, "q_from")],
         telemetry_total_args=42,
-        materialize_obs={1: 10.0, 2: -5.0},
+        materialize_obs={"load_p": {1: 10.0, 2: -5.0}},
         voltage_nominal={1: 110.0, 3: 220.0},
     )
     se_in = SEInput.from_model(_make_model(), derived=derived)

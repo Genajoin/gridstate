@@ -9,15 +9,17 @@ columns, carriers without domain tables, and the compatibility shims.
 from __future__ import annotations
 
 import pickle
+import warnings
 from pathlib import Path
 
 import numpy as np
 
 from gridstate.contract import SE_INPUT, SE_OUTPUT, SEInput, SEOutput, load_se_input
 from gridstate.contract import run as contract_run
+from gridstate.contract._legacy import LEGACY_DERIVED_KEY
 from gridstate.contract.derived import DerivedInputs
+from gridstate.contract.derived_tables import DERIVED_META_KEY
 from gridstate.contract.serialize import (
-    _DERIVED_KEY,
     _META_KEY,
     load_se_input_npz,
     save_se_input,
@@ -122,19 +124,21 @@ def test_round_trip_without_plans_keeps_derived_none(tmp_path: Path) -> None:
 
 
 def test_file_without_optional_keys_loads_with_defaults(tmp_path: Path) -> None:
-    """No contract version and no derived blob: current version, ``derived=None``."""
+    """No contract version and no derived inputs: current version, ``derived=None``."""
     path = save_se_input(_case14(), tmp_path / "x.npz")
-    _rewrite(path, drop=(_DERIVED_KEY, _META_KEY))
+    with np.load(path, allow_pickle=False) as npz:
+        assert DERIVED_META_KEY not in npz.files  # derived=None writes nothing
+    _rewrite(path, drop=(_META_KEY,))
     back = load_se_input_npz(path)
     assert back.derived is None
     assert back.contract_version == CONTRACT_VERSION
 
 
 def test_older_derived_blob_without_sigma_scales(tmp_path: Path) -> None:
-    """Blobs written before the sigma-scale plans existed load them as ``None``."""
+    """Trusted legacy blobs written before the sigma-scale plans existed load them as ``None``."""
     path = save_se_input(_case14(), tmp_path / "x.npz")
     old_blob = {
-        "topology_resolved": [1, 2],
+        "topology_resolved": [("NODE", 1, True, None)],
         "telemetry_resolved": None,
         "telemetry_arg_keys": None,
         "telemetry_total_args": 3,
@@ -142,10 +146,16 @@ def test_older_derived_blob_without_sigma_scales(tmp_path: Path) -> None:
         "voltage_nominal": {1: 110.0},
     }
     blob = np.frombuffer(pickle.dumps(old_blob), dtype=np.uint8)
-    _rewrite(path, replace={_DERIVED_KEY: blob})
-    back = load_se_input_npz(path)
+    _rewrite(
+        path,
+        drop=(DERIVED_META_KEY,),
+        replace={LEGACY_DERIVED_KEY: blob, _META_KEY: np.asarray("2.0.0")},
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        back = load_se_input_npz(path, trusted=True)
     assert back.derived is not None
-    assert back.derived.topology_resolved == [1, 2]
+    assert back.derived.topology_resolved == [("node", 1, True, None)]
     assert back.derived.telemetry_total_args == 3
     assert back.derived.voltage_nominal == {1: 110.0}
     assert back.derived.v_sigma2_scale is None

@@ -1,7 +1,7 @@
 """Release node injection measurements that carry only the load component.
 
 A node injection measurement is assembled from whatever node components arrive
-in the telemetry (``PG``/``PN``/``QG``/``QN``, generator ``PG_G*``/``QG_G*``;
+in the telemetry (``p_gen``/``p_load``/``q_gen``/``q_load``, per-unit ``p_gen:<n>``;
 see :func:`gridstate.telemetry.apply_resolved._build_node_injection_rows`). When
 a node with generation reports only its load (typically the auxiliary load of a
 power unit) and no generation, the sum is ``-load`` and, with its tight sigma,
@@ -41,6 +41,7 @@ import numpy as np
 from gridstate._arrays import meas_mask
 from gridstate.bounds import bounds_unset, declared_box, resolve_bounds
 from gridstate.constants import FilterFlag, MeasurementObjectType, MeasurementQuality
+from gridstate.contract.derived_tables import kind_base as _kind_base
 from gridstate.telemetry.kinds import INJ_MT, NODE_INJ_MAP
 from gridstate.telemetry.noise import uniform_box_variance
 from gridstate.working import table_copy, table_replace
@@ -65,11 +66,6 @@ _Q_BAD = int(MeasurementQuality.BAD)
 #: Margin, in measurement sigmas, by which a P injection reading must miss the
 #: minimum generation of a node before that minimum is dropped.
 RELAX_SIGMA = 3.0
-
-
-def _kind_base(kind: str) -> str:
-    """``PG_G3`` -> ``PG``; other kinds unchanged."""
-    return kind.split("_G", 1)[0] if kind.startswith(("PG_G", "QG_G")) else kind
 
 
 def _injection_signs(
@@ -111,7 +107,7 @@ def load_only_injection_nodes(
     """Nodes whose injection measurement is built from load components only.
 
     Returns ``{"P": nodes, "Q": nodes}`` where the P (Q) injection of the node
-    consists of ``PN`` (``QN``) alone.
+    consists of ``p_load`` (``q_load``) alone.
     """
     return _nodes_with_signs(_injection_signs(resolved, arg_keys), {-1})
 
@@ -123,7 +119,7 @@ def generation_only_injection_nodes(
     """Nodes whose injection measurement is built from generation components only.
 
     Returns ``{"P": nodes, "Q": nodes}`` where the P (Q) injection of the node
-    consists of ``PG``/``PG_G*`` (``QG``/``QG_G*``) alone.
+    consists of ``p_gen``/``p_gen:<n>`` (``q_gen``/``q_gen:<n>``) alone.
     """
     return _nodes_with_signs(_injection_signs(resolved, arg_keys), {+1})
 

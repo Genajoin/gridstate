@@ -144,15 +144,15 @@ def test_materialize_writes_observed_values_and_fills_by_area_ratio() -> None:
 
 
 def test_topology_step_applies_the_status_plan() -> None:
-    """``(tag, id, status, skip_reason)`` items switch objects on/off; items without
+    """``(object_kind, id, status, skip_reason)`` items switch objects on/off; items without
     a value and unknown objects are counted and skipped."""
     m = _nodes_model()
     plan = DerivedInputs(
         topology_resolved=[
-            ("NODE", 2, False, None),
-            ("NODE", 4, True, None),
-            ("NODE", 3, None, "skipped_no_value"),
-            ("NODE", 99, True, None),
+            ("node", 2, False, None),
+            ("node", 4, True, None),
+            ("node", 3, None, "no_value"),
+            ("node", 99, True, None),
         ]
     )
     stats = _s_topology(_ctx(m, plan))

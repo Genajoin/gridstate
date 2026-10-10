@@ -1,4 +1,4 @@
-"""ON_LINE topology: apply ON_LINE statuses to the model.
+"""Topology: apply the derived in-service statuses to the model.
 
 Contract core ``_apply_topology_on_arrays`` plus a thin wrapper ``apply_topology_resolved``
 (applies a ready numeric status plan to the ``status`` of model objects).
@@ -11,19 +11,28 @@ from typing import Any
 
 import numpy as np
 
+from gridstate.contract.derived import TopologyItem
 from gridstate.utils import id_to_pos_map
 
 
-# ON_LINE status plan item: ``(tag, parent_id, status|None, eval_skip|None)``.
-ResolvedItem = tuple[str, int, bool | None, str | None]
+# Status plan item: ``(object_kind, object_id, status|None, skip_reason|None)``
+# (vocabulary: gridstate.contract.derived_tables).
+ResolvedItem = TopologyItem
+
+# skip_reason of an item without a status → statistics counter.
+_SKIP_COUNTERS = {
+    "no_value": "skipped_no_value",
+    "partial_inputs": "skipped_partial_args",
+    "evaluation_error": "skipped_formula_error",
+}
 
 
 def apply_topology_resolved(model: Any, resolved: Sequence[ResolvedItem]) -> dict[str, int]:
-    """Apply a ready ON_LINE ``resolved`` plan to the model ``status``.
+    """Apply a ready status plan ``resolved`` to the model ``status``.
 
     Pure application (no formulas): snapshot of the contract arrays → core
     :func:`_apply_topology_on_arrays` → write-back. ``resolved`` is a ready status plan
-    ``(tag, parent_id, status|None, eval_skip|None)``.
+    ``(object_kind, object_id, status|None, skip_reason|None)``.
     """
     arr_nodes = model.nodes.to_numpy().copy()
     arr_branches = model.branches.to_numpy().copy()
@@ -41,12 +50,13 @@ def _apply_topology_on_arrays(
     arr_gens: np.ndarray,
     resolved: Sequence[ResolvedItem],
 ) -> dict[str, int]:
-    """CORE: apply ON_LINE statuses over the contract arrays.
+    """CORE: apply derived statuses over the contract arrays.
 
     Pure status cascade: takes a ready ``resolved`` plan (item
-    ``(tag, parent_id, status|None, eval_skip|None)``), matches ``tag`` → target
-    array (nodes/branches/generators), writes the ``status`` column. Mutates the arrays
-    in place. No external dependencies, no float arithmetic.
+    ``(object_kind, object_id, status|None, skip_reason|None)``), matches
+    ``object_kind`` (``node``/``branch``/``generator``) → target array, writes the
+    ``status`` column. Items of other object kinds count as ``skipped_no_object``.
+    Mutates the arrays in place. No external dependencies, no float arithmetic.
     """
     by_id_nodes = id_to_pos_map(arr_nodes["id"])
     by_id_branches = id_to_pos_map(arr_branches["id"])
@@ -62,15 +72,15 @@ def _apply_topology_on_arrays(
         "total_specs": len(resolved),
     }
 
-    for tag, parent_id, status, eval_skip in resolved:
-        if tag == "NODE":
-            idx = by_id_nodes.get(parent_id)
+    for kind, object_id, status, skip_reason in resolved:
+        if kind == "node":
+            idx = by_id_nodes.get(object_id)
             target = arr_nodes
-        elif tag == "LINE":
-            idx = by_id_branches.get(parent_id)
+        elif kind == "branch":
+            idx = by_id_branches.get(object_id)
             target = arr_branches
-        elif tag == "GENERATOR":
-            idx = by_id_gens.get(parent_id)
+        elif kind == "generator":
+            idx = by_id_gens.get(object_id)
             target = arr_gens
         else:
             idx = None
@@ -79,9 +89,9 @@ def _apply_topology_on_arrays(
             stats["skipped_no_object"] += 1
             continue
         if status is None:
-            # Contract: when ``status is None`` the producer always sets the eval_skip key.
-            assert eval_skip is not None
-            stats[eval_skip] += 1
+            # Contract: when ``status is None`` the producer always sets the skip reason.
+            assert skip_reason is not None
+            stats[_SKIP_COUNTERS[skip_reason]] += 1
             continue
 
         target[idx]["status"] = status

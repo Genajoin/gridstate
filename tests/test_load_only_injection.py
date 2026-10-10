@@ -33,14 +33,14 @@ def _resolved(**comp: tuple[int, str, float | None, int]):
 
 def test_load_only_components_are_detected():
     resolved, keys = _resolved(
-        a=(1, "PN", 40.0, GOOD),  # load only -> P partial
-        b=(1, "QN", 29.0, GOOD),
-        c=(2, "PN", 10.0, GOOD),  # load + generator formula -> complete
-        d=(2, "PG_G1", 500.0, GOOD),
-        e=(3, "PG", 100.0, GOOD),  # generation only -> not load-only
-        f=(4, "PN", 5.0, GOOD),  # generation reported BAD -> still load-only
-        g=(4, "PG", 300.0, MeasurementQuality.BAD),
-        h=(5, "PN", None, GOOD),  # no value -> no component at all
+        a=(1, "p_load", 40.0, GOOD),  # load only -> P partial
+        b=(1, "q_load", 29.0, GOOD),
+        c=(2, "p_load", 10.0, GOOD),  # load + generator formula -> complete
+        d=(2, "p_gen:1", 500.0, GOOD),
+        e=(3, "p_gen", 100.0, GOOD),  # generation only -> not load-only
+        f=(4, "p_load", 5.0, GOOD),  # generation reported BAD -> still load-only
+        g=(4, "p_gen", 300.0, MeasurementQuality.BAD),
+        h=(5, "p_load", None, GOOD),  # no value -> no component at all
     )
     out = load_only_injection_nodes(resolved, keys)
     assert out["P"] == {1, 4}
@@ -165,11 +165,11 @@ def test_generation_only_components_are_detected():
     from gridstate.telemetry.load_only_injection import generation_only_injection_nodes
 
     resolved, keys = _resolved(
-        a=(1, "PG_G0", 0.0, GOOD),  # generator only -> P gen-only
-        b=(1, "QG_G0", 0.0, GOOD),
-        c=(2, "PG", 100.0, GOOD),  # generation + load -> complete
-        d=(2, "PN", 10.0, GOOD),
-        e=(3, "PN", 5.0, GOOD),  # load only -> not gen-only
+        a=(1, "p_gen:0", 0.0, GOOD),  # generator only -> P gen-only
+        b=(1, "q_gen:0", 0.0, GOOD),
+        c=(2, "p_gen", 100.0, GOOD),  # generation + load -> complete
+        d=(2, "p_load", 10.0, GOOD),
+        e=(3, "p_load", 5.0, GOOD),  # load only -> not gen-only
     )
     out = generation_only_injection_nodes(resolved, keys)
     assert out["P"] == {1}
