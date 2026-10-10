@@ -1,7 +1,7 @@
 """float-ядра measurement-мутаторов над контрактными массивами.
 
-4 функции (`apply_voltage_range_filter`, `apply_voltage_meas_calibration_for_gen_nodes`,
-`resolve_merged_measurement_conflicts`, `deactivate_orphan_measurements`) расщеплены на
+3 функции (`apply_voltage_range_filter`, `apply_voltage_meas_calibration_for_gen_nodes`,
+`deactivate_orphan_measurements`) расщеплены на
 тонкий адаптер (резолв контрактных енумов object/measurement-type → готовые int) + ЯДРО
 `_*_on_arrays`, читающее/мутирующее только контрактные колонки `SE_INPUT.measurements`
 (+ nodes/branches/generators), БЕЗ внешних зависимостей и XML. Здесь — корректность ядер на голых массивах;
@@ -16,7 +16,6 @@ import pytest
 from gridstate.contract import SE_INPUT
 from gridstate.telemetry.measurements import (
     _deactivate_orphan_on_arrays,
-    _resolve_merged_on_arrays,
 )
 from gridstate.telemetry.voltage_filter import (
     _voltage_meas_calibration_on_arrays,
@@ -71,8 +70,6 @@ VR_KW = {
     "min_voltage_nominal_kv": 110.0,
     "upper_fallback_factor": 1.4,
     "action": "downweight",
-    "detect_nominal_substitution": False,
-    "nominal_substitution_eps": 0.001,
     "questionable_sigma2_multiplier": 100.0,
 }
 
@@ -339,28 +336,6 @@ def test_vrf_skip_non_v_meas():
     assert stats["checked"] == 0
 
 
-def test_vrf_nominal_substitution():
-    nodes = _nodes(
-        [{"id": 1, "voltage_nominal": 110.0, "voltage_critical": 60.0, "voltage_max": 121.0}]
-    )
-    meas = _meas(
-        [
-            {
-                "id": 10,
-                "object_type": OT_NODE,
-                "object_id": 1,
-                "measurement_type": MT_V,
-                "value": 110.0,
-                "variance": 1.0,
-            }
-        ]
-    )
-    kw = {**VR_KW, "detect_nominal_substitution": True}
-    stats = _voltage_range_filter_on_arrays(meas, nodes, **kw)
-    assert stats["downweighted_nominal_substitution"] == 1
-    assert int(meas[0]["quality"]) == 1
-
-
 def test_vrf_lo_fallback_half_nom_rejects_sentinel():
     # U_KRIT=1.0 на 500-кВ узле — заглушка; lo=V_ном/2=250. V=100 < 250 → out_of_range.
     nodes = _nodes(
@@ -481,162 +456,6 @@ def test_vc_skip_off_node():
     )
     stats = _voltage_meas_calibration_on_arrays(meas, nodes, **VC_KW)
     assert stats["target_nodes"] == 0 and stats["updated_meas"] == 0
-
-
-# ---------------------------------------------------------- resolve_merged
-
-
-def test_rm_v_weighted_average():
-    meas = _meas(
-        [
-            {
-                "id": 10,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_V,
-                "value": 10.0,
-                "variance": 1.0,
-            },
-            {
-                "id": 11,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_V,
-                "value": 20.0,
-                "variance": 1.0,
-            },
-        ]
-    )
-    stats = _resolve_merged_on_arrays(meas)
-    assert stats["resolved_v"] == 1 and stats["deactivated"] == 1
-    assert float(meas[0]["value"]) == pytest.approx(15.0)  # (10·1+20·1)/2
-    assert float(meas[0]["variance"]) == pytest.approx(0.5)  # 1/(1+1)
-    assert float(meas[0]["weight"]) == pytest.approx(2.0)
-    assert bool(meas[1]["status"]) is False
-
-
-def test_rm_p_inj_sum():
-    meas = _meas(
-        [
-            {
-                "id": 10,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_PINJ,
-                "value": 10.0,
-                "variance": 2.0,
-            },
-            {
-                "id": 11,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_PINJ,
-                "value": 30.0,
-                "variance": 3.0,
-            },
-        ]
-    )
-    stats = _resolve_merged_on_arrays(meas)
-    assert stats["resolved_p_inj"] == 1
-    assert float(meas[0]["value"]) == pytest.approx(40.0)
-    assert float(meas[0]["variance"]) == pytest.approx(5.0)
-    assert bool(meas[1]["status"]) is False
-
-
-def test_rm_q_inj_sum():
-    meas = _meas(
-        [
-            {
-                "id": 10,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_QINJ,
-                "value": 10.0,
-                "variance": 2.0,
-            },
-            {
-                "id": 11,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_QINJ,
-                "value": 30.0,
-                "variance": 3.0,
-            },
-        ]
-    )
-    stats = _resolve_merged_on_arrays(meas)
-    assert stats["resolved_q_inj"] == 1
-
-
-def test_rm_single_no_op():
-    meas = _meas(
-        [
-            {
-                "id": 10,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_V,
-                "value": 10.0,
-                "variance": 1.0,
-            }
-        ]
-    )
-    stats = _resolve_merged_on_arrays(meas)
-    assert stats == {"resolved_v": 0, "resolved_p_inj": 0, "resolved_q_inj": 0, "deactivated": 0}
-    assert float(meas[0]["value"]) == 10.0
-
-
-def test_rm_branch_meas_not_merged():
-    meas = _meas(
-        [
-            {
-                "id": 10,
-                "object_type": OT_BRANCH,
-                "object_id": 5,
-                "measurement_type": 0,
-                "value": 10.0,
-                "variance": 1.0,
-            },
-            {
-                "id": 11,
-                "object_type": OT_BRANCH,
-                "object_id": 5,
-                "measurement_type": 0,
-                "value": 20.0,
-                "variance": 1.0,
-            },
-        ]
-    )
-    stats = _resolve_merged_on_arrays(meas)
-    assert stats["deactivated"] == 0  # ot=branch не группируется
-    assert bool(meas[1]["status"]) is True
-
-
-def test_rm_different_side_not_merged():
-    meas = _meas(
-        [
-            {
-                "id": 10,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_V,
-                "value": 10.0,
-                "variance": 1.0,
-                "branch_side": 0,
-            },
-            {
-                "id": 11,
-                "object_type": OT_NODE,
-                "object_id": 5,
-                "measurement_type": MT_V,
-                "value": 20.0,
-                "variance": 1.0,
-                "branch_side": 1,
-            },
-        ]
-    )
-    stats = _resolve_merged_on_arrays(meas)
-    assert stats["resolved_v"] == 0 and stats["deactivated"] == 0  # разные ключи
 
 
 # ---------------------------------------------------------- deactivate_orphan

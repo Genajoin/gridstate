@@ -21,11 +21,7 @@ import numpy as np
 
 from gridstate.bounds import resolve_bounds
 from gridstate.constants import NodeType
-from gridstate.preprocessing._scan import (
-    node_degree_map,
-    node_degree_with_first_branch,
-    scan_node_meas_by_kind,
-)
+from gridstate.preprocessing._scan import scan_node_meas_by_kind
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.preprocessing.node_props import extract_node_load_props_from_model
 from gridstate.z_vector import (
@@ -55,22 +51,15 @@ class PseudoMeasConfig:
     are declared in a single place so the core and adapter no longer duplicate them.
     """
 
-    add_voltage_priors: bool = True
     add_zero_injections: bool = True
-    voltage_prior_variance: float | None = None
     slack_voltage_sigma_frac: float = 0.001
     zero_inj_variance: float = 100.0
     empty_model_loose_factor: float = 100.0
     load_inj_loose_factor: float = 10.0
-    terminal_inj_tight_degree: int = 0
     mid_start: int = 300_000_000
-    boundary_node_ids: set[int] | None = None
-    boundary_branch_p_threshold: float | None = None
     boundary_inj_loose_factor: float = 10000.0
-    block_bus_v_sigma_frac: float | None = None
     unobservable_v_sigma_frac: float | None = None
     unobservable_v_exclude_real_v_neighbor: bool = True
-    unobservable_v_exclude_incident_flow: bool = False
     unobservable_v_min_vm_deviation: float = 0.0
     # Nodes whose load-only injection measurement was released: generation is
     # unmeasured there, so the P/Q injection prior spans the generation range.
@@ -113,113 +102,31 @@ def _detect_empty_model(nodes_arr: np.ndarray) -> bool:
     return n_active > 0 and n_loaded * 100 < n_active  # <1% loaded
 
 
-def _detect_boundary_nodes(
-    meas_arr: np.ndarray, branches_arr: np.ndarray, config: PseudoMeasConfig
+def _real_v_neighbors(
+    branches_arr: np.ndarray,
+    have_v: set[int],
+    config: PseudoMeasConfig,
 ) -> set[int]:
-    """Boundary-узлы: явный override + опц. авто-детект через branch-P-meas.
+    """Nodes with an active-branch neighbour carrying a V measurement.
 
-    Поле NodeCollection.type_ekv существует, но его семантика в наших
-    снимках не «эквивалент»: type_ekv=1 встречается и у обычных
-    110 кВ-узлов, автоматическая маркировка их как boundary ломает SE
-    (V_min до 0.055 и не сходится). Поэтому type_ekv для авто-detection
-    не используется.
+    Filled only when ``unobservable_v_sigma_frac`` is requested and
+    ``unobservable_v_exclude_real_v_neighbor`` is set: such nodes are observable
+    through the line and keep the loose V prior.
     """
-    boundary: set[int] = set(config.boundary_node_ids or set())
-    if config.boundary_branch_p_threshold is not None:
-        # Real (не pseudo) branch-P-meas: id < mid_start.
-        # Для каждой ветви возьмём max |P| по любым её сторонам.
-        max_abs_p_per_branch: dict[int, float] = {}
-        for r in meas_arr:
-            if not r["status"]:
-                continue
-            if int(r["object_type"]) != OBJ_BRANCH:
-                continue
-            if int(r["measurement_type"]) != KIND_POWER_P:
-                continue
-            if int(r["id"]) >= config.mid_start:
-                continue
-            bid = int(r["object_id"])
-            v = abs(float(r["value"]))
-            if v > max_abs_p_per_branch.get(bid, 0.0):
-                max_abs_p_per_branch[bid] = v
-        # Узлы у которых уже есть real-P_inj-meas — точно не boundary.
-        real_pinj_nodes: set[int] = set()
-        for r in meas_arr:
-            if not r["status"]:
-                continue
-            if int(r["object_type"]) != OBJ_NODE:
-                continue
-            if int(r["measurement_type"]) != KIND_POWER_INJECTION_P:
-                continue
-            if int(r["id"]) >= config.mid_start:
-                continue
-            real_pinj_nodes.add(int(r["object_id"]))
-        # Концы ветвей с большим P-meas → кандидаты в boundary.
+    real_v_neighbor: set[int] = set()
+    if (
+        config.unobservable_v_sigma_frac is not None
+        and config.unobservable_v_exclude_real_v_neighbor
+    ):
         for r in branches_arr:
             if not r["status"]:
                 continue
-            bid = int(r["id"])
-            if max_abs_p_per_branch.get(bid, 0.0) < config.boundary_branch_p_threshold:
-                continue
-            for end in (int(r["from_node"]), int(r["to_node"])):
-                if end not in real_pinj_nodes:
-                    boundary.add(end)
-    return boundary
-
-
-def _detect_block_buses(branches_arr: np.ndarray, config: PseudoMeasConfig) -> set[int]:
-    """Block-bus detection: одно-ветевой узел, единственная ветвь — trafo с tap≠1."""
-    block_buses: set[int] = set()
-    if config.block_bus_v_sigma_frac is not None:
-        degree, first_branch = node_degree_with_first_branch(branches_arr)
-        for nid, deg in degree.items():
-            if deg != 1:
-                continue
-            b = first_branch[nid]
-            if int(b["branch_type"]) != 1:
-                continue
-            if abs(float(b["tap_ratio"]) - 1.0) < 1e-3:
-                continue
-            block_buses.add(nid)
-    return block_buses
-
-
-def _observability_sets(
-    branches_arr: np.ndarray,
-    meas_arr: np.ndarray,
-    have_v: set[int],
-    config: PseudoMeasConfig,
-) -> tuple[set[int], set[int]]:
-    """Observability-сеты для жёсткого V-якоря ненаблюдаемых узлов.
-
-    Заполняются только если запрошен ``unobservable_v_sigma_frac``. Возвращает
-    ``(real_v_neighbor, incident_real_flow)``.
-    """
-    real_v_neighbor: set[int] = set()
-    incident_real_flow: set[int] = set()
-    if config.unobservable_v_sigma_frac is not None:
-        if config.unobservable_v_exclude_real_v_neighbor:
-            for r in branches_arr:
-                if not r["status"]:
-                    continue
-                f, t = int(r["from_node"]), int(r["to_node"])
-                if f in have_v:
-                    real_v_neighbor.add(t)
-                if t in have_v:
-                    real_v_neighbor.add(f)
-        if config.unobservable_v_exclude_incident_flow:
-            br_ends = {int(r["id"]): (int(r["from_node"]), int(r["to_node"])) for r in branches_arr}
-            for r in meas_arr:
-                if not r["status"] or int(r["object_type"]) != OBJ_BRANCH:
-                    continue
-                if int(r["measurement_type"]) not in (KIND_POWER_P, KIND_POWER_Q):
-                    continue
-                if int(r["id"]) >= config.mid_start:
-                    continue
-                ends = br_ends.get(int(r["object_id"]))
-                if ends:
-                    incident_real_flow.update(ends)
-    return real_v_neighbor, incident_real_flow
+            f, t = int(r["from_node"]), int(r["to_node"])
+            if f in have_v:
+                real_v_neighbor.add(t)
+            if t in have_v:
+                real_v_neighbor.add(f)
+    return real_v_neighbor
 
 
 def _unknown_load_determined_nodes(
@@ -298,11 +205,7 @@ def _build_pseudo_rows(
     have_pinj: set[int],
     have_qinj: set[int],
     is_empty_model: bool,
-    boundary: set[int],
-    block_buses: set[int],
     real_v_neighbor: set[int],
-    incident_real_flow: set[int],
-    node_degree: dict[int, int],
     unknown_load_p: set[int] | None = None,
     unknown_load_q: set[int] | None = None,
 ) -> tuple[list[dict], dict]:
@@ -315,7 +218,6 @@ def _build_pseudo_rows(
     mid = config.mid_start
     n_v_added = 0
     n_zinj_added = 0
-    n_block_bus_v = 0
     n_unobs_v = 0
     n_unknown_load = 0
 
@@ -328,7 +230,7 @@ def _build_pseudo_rows(
         vm = float(row["voltage_magnitude"])
         is_slack = int(row["node_type"]) == int(NodeType.SLACK)
 
-        if config.add_voltage_priors and nid not in have_v and vn > 0:
+        if nid not in have_v and vn > 0:
             v_prior_value = vm if vm > 0 else vn
             is_pv_with_vzd = False
             if node_load_props is not None and nid in node_load_props:
@@ -343,37 +245,26 @@ def _build_pseudo_rows(
                     v_prior_value = vzd
                     if not is_slack:
                         is_pv_with_vzd = True
-            sigma = config.voltage_prior_variance
-            is_block_bus = nid in block_buses
-            if sigma is None:
-                if is_slack:
-                    sigma = (config.slack_voltage_sigma_frac * vn) ** 2
-                elif is_pv_with_vzd:
-                    sigma = (0.05 * vn) ** 2  # PV-узел жёстче, vzd≈vras
-                elif (
-                    config.unobservable_v_sigma_frac is not None
-                    and nid not in real_v_neighbor
-                    and nid not in incident_real_flow
-                    and abs(v_prior_value - vn) >= config.unobservable_v_min_vm_deviation * vn
-                ):
-                    # Ненаблюдаемый узел без real-V (и без real-V-соседа /
-                    # инцидентного flow по гейтам), у которого прайор —
-                    # нетривиальная рабочая точка before_OC (не номинал-
-                    # плейсхолдер): эталонная SE держит V на vm. Жёсткий якорь
-                    # вместо 5% — иначе loose σ даёт дрейф.
-                    sigma = (config.unobservable_v_sigma_frac * vn) ** 2
-                    n_unobs_v += 1
-                elif is_block_bus and config.block_bus_v_sigma_frac is not None:
-                    # Блочная шина (LV-узел трансформатора без real-V-meas):
-                    # 5% Vn слишком tight — V_LV должна следовать за V_HV/tap,
-                    # а pseudo-V=Vn тянет к номиналу. Ослабляем σ.
-                    sigma = (config.block_bus_v_sigma_frac * vn) ** 2
-                    n_block_bus_v += 1
-                else:
-                    # 5% Vnom: жёстче чем 10% (был раньше). На weakly-observable
-                    # узлах (degree=1, empty-model P_inj σ=100) 10% позволял SE
-                    # утаскивать V в 0.3-0.5 p.u. — pseudo-V не держал якорь.
-                    sigma = (0.05 * vn) ** 2
+            if is_slack:
+                sigma = (config.slack_voltage_sigma_frac * vn) ** 2
+            elif is_pv_with_vzd:
+                sigma = (0.05 * vn) ** 2  # PV-узел жёстче, vzd≈vras
+            elif (
+                config.unobservable_v_sigma_frac is not None
+                and nid not in real_v_neighbor
+                and abs(v_prior_value - vn) >= config.unobservable_v_min_vm_deviation * vn
+            ):
+                # Ненаблюдаемый узел без real-V (и без real-V-соседа по гейту),
+                # у которого прайор — нетривиальная рабочая точка before_OC (не
+                # номинал-плейсхолдер): эталонная SE держит V на vm. Жёсткий якорь
+                # вместо 5% — иначе loose σ даёт дрейф.
+                sigma = (config.unobservable_v_sigma_frac * vn) ** 2
+                n_unobs_v += 1
+            else:
+                # 5% Vnom: жёстче чем 10% (был раньше). На weakly-observable
+                # узлах (degree=1, empty-model P_inj σ=100) 10% позволял SE
+                # утаскивать V в 0.3-0.5 p.u. — pseudo-V не держал якорь.
+                sigma = (0.05 * vn) ** 2
             new_rows.append(
                 pseudo_node_measurement(mid, nid, KIND_VOLTAGE, v_prior_value, float(sigma))
             )
@@ -414,16 +305,6 @@ def _build_pseudo_rows(
                     if transit
                     else config.zero_inj_variance * config.load_inj_loose_factor
                 )
-            # Радиальный терминал (degree ≤ N): net-инжекция = материализ. нагрузка,
-            # рыхлый pseudo пускает overshoot V через цепочку высоко-X ветвей.
-            # Зажимаем до базовой σ (как транзит). Таргет: deg=1 тупики
-            # региональных моделей, НЕ трогает meshed-узлы (worst deg=3).
-            # default off (degree=0).
-            if (
-                config.terminal_inj_tight_degree > 0
-                and node_degree.get(nid, 99) <= config.terminal_inj_tight_degree
-            ):
-                var_p = min(var_p, config.zero_inj_variance)
             var_q = var_p
             if nid in config.unmeasured_gen_p_nodes:
                 var_p = _generation_range_variance(
@@ -433,11 +314,6 @@ def _build_pseudo_rows(
                 var_q = _generation_range_variance(
                     row, "generation_q_min", "generation_q_max", var_q
                 )
-            # Boundary-узлы — большая σ² (см. docstring и
-            # docs/audit/audit_se_boundary_nodes.md).
-            if nid in boundary:
-                var_p *= config.boundary_inj_loose_factor
-                var_q *= config.boundary_inj_loose_factor
             # Load without data, injection fixed by measurements: the prior
             # value is an absence of data, keep it out of the estimate.
             if unknown_load_p and nid in unknown_load_p:
@@ -463,9 +339,6 @@ def _build_pseudo_rows(
     stats = {
         "v_priors_added": n_v_added,
         "zero_inj_added": n_zinj_added,
-        "boundary_nodes": len(boundary),
-        "block_buses": len(block_buses),
-        "block_bus_v_loose": n_block_bus_v,
         "unobservable_v_tight": n_unobs_v,
         "unknown_load_loose": n_unknown_load,
     }
@@ -504,14 +377,7 @@ def _add_pseudo_measurements_on_arrays(
     have_qinj = have[KIND_POWER_INJECTION_Q]
 
     is_empty_model = _detect_empty_model(nodes_arr)
-    boundary = _detect_boundary_nodes(meas_arr, branches_arr, config)
-    block_buses = _detect_block_buses(branches_arr, config)
-    real_v_neighbor, incident_real_flow = _observability_sets(
-        branches_arr, meas_arr, have_v, config
-    )
-
-    # Степень узла (активные ветви) — для terminal_inj_tight_degree.
-    node_degree = node_degree_map(branches_arr) if config.terminal_inj_tight_degree > 0 else {}
+    real_v_neighbor = _real_v_neighbors(branches_arr, have_v, config)
 
     unknown_load_p: set[int] = set()
     unknown_load_q: set[int] = set()
@@ -528,11 +394,7 @@ def _add_pseudo_measurements_on_arrays(
         have_pinj=have_pinj,
         have_qinj=have_qinj,
         is_empty_model=is_empty_model,
-        boundary=boundary,
-        block_buses=block_buses,
         real_v_neighbor=real_v_neighbor,
-        incident_real_flow=incident_real_flow,
-        node_degree=node_degree,
         unknown_load_p=unknown_load_p,
         unknown_load_q=unknown_load_q,
     )
@@ -541,23 +403,16 @@ def _add_pseudo_measurements_on_arrays(
 def add_pseudo_measurements(
     model: Working,
     *,
-    add_voltage_priors: bool = True,
     add_zero_injections: bool = True,
-    voltage_prior_variance: float | None = None,
     slack_voltage_sigma_frac: float = 0.001,
     zero_inj_variance: float = 100.0,
     empty_model_loose_factor: float = 100.0,
     load_inj_loose_factor: float = 10.0,
-    terminal_inj_tight_degree: int = 0,
     node_load_props: dict[int, dict] | None = None,
     mid_start: int = 300_000_000,
-    boundary_node_ids: set[int] | None = None,
-    boundary_branch_p_threshold: float | None = None,
     boundary_inj_loose_factor: float = 10000.0,
-    block_bus_v_sigma_frac: float | None = None,
     unobservable_v_sigma_frac: float | None = None,
     unobservable_v_exclude_real_v_neighbor: bool = True,
-    unobservable_v_exclude_incident_flow: bool = False,
     unobservable_v_min_vm_deviation: float = 0.0,
     unmeasured_gen_p_nodes: frozenset[int] = frozenset(),
     unmeasured_gen_q_nodes: frozenset[int] = frozenset(),
@@ -585,9 +440,7 @@ def add_pseudo_measurements(
 
     Args:
         model: Working для модификации (in-place).
-        add_voltage_priors: добавлять ли V-прайоры.
         add_zero_injections: добавлять ли P/Q-инжекции.
-        voltage_prior_variance: явное σ²; ``None`` — авто.
         slack_voltage_sigma_frac: фракция σ_V для slack-узла.
         zero_inj_variance: базовое σ² для transit узлов (МВт²).
         empty_model_loose_factor: множитель для empty-model.
@@ -595,23 +448,10 @@ def add_pseudo_measurements(
             семантика входного формата EXIST_PN/PG. Без него — fallback на
             нули в node-таблице.
         mid_start: начальный ID для новых measurements.
-        boundary_node_ids: явный набор ID-узлов, к которым нужно
-            применить boundary-режим (см. ниже). Объединяется с
-            результатом авто-детекции через ``boundary_branch_p_threshold``.
-        boundary_branch_p_threshold: порог |P| (МВт) для авто-детекции
-            boundary-узлов. ``None`` — авто-детект отключён. Если задан,
-            узел помечается как boundary, если к нему подходит хотя бы
-            одна active branch с **real** branch-P-измерением (не
-            pseudo) с ``|P| ≥ threshold``, и при этом сам узел не имеет
-            real-P_inj-измерения. Это распознаёт «эквивалентные границы»
-            региональной модели — узлы за пределами активной области,
-            через которые большая мощность приходит/уходит, но локально
-            P_inj = 0 (в режиме регионального SE режим соседей не виден).
-        boundary_inj_loose_factor: множитель к σ² для
-            P_inj/Q_inj-pseudo на boundary-узлах. Default 10000.0 — даёт
-            σ²×10⁴ (σ × 100), что фактически выводит boundary
-            P_inj/Q_inj-prior из давления на оценку, оставляя его в
-            системе только для observability.
+        boundary_inj_loose_factor: variance multiplier of the P/Q injection
+            prior on the nodes selected by ``loosen_unknown_load``. Default
+            10000.0 (σ × 100) keeps that prior in the system only for
+            observability.
         unobservable_v_sigma_frac: если задан — для **ненаблюдаемых** узлов
             без real-V якорим pseudo-V жёстко: ``σ = (frac·Vnom)²`` вместо
             обычных 5%. Мотивация: эталонная SE держит ненаблюдаемый
@@ -625,10 +465,6 @@ def add_pseudo_measurements(
             у которого есть сосед по active-ветви с **real**-V-замером —
             такой узел наблюдаем через линию (эталонная SE ведёт его V от
             соседа, не держит на vm). Default True.
-        unobservable_v_exclude_incident_flow: при tighten НЕ якорить узел с
-            **real** branch-P/Q-замером на инцидентной ветви. Default False
-            (эмпирически inc-flow НЕ удерживает V от дрейфа — узел всё равно
-            выигрывает от якоря).
         unobservable_v_min_vm_deviation: минимальное относительное отклонение
             прайора от номинала ``|v_prior - Vnom|/Vnom`` для tighten. Default
             0.0 (без ограничения). Мотивация: когда ``vm`` ≈ ``Vnom`` (или
@@ -652,8 +488,8 @@ def add_pseudo_measurements(
             lines leaving the model and substations of neighbouring systems.
 
     Returns:
-        ``{"v_priors_added": N, "zero_inj_added": N, "boundary_nodes": N}``
-        — счётчики.
+        ``{"v_priors_added": N, "zero_inj_added": N, "unobservable_v_tight": N,
+        "unknown_load_loose": N}`` — счётчики.
     """
     nodes_arr = model.nodes.to_numpy()
     meas_arr = model.measurements.to_numpy()
@@ -667,22 +503,15 @@ def add_pseudo_measurements(
         node_load_props = extract_node_load_props_from_model(model)
 
     config = PseudoMeasConfig(
-        add_voltage_priors=add_voltage_priors,
         add_zero_injections=add_zero_injections,
-        voltage_prior_variance=voltage_prior_variance,
         slack_voltage_sigma_frac=slack_voltage_sigma_frac,
         zero_inj_variance=zero_inj_variance,
         empty_model_loose_factor=empty_model_loose_factor,
         load_inj_loose_factor=load_inj_loose_factor,
-        terminal_inj_tight_degree=terminal_inj_tight_degree,
         mid_start=mid_start,
-        boundary_node_ids=boundary_node_ids,
-        boundary_branch_p_threshold=boundary_branch_p_threshold,
         boundary_inj_loose_factor=boundary_inj_loose_factor,
-        block_bus_v_sigma_frac=block_bus_v_sigma_frac,
         unobservable_v_sigma_frac=unobservable_v_sigma_frac,
         unobservable_v_exclude_real_v_neighbor=unobservable_v_exclude_real_v_neighbor,
-        unobservable_v_exclude_incident_flow=unobservable_v_exclude_incident_flow,
         unobservable_v_min_vm_deviation=unobservable_v_min_vm_deviation,
         unmeasured_gen_p_nodes=frozenset(unmeasured_gen_p_nodes),
         unmeasured_gen_q_nodes=frozenset(unmeasured_gen_q_nodes),

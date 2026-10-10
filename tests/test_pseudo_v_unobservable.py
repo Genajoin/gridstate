@@ -162,7 +162,7 @@ def test_real_v_neighbor_excluded():
 
 
 def test_incident_flow_default_tightened():
-    """N5 (инцидентный real-flow): default exclude_incident_flow=False → tight."""
+    """N5 (incident real flow only, no real-V neighbour) is tightened."""
     m = _build_model()
     add_pseudo_measurements(
         m,
@@ -171,19 +171,6 @@ def test_incident_flow_default_tightened():
         unobservable_v_min_vm_deviation=0.01,
     )
     assert _pseudo_v_sigma_frac(m, 5, 35.0) == pytest.approx(0.02)
-
-
-def test_incident_flow_excluded_when_flag_on():
-    """N5 с exclude_incident_flow=True → НЕ якорим (остаётся 5 %)."""
-    m = _build_model()
-    add_pseudo_measurements(
-        m,
-        add_zero_injections=False,
-        unobservable_v_sigma_frac=0.02,
-        unobservable_v_min_vm_deviation=0.01,
-        unobservable_v_exclude_incident_flow=True,
-    )
-    assert _pseudo_v_sigma_frac(m, 5, 35.0) == pytest.approx(0.05)
 
 
 def test_min_vm_deviation_threshold():

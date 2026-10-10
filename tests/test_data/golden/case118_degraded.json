@@ -141,26 +141,11 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
       "161": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -233,20 +218,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 115,
-     "skipped_no_full_coverage": 3,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -270,9 +241,6 @@
     "stats": {
      "v_priors_added": 63,
      "zero_inj_added": 3,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -490,26 +458,11 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
       "161": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -582,20 +535,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 115,
-     "skipped_no_full_coverage": 3,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -619,9 +558,6 @@
     "stats": {
      "v_priors_added": 63,
      "zero_inj_added": 3,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -885,26 +821,11 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
       "161": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -977,20 +898,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 115,
-     "skipped_no_full_coverage": 3,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -1014,9 +921,6 @@
     "stats": {
      "v_priors_added": 63,
      "zero_inj_added": 3,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -1269,26 +1173,11 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
       "161": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -1361,20 +1250,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 115,
-     "skipped_no_full_coverage": 3,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -1398,9 +1273,6 @@
     "stats": {
      "v_priors_added": 63,
      "zero_inj_added": 3,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -1674,26 +1546,11 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
       "161": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -1766,20 +1623,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 115,
-     "skipped_no_full_coverage": 3,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -1803,9 +1646,6 @@
     "stats": {
      "v_priors_added": 63,
      "zero_inj_added": 3,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -2085,26 +1925,11 @@
      "checked": 55,
      "out_of_range": 0,
      "hard_deactivated": 0,
-     "downweighted_nominal_substitution": 0,
      "by_vnom": {
       "138": 49,
       "345": 5,
       "161": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -2177,20 +2002,6 @@
    },
    {
     "type": "step_start",
-    "name": "synthesize_injections"
-   },
-   {
-    "type": "step_done",
-    "name": "synthesize_injections",
-    "stats": {
-     "nodes_synthesized": 0,
-     "skipped_has_inj": 115,
-     "skipped_no_full_coverage": 3,
-     "skipped_orphan": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "mirror_voltage"
    },
    {
@@ -2214,9 +2025,6 @@
     "stats": {
      "v_priors_added": 63,
      "zero_inj_added": 3,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 5,
      "unknown_load_loose": 0
     }

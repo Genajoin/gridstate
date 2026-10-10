@@ -19,7 +19,7 @@ from gridstate.telemetry.generators import (
     _apply_generator_status_on_arrays,
 )
 from gridstate.telemetry.shunts import (
-    _BREAKER_X_SENTINEL_OHM,
+    BREAKER_X_SENTINEL_OHM,
     _normalize_breaker_reactance_on_arrays,
 )
 from gridstate.units import BASE_MVA
@@ -168,7 +168,7 @@ def test_normalize_breaker_core_volt_aware():
                 "from_node": 1,
                 "to_node": 2,
                 "resistance": 0.0,
-                "reactance": _BREAKER_X_SENTINEL_OHM,
+                "reactance": BREAKER_X_SENTINEL_OHM,
             },
             # реальная ветвь (R>0) → не трогаем
             {"id": 2, "from_node": 1, "to_node": 2, "resistance": 6.05, "reactance": 30.25},
@@ -178,7 +178,7 @@ def test_normalize_breaker_core_volt_aware():
                 "from_node": 2,
                 "to_node": 2,
                 "resistance": 0.0,
-                "reactance": _BREAKER_X_SENTINEL_OHM,
+                "reactance": BREAKER_X_SENTINEL_OHM,
             },
         ]
     )
@@ -187,7 +187,7 @@ def test_normalize_breaker_core_volt_aware():
     assert n == 1
     assert float(branches[0]["reactance"]) == eps * (10.5 * 10.5 / BASE_MVA)
     assert float(branches[1]["reactance"]) == 30.25  # реальная не тронута
-    assert float(branches[2]["reactance"]) == _BREAKER_X_SENTINEL_OHM  # Vn=0 пропуск
+    assert float(branches[2]["reactance"]) == BREAKER_X_SENTINEL_OHM  # Vn=0 пропуск
 
 
 def test_normalize_breaker_core_fallback_to_node():
@@ -200,7 +200,7 @@ def test_normalize_breaker_core_fallback_to_node():
                 "from_node": 1,
                 "to_node": 2,
                 "resistance": 0.0,
-                "reactance": _BREAKER_X_SENTINEL_OHM,
+                "reactance": BREAKER_X_SENTINEL_OHM,
             },
         ]
     )

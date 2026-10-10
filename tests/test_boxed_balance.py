@@ -5,17 +5,130 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import diags
 
+from gridstate.constants import BranchType, NodeType
 from gridstate.pipeline import PipelineConfig
 from gridstate.preprocessing.ipm_setup import build_ipm_setup
 from gridstate.state import StateLayout
 from gridstate.units import model_to_pu
-from gridstate.z_vector import KIND_VOLTAGE, MeasurementIndex
-from tests.test_ipm_transit_balance import _build_net_with_transit
+from gridstate.working import Working
+from gridstate.z_vector import (
+    KIND_POWER_INJECTION_P,
+    KIND_POWER_INJECTION_Q,
+    KIND_VOLTAGE,
+    OBJ_NODE,
+    MeasurementIndex,
+)
 
 
 N_BALANCE = 4  # all four nodes of the test network are active
 DATA_SIGMA2 = np.array([1e-4, 4e-4])  # median 2.5e-4
 SOFT = 2.5e-4 / 0.1  # default balance_weight_factor
+
+
+def _build_line(m: Working, bid: int, f: int, t: int) -> None:
+    m.branches.add(
+        {
+            "id": bid,
+            "from_node": f,
+            "to_node": t,
+            "resistance": 3.0,
+            "reactance": 15.0,
+            "tap_ratio": 1.0,
+            "phase_shift": 0.0,
+            "status": True,
+            "branch_type": int(BranchType.LINE),
+        }
+    )
+
+
+def _build_net_with_transit() -> Working:
+    """4 nodes: slack (gen) - transit - load - load.
+
+    Node 2 is a pure transit node (exist_load=0, exist_gen=0) carrying the
+    whole flow to nodes 3-4.
+    """
+    m = Working.empty()
+    m.nodes.add(
+        {
+            "id": 1,
+            "voltage_nominal": 110.0,
+            "voltage_magnitude": 110.0,
+            "generation_p": 60.0,
+            "generation_q": 20.0,
+            "generation_p_min": 0.0,
+            "generation_p_max": 200.0,
+            "generation_q_min": -100.0,
+            "generation_q_max": 100.0,
+            "exist_gen": 1,
+            "exist_load": 0,
+            "status": True,
+            "node_type": int(NodeType.SLACK),
+        }
+    )
+    m.nodes.add(
+        {
+            "id": 2,
+            "voltage_nominal": 110.0,
+            "voltage_magnitude": 109.0,
+            "exist_gen": 0,
+            "exist_load": 0,
+            "status": True,
+            "node_type": int(NodeType.PQ),
+        }
+    )
+    for nid, vm in ((3, 108.5), (4, 108.0)):
+        m.nodes.add(
+            {
+                "id": nid,
+                "voltage_nominal": 110.0,
+                "voltage_magnitude": vm,
+                "load_p": 30.0,
+                "load_q": 10.0,
+                "load_p_min": 0.0,
+                "load_p_max": 100.0,
+                "load_q_min": 0.0,
+                "load_q_max": 50.0,
+                "exist_load": 1,
+                "exist_gen": 0,
+                "status": True,
+                "node_type": int(NodeType.PQ),
+            }
+        )
+    _build_line(m, 100, 1, 2)
+    _build_line(m, 200, 2, 3)
+    _build_line(m, 300, 2, 4)
+
+    mid = 1
+    for nid, vm in [(1, 110.4), (2, 109.2), (3, 108.6), (4, 108.1)]:
+        m.measurements.add(
+            {
+                "id": mid,
+                "object_type": OBJ_NODE,
+                "object_id": nid,
+                "measurement_type": KIND_VOLTAGE,
+                "value": vm,
+                "variance": 0.01,
+                "status": True,
+                "quality": 0,
+            }
+        )
+        mid += 1
+    for nid, p, q in [(3, -30.0, -10.0), (4, -30.0, -10.0)]:
+        for kind, val in ((KIND_POWER_INJECTION_P, p), (KIND_POWER_INJECTION_Q, q)):
+            m.measurements.add(
+                {
+                    "id": mid,
+                    "object_type": OBJ_NODE,
+                    "object_id": nid,
+                    "measurement_type": kind,
+                    "value": val,
+                    "variance": 0.5,
+                    "status": True,
+                    "quality": 0,
+                }
+            )
+            mid += 1
+    return m
 
 
 def _setup(model, **kwargs):

@@ -99,13 +99,7 @@ def test_slack_demote_core_on_bare_arrays():
 
 
 def test_gen_promote_core_on_bare_arrays():
-    assert _gen_nodes_to_promote(_bare_nodes(), _bare_gens(), None) == [4]
-
-
-def test_gen_promote_core_vzd_gate_on_bare_arrays():
-    # props: узел 4 имеет ген, но vzd=0 → НЕ PV; узел 8 без гена → не трогается.
-    props = {4: {"vzd": 0.0, "exist_gen": True}, 8: {"vzd": 1.0, "exist_gen": True}}
-    assert _gen_nodes_to_promote(_bare_nodes(), _bare_gens(), props) == []
+    assert _gen_nodes_to_promote(_bare_nodes(), _bare_gens()) == [4]
 
 
 def test_orphan_branches_core_on_bare_arrays():
@@ -183,7 +177,7 @@ def test_adapter_effect_matches_core_plan():
         assert types[nid] == _PQ
 
     # gen→PV (после refine_slack, как в pipeline)
-    plan = _gen_nodes_to_promote(m.nodes.to_numpy(), m.generators.to_numpy(), None)
+    plan = _gen_nodes_to_promote(m.nodes.to_numpy(), m.generators.to_numpy())
     n = refine_node_types_from_generators(m)
     assert n["promoted"] == len(plan)
     types = {int(r["id"]): int(r["node_type"]) for r in m.nodes.to_numpy()}

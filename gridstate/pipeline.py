@@ -45,7 +45,6 @@ from gridstate.post_processing import refine_anti_overshoot
 from gridstate.preprocessing import (
     add_pseudo_measurements,
     mirror_voltage_through_unit_tap_links,
-    synthesize_node_injection_from_branch_flows,
 )
 from gridstate.resolve_pass import ResolveGuard
 from gridstate.result import SEResult
@@ -58,7 +57,6 @@ from gridstate.telemetry import (
     apply_voltage_range_filter,
     deactivate_orphan_measurements,
     normalize_breaker_reactance,
-    resolve_merged_measurement_conflicts,
 )
 from gridstate.telemetry.apply_resolved import apply_materialize_resolved, apply_telemetry_resolved
 from gridstate.telemetry.load_only_injection import (
@@ -234,12 +232,6 @@ class PipelineConfig:
         "нефизичное (default 1.5 = 150 % Vnom).",
         depends={"voltage_filter_deactivate_nonphysical": True},
     )
-    resolve_merged_conflicts: bool = _toggle(
-        True,
-        group=_G_XML,
-        label="Слить дубли измерений",
-        help="resolve_merged_measurement_conflicts: слить дубли замеров на одном объекте.",
-    )
     aggregate_generators: bool = _toggle(
         True,
         group=_G_XML,
@@ -347,12 +339,6 @@ class PipelineConfig:
     )
 
     # --- Псевдо-измерения ---
-    synthesize_injections: bool = _toggle(
-        True,
-        group=_G_PSEUDO,
-        label="Синтез P/Q_inj из потоков",
-        help="synthesize_node_injection_from_branch_flows на терминалах без real-meas.",
-    )
     mirror_voltage_unit_tap: bool = _toggle(
         True,
         group=_G_PSEUDO,
@@ -482,16 +468,6 @@ class PipelineConfig:
         "balance row with variance median(σ²_data) / factor. The box carries the node's "
         "freedom; a loose balance only hides data conflicts as an imbalance. 0 — off.",
     )
-    ipm_bound_relax: float = _param(
-        0.0,
-        group=_G_IPM,
-        label="Релакс границ box",
-        control="number",
-        min=0.0,
-        max=1.0,
-        depends={"algorithm": "ipm"},
-        help="Расширяет [lo,hi] на долю (hi-lo).",
-    )
     ipm_prior_sigma2_bus_equiv_pu: float = _param(
         0.01,
         group=_G_IPM,
@@ -501,19 +477,6 @@ class PipelineConfig:
         max=10.0,
         depends={"algorithm": "ipm"},
         help="default 0.01 p.u.².",
-    )
-    ipm_transit_balance_sigma2_pu: float = _param(
-        0.0,
-        group=_G_IPM,
-        label="σ² баланса транзита",
-        control="number",
-        min=0.0,
-        max=1.0,
-        depends={"algorithm": "ipm"},
-        help="σ² (p.u.²) balance-строк транзитных узлов (exist_load=0 и exist_gen=0). "
-        "0 = OFF (мягкий баланс как у всех узлов; остаточная инжекция транзита "
-        "материализуется reconcile-пассом в псевдонагрузку). >0 — жёсткий "
-        "zero-injection virtual-measurement, напр. 1e-8 (σ≈0.01 МВт).",
     )
 
     # --- Пост-обработка (Линия C) ---
@@ -779,11 +742,6 @@ class PipelineConfig:
     )
 
 
-def default_config() -> PipelineConfig:
-    """Конфиг с production-дефолтами."""
-    return PipelineConfig()
-
-
 # ---------------------------------------------------------------------------
 # Контекст исполнения + дескриптор шага
 # ---------------------------------------------------------------------------
@@ -826,9 +784,7 @@ def _effective_huber_c(cfg: PipelineConfig) -> float:
 def _ipm_kwargs(cfg: PipelineConfig) -> dict:
     return {
         "balance_weight_factor": cfg.ipm_balance_weight_factor,
-        "bound_relax": cfg.ipm_bound_relax,
         "prior_sigma2_bus_equiv_pu": cfg.ipm_prior_sigma2_bus_equiv_pu,
-        "transit_balance_sigma2_pu": cfg.ipm_transit_balance_sigma2_pu,
         "boxed_balance_weight_factor": cfg.ipm_boxed_balance_weight_factor,
     }
 
@@ -970,10 +926,6 @@ def _s_voltage_range_filter(ctx: _Ctx) -> dict:
     )
 
 
-def _s_resolve_merged(ctx: _Ctx) -> dict:
-    return dict(resolve_merged_measurement_conflicts(ctx.model) or {})
-
-
 def _s_refine_slack(ctx: _Ctx) -> dict:
     return dict(refine_slack_to_one(ctx.model) or {})
 
@@ -1048,10 +1000,6 @@ def _s_gen_v_calibration(ctx: _Ctx) -> dict:
 
 def _s_deactivate_orphan_measurements(ctx: _Ctx) -> dict:
     return dict(deactivate_orphan_measurements(ctx.model) or {})
-
-
-def _s_synthesize_injections(ctx: _Ctx) -> dict:
-    return dict(synthesize_node_injection_from_branch_flows(ctx.model) or {})
 
 
 def _s_mirror_voltage(ctx: _Ctx) -> dict:
@@ -1414,14 +1362,6 @@ STEPS: list[Step] = [
         toggle="apply_voltage_range_filter",
     ),
     Step(
-        "resolve_merged",
-        "Слить дубли измерений",
-        _G_XML,
-        "resolve_merged_measurement_conflicts: слить дубли на объекте.",
-        _s_resolve_merged,
-        toggle="resolve_merged_conflicts",
-    ),
-    Step(
         "refine_node_types_2",
         "Типы узлов (повтор, идемпотентно)",
         _G_CASCADE,
@@ -1487,14 +1427,6 @@ STEPS: list[Step] = [
         "deactivate_orphan_measurements.",
         _s_deactivate_orphan_measurements,
         toggle="deactivate_orphan_measurements",
-    ),
-    Step(
-        "synthesize_injections",
-        "Синтез P/Q_inj из потоков",
-        _G_PSEUDO,
-        "synthesize_node_injection_from_branch_flows.",
-        _s_synthesize_injections,
-        toggle="synthesize_injections",
     ),
     Step(
         "mirror_voltage",

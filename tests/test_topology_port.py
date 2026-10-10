@@ -109,20 +109,6 @@ def test_topology_sequence_runs_clean():
     assert node_state[5][0] is False
 
 
-def test_refine_node_types_with_props_vzd_gate():
-    # Ветка node_load_props (vzd-гейт): узел 4 имеет ген, но vzd=0 → НЕ PV;
-    # узел 8 в props с vzd>0 но без гена → не трогается.
-    from gridstate.constants import NodeType
-
-    a = _build_model()
-    cs.refine_slack_to_one(a)
-    props = {4: {"vzd": 0.0, "exist_gen": True}, 8: {"vzd": 1.0, "exist_gen": True}}
-    ra = cs.refine_node_types_from_generators(a, node_load_props=props)
-    assert ra["promoted"] == 0  # узел 4 имеет ген, но vzd=0 → не PV; 8 без гена
-    node_state = _node_state(a)
-    assert node_state[4][1] != int(NodeType.PV)
-
-
 def test_no_slack_disconnected_noop():
     # Без slack disable_disconnected_components → 0.
     from gridstate.working import Working

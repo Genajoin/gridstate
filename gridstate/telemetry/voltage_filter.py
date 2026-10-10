@@ -46,8 +46,6 @@ def apply_voltage_range_filter(
     deactivate_nonphysical: bool = False,
     nonphysical_lower_factor: float = 0.5,
     nonphysical_upper_factor: float = 1.5,
-    detect_nominal_substitution: bool = False,
-    nominal_substitution_eps: float = 0.001,
     questionable_sigma2_multiplier: float = 100.0,
 ) -> dict:
     """Деактивирует/понижает вес V-измерений вне допустимого диапазона.
@@ -101,22 +99,12 @@ def apply_voltage_range_filter(
         nonphysical_upper_factor: верхний физический предел V как множитель
             V_ном для ``deactivate_nonphysical`` (default 1.5 = 150 % V_ном).
             V выше этого не может быть валидным напряжением.
-        detect_nominal_substitution: если True, V-измерения с
-            ``|V_TI - V_ном| / V_ном < nominal_substitution_eps``
-            помечаются как QUESTIONABLE (вероятная подстановка
-            номинала вместо реального ТИ). **Default False** —
-            на типичных XML-выгрузках многие реальные V-ТИ близки
-            к V_ном (генераторные шины, режим без перетоков), поэтому
-            детект даёт false-positives. Включать с осторожностью
-            и низким eps (≤ 0.001 = 0.1 %).
-        nominal_substitution_eps: порог для детекта подстановки
-            (default 0.001 = 0.1 %).
         questionable_sigma2_multiplier: множитель variance для
             QUESTIONABLE measurements (default 100.0 = σ × 10).
 
     Returns:
         ``{"checked": N, "out_of_range": N, "hard_deactivated": N,
-        "downweighted_nominal_substitution": N, "by_vnom": {kv: N}}``
+        "by_vnom": {kv: N}}``
     """
     # Енумы object/measurement-type резолвятся здесь (gridstate.constants),
     # ядро принимает готовые int и читает только контрактные колонки.
@@ -135,8 +123,6 @@ def apply_voltage_range_filter(
         deactivate_nonphysical=deactivate_nonphysical,
         nonphysical_lower_factor=nonphysical_lower_factor,
         nonphysical_upper_factor=nonphysical_upper_factor,
-        detect_nominal_substitution=detect_nominal_substitution,
-        nominal_substitution_eps=nominal_substitution_eps,
         questionable_sigma2_multiplier=questionable_sigma2_multiplier,
     )
     # NB: model.measurements.to_numpy() кеширует array; **всегда** вызываем
@@ -155,8 +141,6 @@ def _voltage_range_filter_on_arrays(
     min_voltage_nominal_kv: float,
     upper_fallback_factor: float,
     action: str,
-    detect_nominal_substitution: bool,
-    nominal_substitution_eps: float,
     questionable_sigma2_multiplier: float,
     deactivate_nonphysical: bool = False,
     nonphysical_lower_factor: float = 0.5,
@@ -175,7 +159,6 @@ def _voltage_range_filter_on_arrays(
         "checked": 0,
         "out_of_range": 0,
         "hard_deactivated": 0,
-        "downweighted_nominal_substitution": 0,
     }
     by_vnom: dict[int, int] = {}
 
@@ -268,17 +251,10 @@ def _voltage_range_filter_on_arrays(
                 )
             continue
 
-        if detect_nominal_substitution and abs(v_meas - v_nom) / v_nom < nominal_substitution_eps:
-            downweight_measurement(
-                meas_arr, i, questionable_sigma2_multiplier, mark_questionable=True
-            )
-            counters["downweighted_nominal_substitution"] += 1
-
     return {
         "checked": counters["checked"],
         "out_of_range": counters["out_of_range"],
         "hard_deactivated": counters["hard_deactivated"],
-        "downweighted_nominal_substitution": counters["downweighted_nominal_substitution"],
         "by_vnom": by_vnom,
     }
 

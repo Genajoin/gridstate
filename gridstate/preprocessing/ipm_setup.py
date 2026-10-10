@@ -54,8 +54,7 @@ class _BoxSection:
     """Accumulator + column spec for one box-var family (pgen/qgen/pnag/qnag).
 
     ``exist_col`` gates which nodes contribute (``exist_gen`` for the gen families,
-    ``exist_load`` for the load families); ``reactive`` selects the Q-side ``has_inj``
-    flag. ``prior_kind`` is the ``KIND_BOX_PRIOR_*`` used when emitting prior-meas.
+    ``exist_load`` for the load families). ``prior_kind`` is the ``KIND_BOX_PRIOR_*`` used when emitting prior-meas.
     The list fields accumulate one entry per contributing node, in node order.
     """
 
@@ -64,7 +63,6 @@ class _BoxSection:
     max_col: str
     init_col: str
     prior_kind: int
-    reactive: bool
     pos: list[int] = field(default_factory=list)
     lo: list[float] = field(default_factory=list)
     hi: list[float] = field(default_factory=list)
@@ -80,7 +78,6 @@ def _collect_box_sections(
     default_box_halfwidth_pu: float,
     prior_sigma2_normal_pu: float,
     prior_sigma2_bus_equiv_pu: float,
-    prior_sigma2_inj_pu: float,
     bus_equiv_width_threshold_pu: float,
 ) -> list[_BoxSection]:
     """Collect box-var bounds/init/prior per section for exist_load/exist_gen nodes.
@@ -92,29 +89,22 @@ def _collect_box_sections(
 
     def _resolve_prior_sigma2(
         bounds: tuple[float, float],
-        has_inj: bool,
         *,
         is_default_box: bool = False,
     ) -> float:
         """σ²_prior для box-var.
 
-        Иерархия (от tight к loose):
         * широкая коробка (width > bus_equiv_threshold) → bus_equiv_pu
           (tight, не даёт solver'у раскидать невязку по фиктивному
           5-10 ГВт-эквиваленту); НЕ применяется к дефолтным коробкам
           (``is_default_box=True``) — они широкие не потому что узел
           BUS-эквивалент, а потому что границы в данных не заданы;
-        * обычная коробка + init из TI (has_inj=True) → inj_pu (tight,
-          закрепляет solver около свежих данных);
-        * обычная коробка + init из node-row (has_inj=False) →
-          normal_pu (default 0 — prior не создаётся, balance/data-меры
-          подтягивают значение).
+        * обычная коробка → normal_pu (default 0 — prior не создаётся,
+          balance/data-меры подтягивают значение).
         """
         width = abs(bounds[1] - bounds[0])
         if not is_default_box and width > float(bus_equiv_width_threshold_pu):
             return float(prior_sigma2_bus_equiv_pu)
-        if has_inj:
-            return float(prior_sigma2_inj_pu)
         return float(prior_sigma2_normal_pu)
 
     def _bound_pair(
@@ -194,7 +184,6 @@ def _collect_box_sections(
             "generation_p_max",
             "generation_p",
             KIND_BOX_PRIOR_PGEN,
-            reactive=False,
         ),
         _BoxSection(
             "exist_gen",
@@ -202,7 +191,6 @@ def _collect_box_sections(
             "generation_q_max",
             "generation_q",
             KIND_BOX_PRIOR_QGEN,
-            reactive=True,
         ),
         _BoxSection(
             "exist_load",
@@ -210,7 +198,6 @@ def _collect_box_sections(
             "load_p_max",
             "load_p",
             KIND_BOX_PRIOR_PNAG,
-            reactive=False,
         ),
         _BoxSection(
             "exist_load",
@@ -218,7 +205,6 @@ def _collect_box_sections(
             "load_q_max",
             "load_q",
             KIND_BOX_PRIOR_QNAG,
-            reactive=True,
         ),
     ]
 
@@ -235,11 +221,6 @@ def _collect_box_sections(
         }
 
         # Init box-vars берём из node-row (load_p/q, generation_p/q).
-        # has_p_inj/has_q_inj оставлены False: tight inj-prior удалён
-        # (см. memory ipm_init_from_inj_no_effect.md).
-        has_p_inj = False
-        has_q_inj = False
-
         # КАЖДЫЙ exist_*-узел получает box-var (незаданные границы →
         # широкий дефолт): balance-уравнение пишется для всех активных
         # узлов, и узел с exist_* но без переменной вкладывался бы в
@@ -260,12 +241,11 @@ def _collect_box_sections(
                 float(row[sec.max_col]),
                 default_box_halfwidth_pu,
             )
-            has_inj = has_q_inj if sec.reactive else has_p_inj
             sec.pos.append(pos)
             sec.lo.append(lo)
             sec.hi.append(hi)
             sec.init.append(_init_in_box(float(row[sec.init_col]) / BASE_MVA, (lo, hi)))
-            sec.prior_s2.append(_resolve_prior_sigma2((lo, hi), has_inj, is_default_box=dflt))
+            sec.prior_s2.append(_resolve_prior_sigma2((lo, hi), is_default_box=dflt))
 
     return sections
 
@@ -343,13 +323,11 @@ def build_ipm_setup(
     layout_base: StateLayout,
     balance_sigma2: float | None = None,
     balance_weight_factor: float = 0.1,
-    transit_balance_sigma2_pu: float = 0.0,
     boxed_balance_weight_factor: float = 0.0,
     bound_relax: float = 0.0,
     default_box_halfwidth_pu: float = 50.0,
     prior_sigma2_normal_pu: float = 0.0,
     prior_sigma2_bus_equiv_pu: float = 0.01,
-    prior_sigma2_inj_pu: float = 0.0,
     bus_equiv_width_threshold_pu: float = 100.0,
 ) -> IPMSetup:
     """Собрать IPM-инфраструктуру поверх готовых WLS-данных.
@@ -372,15 +350,6 @@ def build_ipm_setup(
             калибровка в пользу data-fit; узловой баланс достигается
             солвером как стационарная точка, а не вбивается весом.
             Значения >1 делают баланс жёстче медианной меры.
-        transit_balance_sigma2_pu: σ² (p.u.²) balance-строк ТРАНЗИТНЫХ
-            узлов (``exist_load=0`` и ``exist_gen=0``). Default ``0`` —
-            выключено: транзит получает ту же мягкую σ², что и все
-            balance-строки, солвер оставляет на нём остаточную инжекцию,
-            и ``reconcile_node_balance`` материализует её псевдонагрузкой.
-            Значение >0 делает нулевую инжекцию транзита жёстким
-            virtual-measurement (классический приём вместо equality-
-            constraint): σ² берётся как ``min(мягкая, заданная)`` — рычаг
-            никогда не ослабляет транзит относительно baseline.
         boxed_balance_weight_factor: balance weight for nodes whose admissible
             injection is bounded by data: every declared part (``exist_gen`` /
             ``exist_load``) has both bounds set. Their variance is
@@ -389,6 +358,8 @@ def build_ipm_setup(
             loose balance only hides data conflicts as an imbalance. ``0`` — off.
         bound_relax: дополнительный отступ от строгих границ NODE_DTYPE
             (расширяет [lo, hi] на ``bound_relax * (hi-lo)``). Default 0.
+            Deprecated: no pipeline setting reaches it any more; kept for
+            direct ``estimate(..., bound_relax=...)`` callers.
         default_box_halfwidth_pu: полуширина (p.u.) дефолтной коробки
             ``[-hw, +hw]`` для exist_*-узла с незаданными границами.
             Default 50 p.u. (±5 ГВт/ГВАр) — заведомо шире любого
@@ -409,10 +380,6 @@ def build_ipm_setup(
             Default ``0.01`` (≈ σ=10 МВт) — tight чтобы не раскидать
             невязку, но достаточно мягкий чтобы TI на ветвях могли
             подтянуть значения.
-        prior_sigma2_inj_pu: DEPRECATED (dead parameter, kept only for the public
-            signature). Not used while ``init_from_inj_measurements`` is absent
-            (init берётся из ``node.generation_p/load_p``); has_inj is always False,
-            so this value is never selected.
         bus_equiv_width_threshold_pu: порог ширины коробки (p.u.,
             BASE_MVA=100 → 100 p.u. = 10 ГВт МВт-эквивалента).
             Default ``100`` p.u. — покрывает крупные BUS-эквиваленты
@@ -433,7 +400,6 @@ def build_ipm_setup(
         default_box_halfwidth_pu=default_box_halfwidth_pu,
         prior_sigma2_normal_pu=prior_sigma2_normal_pu,
         prior_sigma2_bus_equiv_pu=prior_sigma2_bus_equiv_pu,
-        prior_sigma2_inj_pu=prior_sigma2_inj_pu,
         bus_equiv_width_threshold_pu=bus_equiv_width_threshold_pu,
     )
     pgen_node_pos = np.asarray(pgen_sec.pos, dtype=np.int64)
@@ -476,22 +442,13 @@ def build_ipm_setup(
     # (Sbus = 0 в скобках). Узлы с exist — связь Sbus = Pgen-Pnag.
     active_mask = nodes_arr["status"].astype(bool)
     active_nids = nodes_arr["id"][active_mask].astype(np.int64)
-    active_transit = ~(
-        nodes_arr["exist_load"][active_mask].astype(bool)
-        | nodes_arr["exist_gen"][active_mask].astype(bool)
-    )
     active_positions: list[int] = []
     active_ids: list[int] = []
-    transit_flags: list[bool] = []
-    slack_pos = int(layout_base.slack_idx)
-    for nid, is_transit in zip(active_nids.tolist(), active_transit.tolist(), strict=True):
+    for nid in active_nids.tolist():
         active_pos = bus_id_to_pos.get(int(nid))
         if active_pos is not None:
             active_positions.append(active_pos)
             active_ids.append(int(nid))
-            # Slack исключён из транзит-затяжки: он закрывает потери сети,
-            # жёсткий zero-injection на нём ломал бы решение.
-            transit_flags.append(bool(is_transit) and active_pos != slack_pos)
     n_balance = len(active_positions)
 
     # ---- Prior-meas: z=0, σ² индивидуальные. Только для box-var с σ²>0 ----
@@ -547,13 +504,6 @@ def build_ipm_setup(
     sigma2_new = np.empty(n_new, dtype=np.float64)
     sigma2_new[:n_old] = sigma2_old
     sigma2_new[n_old : n_old + 2 * n_balance] = balance_sigma2_eff
-    if transit_balance_sigma2_pu > 0.0 and n_balance > 0:
-        transit_arr = np.asarray(transit_flags, dtype=bool)
-        if transit_arr.any():
-            tight = min(float(transit_balance_sigma2_pu), balance_sigma2_eff)
-            # Строки баланса: сначала n_balance P-строк, затем n_balance Q-строк.
-            sigma2_new[n_old : n_old + n_balance][transit_arr] = tight
-            sigma2_new[n_old + n_balance : n_old + 2 * n_balance][transit_arr] = tight
     if boxed_balance_weight_factor > 0.0 and n_balance > 0:
         median_sigma2 = _median_measurement_sigma2(sigma2_old)
         if median_sigma2 is not None:

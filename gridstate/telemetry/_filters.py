@@ -4,11 +4,11 @@ Small utilities that were duplicated across the measurement-array cores:
 
 * :func:`build_measurement_index` — the
   ``(object_type, measurement_type, branch_side, object_id) -> row`` index
-  (used by ``apply_resolved`` and ``loss_filter``);
+  (used by ``apply_resolved``);
 * :func:`downweight_measurement` — the ``variance *= factor; weight = 1/var``
   write block (with an optional QUESTIONABLE quality bump);
 * :func:`validate_downweight_action` — the ``"downweight"``/``"deactivate"``
-  action guard shared by the voltage and loss filters.
+  action guard of the voltage filter.
 """
 
 from __future__ import annotations

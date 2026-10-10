@@ -23,6 +23,9 @@ def variance_voltage(value_kv: float, vn_kv: float) -> float:
     """σ²_V в kV²: 1% от номинала, минимум 0.1 кВ.
 
     Не зависит от текущего value (variance прайор по nominal).
+
+    ``value_kv`` is ignored; it stays in the signature for existing positional
+    callers.
     """
     sigma = max(_VARIANCE_V_FRAC * vn_kv, 0.1)
     return float(sigma * sigma)
