@@ -13,10 +13,11 @@ voltages, the bases pandapower uses as well):
   power-flow results (orientation, pi-model charging split, tap side);
 * nodal P/Q against the power flow at buses with a specified injection.
 
-The adapter leaves out the transformer magnetising branch (``i0_percent`` /
-``pfe_kw``). case14 and case30 have none; on case118 the comparison is done on a
-copy with it removed, and a separate test pins the size and place of the
-difference on the unmodified network.
+Transformers carry their magnetising branch (``i0_percent`` / ``pfe_kw``) in both
+pandapower equivalent circuits (``trafo_model="t"``, the power-flow default, and
+``"pi"``); case118 has four such transformers, and a small synthetic network
+covers off-nominal taps on either side, rated voltages that differ from the bus
+voltages, parallel units and uneven leakage splits.
 """
 
 from __future__ import annotations
@@ -31,7 +32,11 @@ import pytest
 pp = pytest.importorskip("pandapower")
 nw = pytest.importorskip("pandapower.networks")
 
-from gridstate.adapters import from_pandapower, measurement_array  # noqa: E402
+from gridstate.adapters import (  # noqa: E402
+    from_pandapower,
+    measurement_array,
+    network_injection,
+)
 from gridstate.contract import SE_INPUT  # noqa: E402
 from gridstate.contract import run as run_se  # noqa: E402
 from gridstate.pipeline import PipelineConfig  # noqa: E402
@@ -51,21 +56,76 @@ from gridstate.z_vector import (  # noqa: E402
 _TOL_Y = 1e-12
 
 
-def _solved(name: str, *, drop_magnetising: bool = False) -> Any:
-    net = getattr(nw, name)()
-    if drop_magnetising and len(net.trafo):
-        net.trafo["i0_percent"] = 0.0
-        net.trafo["pfe_kw"] = 0.0
+def _run(net: Any, **kwargs: Any) -> Any:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        pp.runpp(net, calculate_voltage_angles=True, numba=False)
+        pp.runpp(net, calculate_voltage_angles=True, numba=False, **kwargs)
     assert net.converged
     return net
 
 
-def _ybus_pair(net: Any) -> tuple[np.ndarray, np.ndarray, Any]:
+def _solved(name: str, **kwargs: Any) -> Any:
+    return _run(getattr(nw, name)(), **kwargs)
+
+
+def _synthetic_net() -> Any:
+    """Two transformers with a magnetising branch, off-nominal taps on the LV and
+    the HV side, rated voltages above the bus voltages, two parallel units and an
+    uneven leakage split, plus a line on each voltage level."""
+    net = pp.create_empty_network(sn_mva=100.0)
+    hv1, lv1, lv2, hv2 = (pp.create_bus(net, vn) for vn in (110.0, 20.0, 20.0, 110.0))
+    pp.create_ext_grid(net, hv1, vm_pu=1.02)
+    pp.create_line_from_parameters(net, hv1, hv2, 10.0, 0.1, 0.4, 10.0, 1.0)
+    pp.create_line_from_parameters(net, lv1, lv2, 5.0, 0.2, 0.3, 200.0, 1.0)
+    pp.create_transformer_from_parameters(
+        net,
+        hv1,
+        lv1,
+        sn_mva=40.0,
+        vn_hv_kv=115.0,
+        vn_lv_kv=20.5,
+        vkr_percent=0.4,
+        vk_percent=10.5,
+        pfe_kw=30.0,
+        i0_percent=1.2,
+        tap_side="lv",
+        tap_pos=3,
+        tap_neutral=0,
+        tap_step_percent=1.5,
+        tap_changer_type="Ratio",
+        # Set on both transformers: a row without it would read NaN once the
+        # column exists, which pandapower's T -> pi conversion does not accept.
+        leakage_resistance_ratio_hv=0.5,
+        leakage_reactance_ratio_hv=0.5,
+    )
+    pp.create_transformer_from_parameters(
+        net,
+        hv2,
+        lv2,
+        sn_mva=63.0,
+        vn_hv_kv=110.0,
+        vn_lv_kv=21.0,
+        vkr_percent=0.5,
+        vk_percent=11.0,
+        pfe_kw=40.0,
+        i0_percent=0.8,
+        tap_side="hv",
+        tap_pos=-2,
+        tap_neutral=0,
+        tap_step_percent=1.25,
+        tap_changer_type="Ratio",
+        parallel=2,
+        leakage_resistance_ratio_hv=0.3,
+        leakage_reactance_ratio_hv=0.7,
+    )
+    pp.create_load(net, lv1, p_mw=10.0, q_mvar=3.0)
+    pp.create_load(net, lv2, p_mw=15.0, q_mvar=5.0)
+    return net
+
+
+def _ybus_pair(net: Any, **kwargs: Any) -> tuple[np.ndarray, np.ndarray, Any]:
     """(gridstate Ybus, pandapower Ybus in the same bus order, NetworkPU)."""
-    pu = model_to_pu(from_pandapower(net).model)
+    pu = model_to_pu(from_pandapower(net, **kwargs).model)
     y_gs = build_ybus(pu)[0].toarray()
     y_pp = net._ppc["internal"]["Ybus"].toarray()
     pos = net._pd2ppc_lookups["bus"][np.asarray(pu.bus_ids, dtype=np.int64)]
@@ -77,41 +137,56 @@ def _pf_voltage(net: Any, pu: Any) -> np.ndarray:
     return res.vm_pu.to_numpy() * np.exp(1j * np.radians(res.va_degree.to_numpy()))
 
 
-@pytest.mark.parametrize(
-    ("name", "drop_magnetising"),
-    [("case14", False), ("case30", False), ("case118", True)],
-)
-def test_ybus_matches_pandapower(name: str, drop_magnetising: bool) -> None:
-    net = _solved(name, drop_magnetising=drop_magnetising)
+@pytest.mark.parametrize("trafo_model", ["t", "pi"])
+@pytest.mark.parametrize("name", ["case14", "case30", "case118"])
+def test_ybus_matches_pandapower(name: str, trafo_model: str) -> None:
+    net = _solved(name, trafo_model=trafo_model)
     y_gs, y_pp, _ = _ybus_pair(net)
     assert y_gs.shape == y_pp.shape == (len(net.bus), len(net.bus))
     np.testing.assert_allclose(y_gs, y_pp, rtol=0.0, atol=_TOL_Y)
 
 
-def test_case118_difference_is_only_the_magnetising_admittance() -> None:
-    """Current behaviour: on the unmodified case118 the adapter output differs from
-    pandapower only in the 2x2 blocks of transformers with a non-zero ``i0_percent`` (the
-    omitted magnetising branch; pandapower's T model spreads it over the diagonal
-    and the off-diagonal entries of the transformer); every other entry agrees."""
+@pytest.mark.parametrize("trafo_model", ["t", "pi"])
+def test_ybus_matches_pandapower_with_taps_and_magnetising(trafo_model: str) -> None:
+    net = _run(_synthetic_net(), trafo_model=trafo_model)
+    y_gs, y_pp, _ = _ybus_pair(net)
+    np.testing.assert_allclose(y_gs, y_pp, rtol=0.0, atol=_TOL_Y)
+
+
+def test_case118_magnetising_admittance_is_carried() -> None:
+    """The four case118 transformers with a non-zero ``i0_percent`` get branch
+    shunts (pandapower's default T circuit puts them on both ends), the others
+    none; without them the Y-bus would differ from pandapower by ~0.4 p.u."""
     net = _solved("case118")
-    y_gs, y_pp, pu = _ybus_pair(net)
-    diff = np.abs(y_gs - y_pp)
-    pos_of = {int(b): i for i, b in enumerate(pu.bus_ids)}
-    allowed = np.zeros(diff.shape, dtype=bool)
-    for hv, lv in zip(
-        net.trafo.hv_bus[net.trafo.i0_percent != 0],
-        net.trafo.lv_bus[net.trafo.i0_percent != 0],
-        strict=True,
-    ):
-        block = [pos_of[int(hv)], pos_of[int(lv)]]
-        allowed[np.ix_(block, block)] = True
-    assert allowed.any()
-    assert diff[~allowed].max() <= _TOL_Y
-    # Small but not negligible against the diagonal (max |Y_ii| ~ 390 p.u.).
-    assert 0.1 < diff[allowed].max() < 1.0
+    branches = from_pandapower(net).model.branches.to_numpy()
+    trafo_rows = branches[len(net.line) :]
+    has_shunt = (trafo_rows["susceptance_from"] != 0) & (trafo_rows["susceptance_to"] != 0)
+    assert has_shunt.tolist() == (net.trafo.i0_percent != 0).tolist()
+    assert has_shunt.sum() == 4
+
+    y_gs, y_pp, _ = _ybus_pair(net)
+    np.testing.assert_allclose(y_gs, y_pp, rtol=0.0, atol=_TOL_Y)
+    net.trafo["i0_percent"] = 0.0
+    y_gs_dropped, _, _ = _ybus_pair(net)
+    assert 0.1 < np.abs(y_gs_dropped - y_pp).max() < 1.0
 
 
-@pytest.mark.parametrize("name", ["case14", "case30"])
+def test_trafo_model_is_taken_from_the_last_power_flow() -> None:
+    """``trafo_model=None`` follows the option of the last power flow (pandapower's
+    default ``"t"`` on an unsolved network); an explicit value overrides it."""
+    net = _solved("case118", trafo_model="pi")
+    y_pi = model_to_pu(from_pandapower(net).model)
+    y_explicit = model_to_pu(from_pandapower(net, trafo_model="pi").model)
+    y_t = model_to_pu(from_pandapower(net, trafo_model="t").model)
+    y_unsolved = model_to_pu(from_pandapower(nw.case118()).model)
+    assert np.array_equal(build_ybus(y_pi)[0].toarray(), build_ybus(y_explicit)[0].toarray())
+    assert np.array_equal(build_ybus(y_t)[0].toarray(), build_ybus(y_unsolved)[0].toarray())
+    assert not np.allclose(build_ybus(y_pi)[0].toarray(), build_ybus(y_t)[0].toarray())
+    with pytest.raises(ValueError, match="trafo_model"):
+        from_pandapower(net, trafo_model="x")
+
+
+@pytest.mark.parametrize("name", ["case14", "case30", "case118"])
 def test_branch_flows_match_the_power_flow(name: str) -> None:
     net = _solved(name)
     pu = model_to_pu(from_pandapower(net).model)
@@ -144,7 +219,7 @@ def test_nodal_injections_match_the_power_flow(name: str) -> None:
     by_id = {int(r["id"]): r for r in nodes}
     slack = int(net.ext_grid.bus.iloc[0])
     pv = set(net.gen.bus[net.gen.in_service])
-    p_inj, q_inj = _network_injection(net)
+    p_inj, q_inj = network_injection(net)
     for bus in net.bus.index:
         row = by_id[int(bus)]
         if bus != slack:
@@ -154,10 +229,12 @@ def test_nodal_injections_match_the_power_flow(name: str) -> None:
     assert by_id[slack]["node_type"] != by_id[next(iter(pv))]["node_type"]
 
 
-def test_exact_measurements_reproduce_the_power_flow_state() -> None:
+@pytest.mark.parametrize("name", ["case14", "case118"])
+def test_exact_measurements_reproduce_the_power_flow_state(name: str) -> None:
     """WLS on the adapter output with noise-free measurements from the power flow
-    recovers the power-flow voltages."""
-    net = _solved("case14")
+    recovers the power-flow voltages (case14: bus shunt; case118: bus shunts and
+    transformer magnetising branches)."""
+    net = _solved(name)
     meas = _exact_measurements(net)
     out = run_se(from_pandapower(net, measurements=meas), config=PipelineConfig(algorithm="wls"))
     assert out.success
@@ -172,23 +249,8 @@ def test_exact_measurements_reproduce_the_power_flow_state() -> None:
     np.testing.assert_allclose(va, va_pf - va_pf[slack], atol=1e-5)
 
 
-def _network_injection(net: Any) -> tuple[Any, Any]:
-    """Nodal network injection (generation - load, MW / Mvar) of the power flow.
-
-    pandapower's ``res_bus`` is the sum over all bus elements *including* the
-    shunts; gridstate models the bus shunt inside the Y-bus, so its injection
-    ``V * conj(Ybus V)`` excludes the shunt power.
-    """
-    p = -net.res_bus.p_mw.copy()
-    q = -net.res_bus.q_mvar.copy()
-    if len(net.shunt):
-        p = p.add(net.res_shunt.p_mw.groupby(net.shunt.bus).sum(), fill_value=0.0)
-        q = q.add(net.res_shunt.q_mvar.groupby(net.shunt.bus).sum(), fill_value=0.0)
-    return p, q
-
-
 def _exact_measurements(net: Any) -> np.ndarray:
-    p_inj, q_inj = _network_injection(net)
+    p_inj, q_inj = network_injection(net)
     rows: list[tuple[int, int, int, float, float, int]] = []
     for bus in net.bus.index:
         vn = float(net.bus.vn_kv[bus])

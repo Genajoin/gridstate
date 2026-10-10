@@ -28,6 +28,7 @@ import numpy as np
 from gridstate.constants import BranchType, NodeType
 from gridstate.contract.containers import SEInput
 from gridstate.contract.tables import SE_INPUT, SE_OUTPUT, io_dtype
+from gridstate.units import BASE_MVA
 from gridstate.working import Working
 
 
@@ -68,6 +69,7 @@ def from_pandapower(
     net: Any,
     *,
     measurements: np.ndarray | None = None,
+    trafo_model: str | None = None,
 ) -> SEInput:
     """Построить ``SEInput`` из ``pandapower``-сети ``net``.
 
@@ -79,6 +81,11 @@ def from_pandapower(
             (dtype = ``SE_INPUT.measurements.input_dtype()``). Если ``None`` —
             таблица измерений пустая (генератор фикстур добавит синтетический
             z-вектор из решения PF).
+        trafo_model: equivalent circuit of the transformer magnetising branch,
+            ``"t"`` or ``"pi"`` (the pandapower power-flow option of the same
+            name). ``None`` takes the option of the last power flow run on
+            ``net`` (``net._options["trafo_model"]``), or pandapower's default
+            ``"t"`` if the network has not been solved.
 
     Returns:
         :class:`SEInput` with ``derived=None`` (the model already carries nodes,
@@ -87,7 +94,8 @@ def from_pandapower(
 
     Raises:
         ImportError: если pandapower не установлен (см. extra ``[test-models]``).
-        ValueError: при ≠1 ext_grid, ``net.sn_mva ≠ 100`` или пустой сети.
+        ValueError: при ≠1 ext_grid, ``net.sn_mva ≠ 100``, пустой сети или
+            неизвестном ``trafo_model``.
     """
     _require_pandapower()  # подсказка про extra; ниже работаем только с net-таблицами
 
@@ -105,9 +113,10 @@ def from_pandapower(
         )
 
     f_hz = float(getattr(net, "f_hz", 50.0))
+    model = _resolve_trafo_model(net, trafo_model)
 
     nodes = _build_nodes(net)
-    branches = _build_branches(net, f_hz)
+    branches = _build_branches(net, f_hz, model)
     generators = _build_generators(net)
     meas = _coerce_measurements(measurements)
 
@@ -146,6 +155,39 @@ def measurement_array(n: int) -> np.ndarray:
     ``variance``/``branch_side``/``status``.
     """
     return np.zeros(n, dtype=_MEASUREMENTS_DTYPE)
+
+
+def network_injection(net: Any) -> tuple[Any, Any]:
+    """Nodal network injection of a solved ``net``: generation - load, MW / Mvar.
+
+    pandapower's ``res_bus`` is the sum over all bus elements *including* the
+    bus shunts. gridstate models a bus shunt inside the Y-bus (the adapter writes
+    it to ``shunt_g`` / ``shunt_b``), so the injection it estimates,
+    ``V * conj(Ybus V)``, excludes the shunt power. This helper adds the shunt
+    power back: ``-res_bus + res_shunt`` per bus.
+
+    Returns:
+        ``(p_mw, q_mvar)`` as pandas Series indexed by the ``net.bus`` index.
+    """
+    p = -net.res_bus.p_mw.copy()
+    q = -net.res_bus.q_mvar.copy()
+    if len(net.shunt):
+        p = p.add(net.res_shunt.p_mw.groupby(net.shunt.bus).sum(), fill_value=0.0)
+        q = q.add(net.res_shunt.q_mvar.groupby(net.shunt.bus).sum(), fill_value=0.0)
+    return p, q
+
+
+_TRAFO_MODELS = ("t", "pi")
+
+
+def _resolve_trafo_model(net: Any, trafo_model: str | None) -> str:
+    """Transformer equivalent circuit: explicit argument, last power flow option, ``"t"``."""
+    if trafo_model is None:
+        options = getattr(net, "_options", None) or {}
+        trafo_model = str(options.get("trafo_model", "t"))
+    if trafo_model not in _TRAFO_MODELS:
+        raise ValueError(f"trafo_model must be one of {_TRAFO_MODELS}, got {trafo_model!r}.")
+    return trafo_model
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +294,35 @@ def _set_row(row: np.void, names: tuple[str, ...], values: dict[str, Any]) -> No
             row[key] = value
 
 
-def _build_branches(net: Any, f_hz: float) -> np.ndarray:
+def _wye_delta(
+    z_series: complex, y_mag: complex, r_ratio: float, x_ratio: float
+) -> tuple[complex, complex, complex]:
+    """T equivalent of a transformer -> pi equivalent (star-delta transform).
+
+    The series impedance ``z_series`` is split into a from-side part
+    (``r_ratio`` / ``x_ratio`` of R / X) and a to-side part, with the
+    magnetising admittance ``y_mag`` at the star point. Returns the pi
+    equivalent ``(z_series, y_from, y_to)``: the series impedance and the full
+    shunt admittances at the from and the to end. Same arithmetic as
+    pandapower's ``build_branch._wye_delta`` (all values in one per-unit base).
+    """
+    za = complex(z_series.real * r_ratio, z_series.imag * x_ratio)
+    zb = complex(z_series.real * (1.0 - r_ratio), z_series.imag * (1.0 - x_ratio))
+    zc = 1.0 / y_mag
+    z_sum = za * zb + za * zc + zb * zc
+    return z_sum / zc, zb / z_sum, za / z_sum
+
+
+def _trafo_value(tr: Any, column: str, default: float) -> float:
+    """``tr[column]`` as float, ``default`` when the column is absent or NaN."""
+    try:
+        value = float(getattr(tr, column))
+    except (AttributeError, TypeError, ValueError):  # absent column, None / pd.NA
+        return default
+    return default if math.isnan(value) else value
+
+
+def _build_branches(net: Any, f_hz: float, trafo_model: str = "t") -> np.ndarray:
     """``net.line`` + ``net.trafo`` → массив ветвей (импеданс Ом, шунты См)."""
     # pandas is not a gridstate dependency: it arrives with pandapower, so it is
     # imported here (only for pd.isna on table cells), never at module import.
@@ -302,42 +372,74 @@ def _build_branches(net: Any, f_hz: float) -> np.ndarray:
         bi += 1
 
     # ----- Трансформаторы -----
+    # The equations of pandapower's own branch model (build_branch: series
+    # impedance, magnetising admittance, T -> pi conversion), so that the
+    # Y-bus built from the adapter output equals pandapower's.
     for _, tr in net.trafo.iterrows():
         parallel = max(int(tr.parallel), 1)
         sn = float(tr.sn_mva)
+
+        # Rated voltages adjusted by the tap changer position; the ratio
+        # (physical, HV:LV) follows from them.
         vn_hv = float(tr.vn_hv_kv)
         vn_lv = float(tr.vn_lv_kv)
-        # Короткое замыкание: z%, r% на базе sn_mva, приведено к HV-стороне.
-        z_pu = float(tr.vk_percent) / 100.0  # на базе sn_mva, vn_hv
-        r_pu = float(tr.vkr_percent) / 100.0
-        x_pu = math.sqrt(max(z_pu * z_pu - r_pu * r_pu, 0.0))
-        z_base_hv = vn_hv * vn_hv / sn  # Ом (на собственной базе трафо)
-        r_ohm = r_pu * z_base_hv / parallel
-        x_ohm = x_pu * z_base_hv / parallel
-
-        # Коэф. трансформации (физический, HV:LV) с учётом РПН.
-        tap_factor = 1.0
         if not pd.isna(getattr(tr, "tap_pos", float("nan"))):
             tap_pos = float(tr.tap_pos)
             tap_neutral = float(tr.tap_neutral) if not pd.isna(tr.tap_neutral) else 0.0
             tap_step = float(tr.tap_step_percent) if not pd.isna(tr.tap_step_percent) else 0.0
             delta = (tap_pos - tap_neutral) * tap_step / 100.0
-            tap_side = str(getattr(tr, "tap_side", "hv"))
-            # РПН на HV: ratio растёт; на LV — обратно.
-            tap_factor = (1.0 + delta) if tap_side == "hv" else 1.0 / (1.0 + delta)
-        tap_ratio = (vn_hv / vn_lv) * tap_factor
+            if str(getattr(tr, "tap_side", "hv")) == "hv":
+                vn_hv *= 1.0 + delta
+            else:
+                vn_lv *= 1.0 + delta
+        tap_ratio = vn_hv / vn_lv
 
-        # pandapower держит сопротивление ЗА идеальным трансформатором, входной
-        # формат — на стороне «от» (см. gridstate.ybus). Переносим его на
-        # сторону ВН фактическим коэффициентом в p.u. — тем же, что получит
-        # ``model_to_pu``, чтобы build_ybus собрал ту же сеть.
+        # The same ratio in p.u. of the bus voltages, as ``model_to_pu`` gets it.
         vn_hv_bus = float(net.bus.at[tr.hv_bus, "vn_kv"])
         vn_lv_bus = float(net.bus.at[tr.lv_bus, "vn_kv"])
         tap_pu = tap_ratio
         if vn_hv_bus > 0 and vn_lv_bus > 0 and not math.isclose(vn_hv_bus, vn_lv_bus):
             tap_pu = tap_ratio / (vn_hv_bus / vn_lv_bus)
-        r_ohm *= tap_pu * tap_pu
-        x_ohm *= tap_pu * tap_pu
+
+        # pandapower's per-unit branch data (base: BASE_MVA and the LV bus
+        # voltage). Both the short-circuit impedance and the magnetising
+        # admittance sit behind the ideal transformer, at the tap-adjusted LV
+        # rated voltage.
+        z_base_lv = vn_lv_bus * vn_lv_bus / BASE_MVA
+        z_ohm = float(tr.vk_percent) / 100.0 * vn_lv * vn_lv / sn / parallel
+        r_ohm = float(tr.vkr_percent) / 100.0 * vn_lv * vn_lv / sn / parallel
+        x_ohm = math.copysign(math.sqrt(max(z_ohm * z_ohm - r_ohm * r_ohm, 0.0)), z_ohm)
+        z_series = complex(r_ohm, x_ohm) / z_base_lv
+        # Magnetising admittance: pfe_kw -> G, i0_percent -> |Y|, B inductive.
+        p_fe_mw = float(tr.pfe_kw) / 1000.0
+        y_mag_mva = float(tr.i0_percent) / 100.0 * sn
+        b_mag_mva = -math.sqrt(max(y_mag_mva * y_mag_mva - p_fe_mw * p_fe_mw, 0.0))
+        y_mag = complex(p_fe_mw, b_mag_mva) * parallel / (vn_lv * vn_lv) * z_base_lv
+        if y_mag == 0:
+            y_from = y_to = 0j
+        elif trafo_model == "t":
+            # The leakage impedance is split between the two windings around the
+            # magnetising branch; the pi equivalent changes the series impedance too.
+            z_series, y_from, y_to = _wye_delta(
+                z_series,
+                y_mag,
+                _trafo_value(tr, "leakage_resistance_ratio_hv", 0.5),
+                _trafo_value(tr, "leakage_reactance_ratio_hv", 0.5),
+            )
+        else:
+            y_from = y_to = y_mag / 2.0
+
+        # Contract units. The impedance goes to the from (HV) side by the actual
+        # ratio: build_ybus uses Ys = |t|^2 / z_from (see gridstate.ybus). The
+        # shunts are in S of the from-side base, the one model_to_pu converts
+        # every branch quantity with. build_ybus divides the from-end shunt by
+        # |t|^2 exactly like pandapower does, so it is written without a tap
+        # correction; where the from-end shunt of a transformer belongs with
+        # respect to the ideal transformer is open in #52.
+        z_base_hv = vn_hv_bus * vn_hv_bus / BASE_MVA
+        z_from = z_series * tap_pu * tap_pu * z_base_hv
+        y_from /= z_base_hv
+        y_to /= z_base_hv
 
         shift = float(tr.shift_degree) if not pd.isna(tr.shift_degree) else 0.0
 
@@ -350,10 +452,12 @@ def _build_branches(net: Any, f_hz: float) -> np.ndarray:
                 "to_node": int(tr.lv_bus),
                 "branch_type": int(BranchType.TRANSFORMER),
                 "status": bool(tr.in_service),
-                "resistance": r_ohm,
-                "reactance": x_ohm,
-                # Намагничивающую ветвь (i0/pfe) опускаем: на IEEE-кейсах
-                # пренебрежимо мала, z-вектор её не несёт.
+                "resistance": z_from.real,
+                "reactance": z_from.imag,
+                "conductance_from": y_from.real,
+                "susceptance_from": y_from.imag,
+                "conductance_to": y_to.real,
+                "susceptance_to": y_to.imag,
                 "tap_ratio": tap_ratio,
                 "phase_shift": math.radians(shift),
                 "current_limit_normal": 0.0,
