@@ -90,6 +90,15 @@ cut by tagging the merged main commit; the version is derived from that tag.
   toggles are config fields) (#50)
 - `IdAllocator` with a collision check (`MeasurementIdCollisionError`) for the
   ids of added measurements (#51)
+- Explicit initial point: `estimate(..., x0=InitialPoint(...))` starts the
+  solver from the given node V/δ without touching the node table (and thus the
+  pseudo-measurements built from it); `InitialPoint.from_result` takes it from
+  a previous result, and `run(init_state=...)` also accepts an `InitialPoint`.
+  `PipelineConfig.warm_start_mode`: `"seed_inputs"` (default, unchanged: the
+  previous V/δ are seeded into the node table before preprocessing, so they
+  are also the operating point of the pseudo-V priors) or `"x0_only"` (the
+  previous solution is only the initial point of the main solve; the
+  estimation problem is the cold-start one) (#58)
 
 ### Fix
 

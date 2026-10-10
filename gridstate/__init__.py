@@ -36,6 +36,7 @@ from gridstate.result import (
     ResidualRow,
     SEResult,
 )
+from gridstate.state import InitialPoint
 from gridstate.validation.bad_data import (
     BadDataResult,
     NormalizedResidualReport,
@@ -80,6 +81,7 @@ __all__ = [
     "Chi2Result",
     "Chi2Summary",
     "ImbalanceRow",
+    "InitialPoint",
     "NormalizedResidualReport",
     "ObservabilityReport",
     "PipelineConfig",

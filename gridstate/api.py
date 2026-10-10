@@ -31,7 +31,15 @@ from gridstate.quality_summary import (
     top_worst_residuals,
 )
 from gridstate.result import SEResult, extract_output_tables
-from gridstate.state import StateLayout, flat_start, flat_start_with_box, pack, unpack, unpack_full
+from gridstate.state import (
+    InitialPoint,
+    StateLayout,
+    flat_start,
+    flat_start_with_box,
+    pack,
+    unpack,
+    unpack_full,
+)
 from gridstate.units import BASE_MVA, model_to_pu, write_results_to_model
 from gridstate.utils import floored_sigma2, id_to_pos_map
 from gridstate.ybus import build_ybus
@@ -70,6 +78,7 @@ def estimate(
     include_quality_summary: bool = True,
     quality_summary_top_n: int = 10,
     quality_summary_scope: str = "real",
+    x0: InitialPoint | None = None,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Run state estimation for a model and telemetry.
@@ -90,6 +99,15 @@ def estimate(
             - ``"results"`` — take the current ``voltage_magnitude``/``voltage_angle``
               from ``model``;
             - ``"slack"`` — V=V_slack for all nodes, δ=0.
+        x0: explicit initial point (:class:`gridstate.state.InitialPoint`,
+            V in kV / δ in rad keyed by node id). The nodes it covers start
+            from it (V converted with their ``voltage_nominal``; a
+            non-positive V starts at 1.0 p.u.), the others from ``init``.
+            Unlike seeding ``voltage_magnitude``/``voltage_angle`` into the
+            node table, ``x0`` changes only the solver's starting point: the
+            measurements and pseudo-measurements are untouched. Box variables
+            of the IPM start from the node table as usual. ``None`` (default):
+            the start is defined by ``init`` alone.
         tolerance: stopping criterion on ``max|ΔE|``.
         max_iterations: maximum number of Gauss-Newton iterations.
         zero_injection: how to handle nodes without injection (not yet
@@ -152,7 +170,7 @@ def estimate(
     z, r_matrix, meas_index = build_z_and_r(model, measurements, network_pu)
 
     # 4. Initial guess E
-    e_init = _build_initial_state(model, network_pu, layout, init)
+    e_init = _build_initial_state(model, network_pu, layout, init, x0=x0)
 
     # Newton-system solver: one per estimate — reuse of the symbolic
     # factorization between iterations (the structure of G is unchanged).
@@ -404,8 +422,52 @@ def _build_initial_state(
     network_pu: NetworkPU,
     layout: StateLayout,
     init: InitMode,
+    x0: InitialPoint | None = None,
 ) -> np.ndarray:
-    """Build ``e_init`` according to the chosen strategy."""
+    """Build ``e_init`` according to the chosen strategy, then overlay ``x0``."""
+    e_init = _initial_state_from_mode(model, network_pu, layout, init)
+    if x0 is None:
+        return e_init
+    delta, v_pu = unpack(e_init, layout)
+    _overlay_initial_point(model, network_pu, x0, v_pu=v_pu, delta=delta)
+    return pack(delta, v_pu, layout)
+
+
+def _overlay_initial_point(
+    model: Working,
+    network_pu: NetworkPU,
+    x0: InitialPoint,
+    *,
+    v_pu: np.ndarray,
+    delta: np.ndarray,
+) -> None:
+    """Write the V/δ of ``x0`` into ``v_pu``/``delta`` (bus order) in place.
+
+    Same conversion as ``init="results"`` reading the node table: a node
+    covered by ``x0`` starts exactly where it would if its table V/δ had been
+    replaced by the ``x0`` values.
+    """
+    point = x0.as_dict()
+    nodes_arr = model.nodes.to_numpy()
+    id_to_pos = id_to_pos_map(network_pu.bus_ids)
+    for row in nodes_arr[nodes_arr["status"]]:
+        got = point.get(int(row["id"]))
+        if got is None:
+            continue
+        pos = id_to_pos[int(row["id"])]
+        vm, va = got
+        vn = float(row["voltage_nominal"])
+        v_pu[pos] = vm / vn if vm > 0 and vn > 0 else 1.0
+        delta[pos] = va
+
+
+def _initial_state_from_mode(
+    model: Working,
+    network_pu: NetworkPU,
+    layout: StateLayout,
+    init: InitMode,
+) -> np.ndarray:
+    """``e_init`` of the ``init`` strategy alone."""
     if init == "flat":
         return flat_start(layout)
 

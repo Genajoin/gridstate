@@ -9,6 +9,7 @@ from typing import Any
 from gridstate.contract.derived import DerivedInputs
 from gridstate.pipeline.config import PipelineConfig
 from gridstate.result import SEResult
+from gridstate.state import InitialPoint
 
 
 @dataclass
@@ -19,6 +20,9 @@ class _Ctx:
     cfg: PipelineConfig
     derived: DerivedInputs | None = None
     result: SEResult | None = None
+    # Explicit initial point of the main estimate (warm start with
+    # warm_start_mode="x0_only"); None: the start comes from the node table.
+    x0: InitialPoint | None = None
     # Nodes whose load-only injection was released: {"P": ..., "Q": ...}.
     released_injections: dict[str, frozenset[int]] = field(default_factory=dict)
 
