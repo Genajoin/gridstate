@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from gridstate.constants import MeasurementQuality
 from gridstate.contract import SE_INPUT
 from gridstate.telemetry.apply_resolved import TelemetryApplyConfig, _apply_telemetry_on_arrays
 from gridstate.telemetry.noise import (
@@ -19,13 +20,12 @@ from gridstate.telemetry.noise import (
     variance_power,
     variance_voltage,
 )
-from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_GOOD, QUALITY_QUESTIONABLE
 
 
 OT_NODE, OT_BRANCH = 0, 1
 MT_P, MT_Q, MT_V, MT_PINJ, MT_QINJ = 0, 1, 2, 4, 5
 
-# _KIND_MAP (_specs): U→(0,2,-1), PBEG→(1,0,0), PEND→(1,0,+1),
+# KIND_MAP (telemetry.kinds): U→(0,2,-1), PBEG→(1,0,0), PEND→(1,0,+1),
 #                       QBEG→(1,1,0), QEND→(1,1,+1).
 
 
@@ -98,7 +98,7 @@ def test_branch_p_activation_and_variance():
             }
         ]
     )
-    resolved = {(7, "PBEG"): (150.0, 1, "g-p", QUALITY_GOOD)}
+    resolved = {(7, "PBEG"): (150.0, 1, "g-p", MeasurementQuality.GOOD)}
     stats, new_rows = _run(meas, nodes, branches, resolved)
     assert stats["applied"] == 1 and new_rows == []
     assert bool(meas[0]["status"]) is True
@@ -124,7 +124,7 @@ def test_branch_q_activation_charging_variance():
             }
         ]
     )
-    resolved = {(7, "QBEG"): (30.0, 1, "g-q", QUALITY_GOOD)}
+    resolved = {(7, "QBEG"): (30.0, 1, "g-q", MeasurementQuality.GOOD)}
     stats, _ = _run(meas, nodes, branches, resolved)
     assert stats["applied"] == 1
     exp_var = variance_branch_q(
@@ -137,7 +137,7 @@ def test_node_v_activation_and_variance():
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([])
     meas = _meas([{"id": 10, "object_type": OT_NODE, "object_id": 1, "measurement_type": MT_V}])
-    resolved = {(1, "U"): (225.0, 1, "g-v", QUALITY_GOOD)}
+    resolved = {(1, "U"): (225.0, 1, "g-v", MeasurementQuality.GOOD)}
     stats, _ = _run(meas, nodes, branches, resolved)
     assert stats["applied"] == 1
     assert float(meas[0]["value"]) == pytest.approx(225.0)
@@ -152,7 +152,7 @@ def test_v_below_half_nominal_filtered():
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([])
     meas = _meas([{"id": 10, "object_type": OT_NODE, "object_id": 1, "measurement_type": MT_V}])
-    resolved = {(1, "U"): (80.0, 1, "g-v", QUALITY_GOOD)}  # 80 < 0.5·220=110
+    resolved = {(1, "U"): (80.0, 1, "g-v", MeasurementQuality.GOOD)}  # 80 < 0.5·220=110
     stats, _ = _run(meas, nodes, branches, resolved)
     assert stats["skipped_v_below_half_nominal"] == 1 and stats["applied"] == 0
     assert bool(meas[0]["status"]) is False
@@ -176,7 +176,7 @@ def test_bad_quality_skip_branch():
             }
         ]
     )
-    resolved = {(7, "PBEG"): (150.0, 1, "g-p", QUALITY_BAD)}
+    resolved = {(7, "PBEG"): (150.0, 1, "g-p", MeasurementQuality.BAD)}
     stats, _ = _run(meas, nodes, branches, resolved)
     assert stats["skipped_bad_quality"] == 1 and stats["applied"] == 0
     assert bool(meas[0]["status"]) is False
@@ -223,10 +223,10 @@ def test_sign_inconsistency_drops_all_four():
         ]
     )
     resolved = {
-        (7, "PBEG"): (200.0, 1, "g", QUALITY_GOOD),
-        (7, "PEND"): (150.0, 1, "g", QUALITY_GOOD),
-        (7, "QBEG"): (10.0, 1, "g", QUALITY_GOOD),
-        (7, "QEND"): (-10.0, 1, "g", QUALITY_GOOD),
+        (7, "PBEG"): (200.0, 1, "g", MeasurementQuality.GOOD),
+        (7, "PEND"): (150.0, 1, "g", MeasurementQuality.GOOD),
+        (7, "QBEG"): (10.0, 1, "g", MeasurementQuality.GOOD),
+        (7, "QEND"): (-10.0, 1, "g", MeasurementQuality.GOOD),
     }
     stats, _ = _run(meas, nodes, branches, resolved, sign_inconsistency_threshold_mw=100.0)
     assert stats["sign_inconsistent_branches"] == 1
@@ -259,8 +259,8 @@ def test_sign_consistency_keeps_meas():
         ]
     )
     resolved = {
-        (7, "PBEG"): (200.0, 1, "g", QUALITY_GOOD),
-        (7, "PEND"): (-198.0, 1, "g", QUALITY_GOOD),
+        (7, "PBEG"): (200.0, 1, "g", MeasurementQuality.GOOD),
+        (7, "PEND"): (-198.0, 1, "g", MeasurementQuality.GOOD),
     }
     stats, _ = _run(meas, nodes, branches, resolved, sign_inconsistency_threshold_mw=100.0)
     assert stats["sign_inconsistent_branches"] == 0
@@ -276,9 +276,9 @@ def test_node_inj_pg_minus_pn_net_in_new_rows():
     branches = _branches([])
     meas = _meas([{"id": 10, "object_type": OT_NODE, "object_id": 1, "measurement_type": MT_V}])
     resolved = {
-        (5, "PG"): (300.0, 1, "g-pg", QUALITY_GOOD),
-        (5, "PN"): (120.0, 1, "g-pn", QUALITY_GOOD),
-        (1, "U"): (220.0, 1, "g-v", QUALITY_GOOD),
+        (5, "PG"): (300.0, 1, "g-pg", MeasurementQuality.GOOD),
+        (5, "PN"): (120.0, 1, "g-pn", MeasurementQuality.GOOD),
+        (1, "U"): (220.0, 1, "g-v", MeasurementQuality.GOOD),
     }
     stats, new_rows = _run(meas, nodes, branches, resolved)
     assert stats["node_inj_added"] == 1
@@ -299,9 +299,9 @@ def test_node_inj_id_assignment_multiple():
     branches = _branches([])
     meas = _meas([{"id": 100, "object_type": OT_NODE, "object_id": 5, "measurement_type": MT_V}])
     resolved = {
-        (5, "PG"): (300.0, 1, "g-pg", QUALITY_GOOD),
-        (5, "QG"): (50.0, 1, "g-qg", QUALITY_GOOD),
-        (5, "U"): (220.0, 1, "g-v", QUALITY_GOOD),
+        (5, "PG"): (300.0, 1, "g-pg", MeasurementQuality.GOOD),
+        (5, "QG"): (50.0, 1, "g-qg", MeasurementQuality.GOOD),
+        (5, "U"): (220.0, 1, "g-v", MeasurementQuality.GOOD),
     }
     stats, new_rows = _run(meas, nodes, branches, resolved)
     assert stats["node_inj_added"] == 2
@@ -334,7 +334,7 @@ def test_repeated_accumulation_into_one_meas():
     # expressible. Instead the += semantics is checked directly: one
     # measurement, status already True.
     meas[0]["status"] = False
-    resolved = {(7, "PBEG"): (400.0, 1, "g", QUALITY_GOOD)}
+    resolved = {(7, "PBEG"): (400.0, 1, "g", MeasurementQuality.GOOD)}
     _run(meas, nodes, branches, resolved)
     assert float(meas[0]["value"]) == pytest.approx(400.0)
 
@@ -358,7 +358,7 @@ def test_accumulation_branch_already_active_preset():
             }
         ]
     )
-    resolved = {(7, "PBEG"): (150.0, 1, "g", QUALITY_GOOD)}
+    resolved = {(7, "PBEG"): (150.0, 1, "g", MeasurementQuality.GOOD)}
     _run(meas, nodes, branches, resolved)
     assert float(meas[0]["value"]) == pytest.approx(150.0)  # overwritten, not 999+150
 
@@ -380,7 +380,7 @@ def test_branch_off_skip():
             }
         ]
     )
-    resolved = {(7, "PBEG"): (150.0, 1, "g", QUALITY_GOOD)}
+    resolved = {(7, "PBEG"): (150.0, 1, "g", MeasurementQuality.GOOD)}
     stats, _ = _run(meas, nodes, branches, resolved)
     assert stats["skipped_branch_off"] == 1 and stats["applied"] == 0
     assert bool(meas[0]["status"]) is False
@@ -403,12 +403,12 @@ def test_questionable_variance_multiplier():
             }
         ]
     )
-    resolved = {(7, "PBEG"): (150.0, 1, "g", QUALITY_QUESTIONABLE)}
+    resolved = {(7, "PBEG"): (150.0, 1, "g", MeasurementQuality.QUESTIONABLE)}
     stats, _ = _run(meas, nodes, branches, resolved)
     assert stats["applied_questionable"] == 1 and stats["applied"] == 0
     base_var = variance_power(150.0, sigma_frac=0.02)
     assert float(meas[0]["variance"]) == pytest.approx(base_var * 100.0)
-    assert int(meas[0]["quality"]) == QUALITY_QUESTIONABLE
+    assert int(meas[0]["quality"]) == MeasurementQuality.QUESTIONABLE
 
 
 # ---------------------------------------------------------------- v_sigma2_scale_by_node
@@ -419,7 +419,7 @@ def test_v_sigma2_scale_by_node_applied():
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([])
     meas = _meas([{"id": 10, "object_type": OT_NODE, "object_id": 1, "measurement_type": MT_V}])
-    resolved = {(1, "U"): (225.0, 1, "g-v", QUALITY_GOOD)}
+    resolved = {(1, "U"): (225.0, 1, "g-v", MeasurementQuality.GOOD)}
     stats, _ = _run(meas, nodes, branches, resolved, v_sigma2_scale_by_node={1: 0.1})
     assert stats["applied"] == 1 and stats["v_sigma2_scaled"] == 1
     exp_var = variance_voltage(225.0, 220.0) * 0.1
@@ -451,8 +451,8 @@ def test_flow_sigma2_scale_by_branch_applied():
         ]
     )
     resolved = {
-        (7, "QBEG"): (30.0, 1, "g-q", QUALITY_GOOD),
-        (7, "PBEG"): (150.0, 1, "g-p", QUALITY_GOOD),
+        (7, "QBEG"): (30.0, 1, "g-q", MeasurementQuality.GOOD),
+        (7, "PBEG"): (150.0, 1, "g-p", MeasurementQuality.GOOD),
     }
     stats, _ = _run(
         meas, nodes, branches, resolved, flow_sigma2_scale_by_branch={(7, "QBEG"): 100.0}
@@ -480,8 +480,8 @@ def test_v_sigma2_scale_by_node_ignores_other_nodes_and_kinds():
         ]
     )
     resolved = {
-        (2, "U"): (225.0, 1, "g-v", QUALITY_GOOD),
-        (7, "PBEG"): (150.0, 1, "g-p", QUALITY_GOOD),
+        (2, "U"): (225.0, 1, "g-v", MeasurementQuality.GOOD),
+        (7, "PBEG"): (150.0, 1, "g-p", MeasurementQuality.GOOD),
     }
     stats, _ = _run(meas, nodes, branches, resolved, v_sigma2_scale_by_node={1: 0.1})
     assert stats["applied"] == 2 and "v_sigma2_scaled" not in stats
@@ -493,7 +493,7 @@ def test_questionable_node_inj_multiplier():
     nodes = _nodes([{"id": 5, "voltage_nominal": 220.0}])
     branches = _branches([])
     meas = _meas([])
-    resolved = {(5, "PG"): (300.0, 1, "g-pg", QUALITY_QUESTIONABLE)}
+    resolved = {(5, "PG"): (300.0, 1, "g-pg", MeasurementQuality.QUESTIONABLE)}
     stats, new_rows = _run(meas, nodes, branches, resolved)
     assert stats["node_inj_added"] == 1 and stats["applied_questionable"] == 1
     sigma = max(0.05 * 300.0, 0.5)

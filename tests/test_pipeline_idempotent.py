@@ -20,7 +20,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gridstate.pipeline import PipelineConfig, _build_working, run
+from gridstate.pipeline import PipelineConfig, run
+from gridstate.pipeline.runner import _build_working
 from gridstate.telemetry import apply_reactors_to_node_shunt
 from gridstate.working import Working
 from gridstate.z_vector import (

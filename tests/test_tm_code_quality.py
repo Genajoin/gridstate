@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from gridstate.constants import MeasurementQuality
 from gridstate.telemetry import (
-    QUALITY_BAD,
-    QUALITY_GOOD,
-    QUALITY_QUESTIONABLE,
     aggregate_qualities,
     inverse_classifier,
     passthrough_classifier,
@@ -20,73 +18,85 @@ class TestPassthroughClassifier:
     """passthrough_classifier - the "disable the filter" option: everything -> GOOD."""
 
     def test_returns_good_for_zero(self) -> None:
-        assert passthrough_classifier("0x0") == QUALITY_GOOD
+        assert passthrough_classifier("0x0") == MeasurementQuality.GOOD
 
     def test_returns_good_for_nonzero(self) -> None:
-        assert passthrough_classifier("0x70000002") == QUALITY_GOOD
+        assert passthrough_classifier("0x70000002") == MeasurementQuality.GOOD
 
     def test_returns_good_for_empty(self) -> None:
-        assert passthrough_classifier("") == QUALITY_GOOD
+        assert passthrough_classifier("") == MeasurementQuality.GOOD
 
 
 class TestStrictClassifier:
     def test_zero_is_bad(self) -> None:
-        assert strict_classifier("0x0") == QUALITY_BAD
+        assert strict_classifier("0x0") == MeasurementQuality.BAD
 
     def test_lower_bits_10_is_good(self) -> None:
         # (qCode & 3) == 2 -> reliable value
-        assert strict_classifier("0x70000002") == QUALITY_GOOD
-        assert strict_classifier("0x10000002") == QUALITY_GOOD
-        assert strict_classifier("0x80000002") == QUALITY_GOOD
+        assert strict_classifier("0x70000002") == MeasurementQuality.GOOD
+        assert strict_classifier("0x10000002") == MeasurementQuality.GOOD
+        assert strict_classifier("0x80000002") == MeasurementQuality.GOOD
 
     def test_manual_input_bit_is_still_good(self) -> None:
         # Bit 16 (0x10000) is "manual entry with blocking". It does not override
         # the base check (& 3 == 2): manual + good_bits -> GOOD.
-        assert strict_classifier("0x10002") == QUALITY_GOOD
+        assert strict_classifier("0x10002") == MeasurementQuality.GOOD
 
     def test_lower_bits_other_is_questionable(self) -> None:
         # (qCode & 3) ∈ {0, 1, 3} (but qCode != 0) -> QUESTIONABLE.
-        assert strict_classifier("0x1") == QUALITY_QUESTIONABLE  # & 3 == 1
-        assert strict_classifier("0x3") == QUALITY_QUESTIONABLE  # & 3 == 3
-        assert strict_classifier("0x10000") == QUALITY_QUESTIONABLE  # manual without good_bits
-        assert strict_classifier("0x70000000") == QUALITY_QUESTIONABLE  # & 3 == 0
+        assert strict_classifier("0x1") == MeasurementQuality.QUESTIONABLE  # & 3 == 1
+        assert strict_classifier("0x3") == MeasurementQuality.QUESTIONABLE  # & 3 == 3
+        assert (
+            strict_classifier("0x10000") == MeasurementQuality.QUESTIONABLE
+        )  # manual without good_bits
+        assert strict_classifier("0x70000000") == MeasurementQuality.QUESTIONABLE  # & 3 == 0
 
     def test_empty_or_invalid_is_bad(self) -> None:
-        assert strict_classifier("") == QUALITY_BAD
-        assert strict_classifier("garbage") == QUALITY_BAD
+        assert strict_classifier("") == MeasurementQuality.BAD
+        assert strict_classifier("garbage") == MeasurementQuality.BAD
 
 
 class TestInverseClassifier:
     def test_zero_is_good(self) -> None:
         # Empirical rule for snapshots where qCode==0 predominates.
-        assert inverse_classifier("0x0") == QUALITY_GOOD
+        assert inverse_classifier("0x0") == MeasurementQuality.GOOD
 
     def test_nonzero_is_questionable(self) -> None:
-        assert inverse_classifier("0x70000002") == QUALITY_QUESTIONABLE
-        assert inverse_classifier("0x1") == QUALITY_QUESTIONABLE
+        assert inverse_classifier("0x70000002") == MeasurementQuality.QUESTIONABLE
+        assert inverse_classifier("0x1") == MeasurementQuality.QUESTIONABLE
 
     def test_empty_is_bad(self) -> None:
-        assert inverse_classifier("") == QUALITY_BAD
+        assert inverse_classifier("") == MeasurementQuality.BAD
 
 
 class TestAggregateQualities:
     def test_all_good(self) -> None:
-        assert aggregate_qualities([QUALITY_GOOD, QUALITY_GOOD]) == QUALITY_GOOD
+        assert (
+            aggregate_qualities([MeasurementQuality.GOOD, MeasurementQuality.GOOD])
+            == MeasurementQuality.GOOD
+        )
 
     def test_one_questionable(self) -> None:
         # worst case: a single QUESTIONABLE lowers the class to QUESTIONABLE.
         assert (
-            aggregate_qualities([QUALITY_GOOD, QUALITY_GOOD, QUALITY_QUESTIONABLE])
-            == QUALITY_QUESTIONABLE
+            aggregate_qualities(
+                [MeasurementQuality.GOOD, MeasurementQuality.GOOD, MeasurementQuality.QUESTIONABLE]
+            )
+            == MeasurementQuality.QUESTIONABLE
         )
 
     def test_one_bad(self) -> None:
         # Any BAD -> BAD.
-        assert aggregate_qualities([QUALITY_GOOD, QUALITY_QUESTIONABLE, QUALITY_BAD]) == QUALITY_BAD
+        assert (
+            aggregate_qualities(
+                [MeasurementQuality.GOOD, MeasurementQuality.QUESTIONABLE, MeasurementQuality.BAD]
+            )
+            == MeasurementQuality.BAD
+        )
 
     def test_empty_list_returns_good(self) -> None:
         # No ARG -> nothing to degrade -> GOOD (default point).
-        assert aggregate_qualities([]) == QUALITY_GOOD
+        assert aggregate_qualities([]) == MeasurementQuality.GOOD
 
 
 @dataclass

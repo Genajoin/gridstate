@@ -283,24 +283,22 @@ def test_load_se_input_facade_bit_identical_without_plans():
 
 
 # ---------------------------------------------------------------------------
-# Layout: the facade lives in gridstate.runtime; the contract package and the
-# former module re-export it.
+# Layout: the facade lives in gridstate.runtime; the contract package
+# re-exports it.
 # ---------------------------------------------------------------------------
 
 
-def test_facade_reexports_keep_former_import_paths():
+def test_contract_package_reexports_the_facade():
     import gridstate.contract as contract
     import gridstate.contract.containers as containers
-    import gridstate.contract.runtime as former
     import gridstate.runtime as runtime
 
     assert contract.run is runtime.run
     assert contract.prepare_network is runtime.prepare_network
-    assert former.run is runtime.run
-    assert former.prepare_network is runtime.prepare_network
-    assert former.SEInput is SEInput is containers.SEInput
-    assert former.SEOutput is SEOutput
-    assert former.load_se_input is load_se_input
+    assert SEInput is containers.SEInput
+    assert SEOutput is containers.SEOutput
+    assert load_se_input is containers.load_se_input
+    assert gridstate.run_se is runtime.run
 
 
 def test_patching_contract_run_reaches_call_time_importers(monkeypatch):

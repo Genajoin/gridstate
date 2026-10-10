@@ -40,10 +40,9 @@ import numpy as np
 
 from gridstate._arrays import meas_mask
 from gridstate.bounds import bounds_unset, declared_box, resolve_bounds
-from gridstate.constants import FilterFlag, MeasurementObjectType
-from gridstate.telemetry._specs import _INJ_MT, _NODE_INJ_MAP
+from gridstate.constants import FilterFlag, MeasurementObjectType, MeasurementQuality
+from gridstate.telemetry.kinds import INJ_MT, NODE_INJ_MAP
 from gridstate.telemetry.noise import uniform_box_variance
-from gridstate.telemetry.quality import QUALITY_BAD
 from gridstate.working import table_copy, table_replace
 
 
@@ -61,6 +60,7 @@ __all__ = [
 ]
 
 _OT_NODE = int(MeasurementObjectType.NODE)
+_Q_BAD = int(MeasurementQuality.BAD)
 
 #: Margin, in measurement sigmas, by which a P injection reading must miss the
 #: minimum generation of a node before that minimum is dropped.
@@ -84,12 +84,12 @@ def _injection_signs(
     parts: dict[tuple[int, str], set[int]] = {}
     for obj_id, kind in arg_keys:
         base = _kind_base(kind)
-        if base not in _NODE_INJ_MAP:
+        if base not in NODE_INJ_MAP:
             continue
         value, _n_res, _guid, quality = resolved[(obj_id, kind)]
-        if value is None or quality == QUALITY_BAD:
+        if value is None or quality == _Q_BAD:
             continue
-        pq, sign = _NODE_INJ_MAP[base]
+        pq, sign = NODE_INJ_MAP[base]
         parts.setdefault((int(obj_id), pq), set()).add(sign)
     return parts
 
@@ -155,8 +155,8 @@ def release_load_only_injections(
             gen_nodes.add(int(row["id"]))
 
     targets = {
-        _INJ_MT["P"]: load_only.get("P", frozenset()) & gen_nodes,
-        _INJ_MT["Q"]: load_only.get("Q", frozenset()) & gen_nodes,
+        INJ_MT["P"]: load_only.get("P", frozenset()) & gen_nodes,
+        INJ_MT["Q"]: load_only.get("Q", frozenset()) & gen_nodes,
     }
     meas = table_copy(model.measurements)
     base = meas_mask(meas, obj=_OT_NODE, pseudo=False)
@@ -171,8 +171,8 @@ def release_load_only_injections(
         released[mt] = {int(x) for x in meas["object_id"][sel]}
     if any(released.values()):
         table_replace(model.measurements, meas)
-    nodes_p = frozenset(released[_INJ_MT["P"]])
-    nodes_q = frozenset(released[_INJ_MT["Q"]])
+    nodes_p = frozenset(released[INJ_MT["P"]])
+    nodes_q = frozenset(released[INJ_MT["Q"]])
     return {"released_p": len(nodes_p), "released_q": len(nodes_q)}, {"P": nodes_p, "Q": nodes_q}
 
 
@@ -199,7 +199,7 @@ def relax_generation_min_to_injection(
     """
     nodes = model.nodes.to_numpy()
     meas = model.measurements.to_numpy()
-    sel = meas_mask(meas, kinds=_INJ_MT["P"], obj=_OT_NODE, pseudo=False)
+    sel = meas_mask(meas, kinds=INJ_MT["P"], obj=_OT_NODE, pseudo=False)
     reading: dict[int, tuple[float, float]] = {}
     for k in np.flatnonzero(sel):
         reading.setdefault(
@@ -263,12 +263,12 @@ def widen_generation_only_injections(
                 continue
             load_box = declared_box(float(row[lo_col]), float(row[hi_col]))
             if load_box is not None:
-                box[(nid, _INJ_MT[pq])] = load_box
+                box[(nid, INJ_MT[pq])] = load_box
             elif bounds_unset(float(row[lo_col]), float(row[hi_col])):
-                unknown.add((nid, _INJ_MT[pq]))
+                unknown.add((nid, INJ_MT[pq]))
 
-    counts = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
-    released = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
+    counts = {INJ_MT["P"]: 0, INJ_MT["Q"]: 0}
+    released = {INJ_MT["P"]: 0, INJ_MT["Q"]: 0}
     if box or unknown:
         meas = table_copy(model.measurements)
         sel = meas_mask(meas, kinds=list(counts), obj=_OT_NODE, pseudo=False)
@@ -291,8 +291,8 @@ def widen_generation_only_injections(
         if any(counts.values()) or any(released.values()):
             table_replace(model.measurements, meas)
     return {
-        "widened_p": counts[_INJ_MT["P"]],
-        "widened_q": counts[_INJ_MT["Q"]],
-        "released_p": released[_INJ_MT["P"]],
-        "released_q": released[_INJ_MT["Q"]],
+        "widened_p": counts[INJ_MT["P"]],
+        "widened_q": counts[INJ_MT["Q"]],
+        "released_p": released[INJ_MT["P"]],
+        "released_q": released[INJ_MT["Q"]],
     }

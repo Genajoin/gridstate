@@ -52,8 +52,8 @@ class MeasurementType(IntEnum):
 class MeasurementQuality(IntEnum):
     """Quality class of a measurement (``quality`` contract column).
 
-    Values mirror the classifier in :mod:`gridstate.telemetry.quality`
-    (``QUALITY_GOOD/QUESTIONABLE/BAD`` are kept there as aliases).
+    The classifiers of :mod:`gridstate.telemetry.quality` return these values
+    (as plain ints).
     """
 
     GOOD = 0

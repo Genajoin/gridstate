@@ -19,9 +19,6 @@ from gridstate.telemetry.measurements import deactivate_orphan_measurements
 from gridstate.telemetry.noise import variance_branch_q, variance_power, variance_voltage
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.quality import (
-    QUALITY_BAD,
-    QUALITY_GOOD,
-    QUALITY_QUESTIONABLE,
     aggregate_qualities,
     inverse_classifier,
     passthrough_classifier,
@@ -43,9 +40,6 @@ from gridstate.telemetry.voltage_nominal import apply_voltage_nominal_resolved
 
 
 __all__ = [
-    "QUALITY_BAD",
-    "QUALITY_GOOD",
-    "QUALITY_QUESTIONABLE",
     "aggregate_generators_to_node",
     "aggregate_qualities",
     "apply_flow_sigma_floor",

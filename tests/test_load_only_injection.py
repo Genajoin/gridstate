@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import math
 
-from gridstate.constants import FilterFlag, NodeType
+from gridstate.constants import FilterFlag, MeasurementQuality, NodeType
 from gridstate.preprocessing.pseudo_measurements import add_pseudo_measurements
 from gridstate.telemetry.load_only_injection import (
     load_only_injection_nodes,
     release_load_only_injections,
 )
-from gridstate.telemetry.quality import QUALITY_BAD
 from gridstate.working import Working
 
 
@@ -40,7 +39,7 @@ def test_load_only_components_are_detected():
         d=(2, "PG_G1", 500.0, GOOD),
         e=(3, "PG", 100.0, GOOD),  # generation only -> not load-only
         f=(4, "PN", 5.0, GOOD),  # generation reported BAD -> still load-only
-        g=(4, "PG", 300.0, QUALITY_BAD),
+        g=(4, "PG", 300.0, MeasurementQuality.BAD),
         h=(5, "PN", None, GOOD),  # no value -> no component at all
     )
     out = load_only_injection_nodes(resolved, keys)

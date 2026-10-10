@@ -175,7 +175,7 @@ def estimate(
             (``"state"`` default | ``"all"``) selects the coordinates the IPM
             trust region is measured on (see ``_run_ipm``); everything else is
             forwarded to ``build_ipm_setup`` (``balance_weight_factor``,
-            ``bound_relax``, prior sigmas — the A/B-calibration knobs).
+            prior sigmas — the A/B-calibration knobs).
 
     Returns:
         ``SEResult`` with the fields ``success``, ``iterations``, ``objective_value``
@@ -223,7 +223,7 @@ def estimate(
     if algorithm == "ipm":
         # IPM mode: extend layout/state/measurements with box variables and
         # nodal balance equations. ipm_kwargs are passed on to build_ipm_setup
-        # (prior_sigma2_*, balance_weight_factor, bound_relax, ...) for A/B
+        # (prior_sigma2_*, balance_weight_factor, ...) for A/B
         # calibration runs.
         ipm_res = _run_ipm(
             model,

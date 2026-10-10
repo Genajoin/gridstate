@@ -46,9 +46,6 @@ from gridstate.constants import MeasurementQuality
 
 
 __all__ = [
-    "QUALITY_BAD",
-    "QUALITY_GOOD",
-    "QUALITY_QUESTIONABLE",
     "aggregate_qualities",
     "inverse_classifier",
     "passthrough_classifier",
@@ -57,17 +54,17 @@ __all__ = [
 ]
 
 
-# Canonical values live in gridstate.constants.MeasurementQuality; these
-# module-level ints are kept as backward-compatible aliases.
-QUALITY_GOOD = int(MeasurementQuality.GOOD)
-QUALITY_QUESTIONABLE = int(MeasurementQuality.QUESTIONABLE)
-QUALITY_BAD = int(MeasurementQuality.BAD)
+# The classes are the values of gridstate.constants.MeasurementQuality; the
+# classifiers return them as plain ints.
+_GOOD = int(MeasurementQuality.GOOD)
+_QUESTIONABLE = int(MeasurementQuality.QUESTIONABLE)
+_BAD = int(MeasurementQuality.BAD)
 
 # Class name by number, for tm_code_histogram.
 _NAMES = {
-    QUALITY_GOOD: "GOOD",
-    QUALITY_QUESTIONABLE: "QUESTIONABLE",
-    QUALITY_BAD: "BAD",
+    _GOOD: "GOOD",
+    _QUESTIONABLE: "QUESTIONABLE",
+    _BAD: "BAD",
 }
 
 
@@ -96,10 +93,10 @@ def strict_classifier(code_hex: str) -> int:
     """
     code = _parse_code(code_hex)
     if code is None or code == 0:
-        return QUALITY_BAD
+        return _BAD
     if (code & 0x3) == 2:
-        return QUALITY_GOOD
-    return QUALITY_QUESTIONABLE
+        return _GOOD
+    return _QUESTIONABLE
 
 
 def passthrough_classifier(_code_hex: str) -> int:
@@ -109,7 +106,7 @@ def passthrough_classifier(_code_hex: str) -> int:
     or for snapshots made mostly of stale points with
     ``qCode == 0``, where ``strict_classifier`` would drop most of the data.
     """
-    return QUALITY_GOOD
+    return _GOOD
 
 
 def inverse_classifier(code_hex: str) -> int:
@@ -122,10 +119,10 @@ def inverse_classifier(code_hex: str) -> int:
     """
     code = _parse_code(code_hex)
     if code is None:
-        return QUALITY_BAD
+        return _BAD
     if code == 0:
-        return QUALITY_GOOD
-    return QUALITY_QUESTIONABLE
+        return _GOOD
+    return _QUESTIONABLE
 
 
 def aggregate_qualities(qualities: list[int]) -> int:
@@ -134,7 +131,7 @@ def aggregate_qualities(qualities: list[int]) -> int:
     An empty list → GOOD (nothing to worsen).
     """
     if not qualities:
-        return QUALITY_GOOD
+        return _GOOD
     return max(qualities)
 
 

@@ -12,6 +12,7 @@ from dataclasses import dataclass, fields
 import pytest
 
 from gridstate import pipeline as P  # noqa: N812
+from gridstate.pipeline import config, passes, runner
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +109,7 @@ def test_manifest_subclass_defaults_reflected():
 def test_manifest_subclass_extra_field_with_metadata():
     @dataclass
     class Custom(P.PipelineConfig):
-        extra_knob: float = P._param(
+        extra_knob: float = config._param(
             1.5, group="Custom group", label="Extra", control="number", min=0.0, max=3.0, help="h"
         )
 
@@ -169,9 +170,9 @@ def test_production_defaults():
 
 
 def test_effective_huber_c_auto():
-    assert P._effective_huber_c(P.PipelineConfig(algorithm="wls")) == 1.5
-    assert P._effective_huber_c(P.PipelineConfig(algorithm="ipm")) == 2.0
-    assert P._effective_huber_c(P.PipelineConfig(huber_c=5.0)) == 5.0
+    assert passes._effective_huber_c(P.PipelineConfig(algorithm="wls")) == 1.5
+    assert passes._effective_huber_c(P.PipelineConfig(algorithm="ipm")) == 2.0
+    assert passes._effective_huber_c(P.PipelineConfig(huber_c=5.0)) == 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +192,7 @@ def _full_derived() -> P.DerivedInputs:
 
 
 def test_derived_consistency_ok_on_matched_config():
-    P._check_derived_consistency(P.PipelineConfig(), _full_derived())
+    runner._check_derived_consistency(P.PipelineConfig(), _full_derived())
 
 
 def test_derived_consistency_rejects_missing_topology_plan():
@@ -200,9 +201,9 @@ def test_derived_consistency_rejects_missing_topology_plan():
     d = _full_derived()
     d.topology_resolved = None
     with pytest.raises(ValueError, match="topology"):
-        P._check_derived_consistency(P.PipelineConfig(apply_topology=True), d)
+        runner._check_derived_consistency(P.PipelineConfig(apply_topology=True), d)
     # a disabled toggle makes a missing plan legal
-    P._check_derived_consistency(P.PipelineConfig(apply_topology=False), d)
+    runner._check_derived_consistency(P.PipelineConfig(apply_topology=False), d)
 
 
 def test_derived_consistency_rejects_missing_telemetry_plan():
@@ -211,7 +212,7 @@ def test_derived_consistency_rejects_missing_telemetry_plan():
     d = _full_derived()
     d.telemetry_resolved = None
     with pytest.raises(ValueError, match="telemetry"):
-        P._check_derived_consistency(P.PipelineConfig(), d)
+        runner._check_derived_consistency(P.PipelineConfig(), d)
 
 
 def test_derived_consistency_network_only_skips_telemetry():
@@ -219,4 +220,4 @@ def test_derived_consistency_network_only_skips_telemetry():
     # so its plan is not required in this mode.
     d = _full_derived()
     d.telemetry_resolved = None
-    P._check_derived_consistency(P.PipelineConfig(), d, network_only=True)
+    runner._check_derived_consistency(P.PipelineConfig(), d, network_only=True)

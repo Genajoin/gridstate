@@ -12,7 +12,6 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from gridstate.contract import SE_INPUT, SE_OUTPUT, SEInput, SEOutput, load_se_input
 from gridstate.contract import run as contract_run
@@ -219,33 +218,3 @@ def test_prepare_network_facade_validates_and_returns_a_copy() -> None:
     np.testing.assert_array_equal(se_in.model.nodes.to_numpy(), before)
     unchecked = prepare_network(se_in, validate=False)
     np.testing.assert_array_equal(unchecked.nodes.to_numpy(), net.nodes.to_numpy())
-
-
-def test_former_shunt_sanity_entry_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
-    from gridstate.contract import runtime as former
-    from gridstate.pipeline import orchestration
-
-    seen: dict = {}
-    sentinel = object()
-
-    def fake(**kwargs):  # type: ignore[no-untyped-def]
-        seen.update(kwargs)
-        return sentinel
-
-    monkeypatch.setattr(orchestration, "shunt_sanity_rerun", fake)
-    cfg = PipelineConfig()
-    out = former._shunt_sanity_rerun(
-        base_result="base",  # type: ignore[arg-type]
-        pristine="model",
-        config=cfg,
-        derived=None,
-        on_event=None,
-    )
-    assert out is sentinel
-    assert seen == {
-        "base_result": "base",
-        "model": "model",
-        "config": cfg,
-        "derived": None,
-        "on_event": None,
-    }

@@ -41,12 +41,52 @@ cut by tagging the merged main commit; the version is derived from that tag.
   `ValueError`. Invalid configs that used to fail late, or not at all, now fail
   early: `algorithm="IPM"` is rejected at construction, and negative
   `bad_data_sigma_cap` / `flow_sigma_floor_kv_frac` are rejected (#50)
-- `gridstate.pipeline` is now a package. It re-exports every name of the former
-  module (including private ones) except `estimate` and `classify_v_mirror`;
-  patch `gridstate.pipeline.passes` instead of `gridstate.pipeline` in tests (#50)
+- `gridstate.pipeline` is now a package. It exports `STEPS`, `DerivedInputs`,
+  `PipelineConfig`, `Step`, `check_step_order`, `manifest`, `prepare_network`
+  and `run`; the private helpers of the former module live in its submodules
+  (see "Removed" below). Patch `gridstate.pipeline.passes` instead of
+  `gridstate.pipeline` in tests (#50)
 - Invariants that were `assert` statements now raise `ValueError` (missing
   derived plan, naming it) or `RuntimeError` (no solution), also under
   `python -O` (#50)
+- Removed the compatibility aliases and re-exports kept during the refactoring
+  above, and one deprecated parameter (old → new):
+  - module `gridstate.contract.runtime` → `gridstate.runtime` (`run`,
+    `prepare_network`; also `gridstate.contract.run` /
+    `gridstate.contract.prepare_network`, which stay),
+    `gridstate.contract.containers` (`SEInput`, `SEOutput`, `load_se_input`)
+    and `gridstate.pipeline.orchestration.shunt_sanity_rerun` (was
+    `_shunt_sanity_rerun`; its `pristine=` argument is `model=`);
+  - `gridstate.resolve_pass.ResolveGuard` → `ResolvePass`;
+  - `gridstate.telemetry.quality.QUALITY_GOOD` / `QUALITY_QUESTIONABLE` /
+    `QUALITY_BAD` (also re-exported from `gridstate.telemetry`) and
+    `gridstate.validation.bad_data.QUALITY_BAD` →
+    `gridstate.constants.MeasurementQuality.GOOD` / `.QUESTIONABLE` / `.BAD`
+    (an `IntEnum` with the same values; the classifiers still return plain
+    ints);
+  - `gridstate.telemetry.units.variance_voltage` / `variance_power` /
+    `variance_branch_q` → `gridstate.telemetry.noise` (or the
+    `gridstate.telemetry` package); `gridstate.telemetry.units.normalize_guid`
+    stays;
+  - private module `gridstate.telemetry._specs` (`_KIND_MAP`,
+    `_NODE_INJ_MAP`, `_INJ_MT`) → the public, documented
+    `gridstate.telemetry.kinds` (`KIND_MAP`, `NODE_INJ_MAP`, `INJ_MT`, now
+    read-only mappings);
+  - the private helpers re-exported from `gridstate.pipeline` → their
+    submodules: `_param`, `_toggle` and the `_G_*` group labels →
+    `gridstate.pipeline.config`; `_Ctx` → `.context`; `_type_name` →
+    `.manifest`; the pre-solve step adapters `_s_*` → `.preparation`; the
+    solve and re-solve step adapters (`_s_estimate`, `_s_bad_data_repass`,
+    `_s_v_refine`, `_s_v_mirror`, `_s_v_mirror_chain`, `_s_refine_merged`,
+    `_s_anti_overshoot`) and `_MERGED_SKIP`, `_effective_huber_c`,
+    `_estimate_kwargs`, `_ipm_kwargs`, `_refine_two_pass`, `_warm_resolve` →
+    `.passes`; `_REQUIRED_DERIVED_PLANS`, `_build_working`,
+    `_check_derived_consistency`, `_emit`, `_execute_step`,
+    `_seed_warm_start` → `.runner`;
+  - the deprecated `bound_relax` parameter of `build_ipm_setup` (and of
+    `estimate(..., bound_relax=...)` in IPM mode, which now fails with
+    `TypeError`) is gone; it had no pipeline setting and its default `0` is
+    the only behaviour left.
 
 ### Behavior changes
 
@@ -254,9 +294,8 @@ cut by tagging the merged main commit; the version is derived from that tag.
   noise model (`telemetry/noise.py`) and shared box predicates in `bounds.py`;
   all bit-identical (#51)
 - Runtime facade `gridstate/runtime.py`; shunt-sanity orchestration in
-  `pipeline/orchestration.py`; `gridstate.contract.runtime` stays as a
-  compatibility shim. A single accepted shunt candidate reuses its trial
-  result (3 runs instead of 4) (#70)
+  `pipeline/orchestration.py`; containers in `contract/containers.py`. A single
+  accepted shunt candidate reuses its trial result (3 runs instead of 4) (#70)
 - One `ResolvePass` class (guard, lazy snapshot, apply, re-solve, settle or
   revert) for the refine family, declared once as `RefineStage`; sequential and
   merged refine share one code path (#70)

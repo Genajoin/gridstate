@@ -4,13 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from gridstate.pipeline import (
-    STEPS,
-    PipelineConfig,
-    _s_v_mirror,
-    _s_v_mirror_chain,
-    _s_v_refine,
-)
+from gridstate.pipeline import STEPS, PipelineConfig
+from gridstate.pipeline.passes import _s_v_mirror, _s_v_mirror_chain, _s_v_refine
 
 
 def test_default_off():

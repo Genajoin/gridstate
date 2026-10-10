@@ -6,7 +6,7 @@ consistent, and the defect shows up only behaviourally — the solved node V
 systematically disagrees with its V measurement, and the network "prefers"
 a different element.
 
-Mechanism (a two-pass family, see ``pipeline._refine_two_pass``, but with
+Mechanism (a two-pass family, see ``pipeline.passes._refine_two_pass``, but with
 per-candidate trial runs):
 
 1. Candidates: active shunts on nodes whose node V measurement disagrees with the

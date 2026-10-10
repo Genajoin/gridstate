@@ -21,7 +21,8 @@ import numpy as np
 import pytest
 
 from gridstate.api import estimate
-from gridstate.pipeline import PipelineConfig, _build_working, _seed_warm_start, manifest, run
+from gridstate.pipeline import PipelineConfig, manifest, run
+from gridstate.pipeline.runner import _build_working, _seed_warm_start
 from gridstate.state import InitialPoint
 
 

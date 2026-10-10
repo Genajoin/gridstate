@@ -15,8 +15,9 @@ import numpy as np
 import pytest
 
 from gridstate.api import estimate
+from gridstate.constants import MeasurementQuality
 from gridstate.units import BASE_MVA, model_to_pu
-from gridstate.validation.bad_data import QUALITY_BAD, remove_bad_data
+from gridstate.validation.bad_data import remove_bad_data
 from gridstate.validation.chi2_test import Chi2Result, chi2_analysis
 from gridstate.z_vector import (
     KIND_POWER_INJECTION_P,
@@ -322,7 +323,7 @@ def test_remove_bad_data_marks_outlier_as_bad() -> None:
     # The corresponding measurement must be BAD/inactive.
     flagged = m.measurements.get_by_id(bad_id)
     assert flagged.status is False or bool(flagged.status) is False
-    assert int(flagged.quality) == QUALITY_BAD
+    assert int(flagged.quality) == MeasurementQuality.BAD
 
 
 def test_remove_bad_data_clean_data_no_removals() -> None:

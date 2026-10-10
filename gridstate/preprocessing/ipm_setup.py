@@ -74,7 +74,6 @@ def _collect_box_sections(
     nodes_arr: np.ndarray,
     bus_id_to_pos: dict[int, int],
     *,
-    bound_relax: float,
     default_box_halfwidth_pu: float,
     prior_sigma2_normal_pu: float,
     prior_sigma2_bus_equiv_pu: float,
@@ -133,10 +132,6 @@ def _collect_box_sections(
             lo_pu -= float(default_halfwidth_pu)
             hi_pu += float(default_halfwidth_pu)
             is_default = True
-        if bound_relax > 0 and not is_default:
-            width = hi_pu - lo_pu
-            lo_pu -= bound_relax * width
-            hi_pu += bound_relax * width
         return lo_pu, hi_pu, is_default
 
     def _init_in_box(value_pu: float, bounds: tuple[float, float]) -> float:
@@ -327,7 +322,6 @@ def build_ipm_setup(
     balance_sigma2: float | None = None,
     balance_weight_factor: float = 0.1,
     boxed_balance_weight_factor: float = 0.0,
-    bound_relax: float = 0.0,
     default_box_halfwidth_pu: float = 50.0,
     prior_sigma2_normal_pu: float = 0.0,
     prior_sigma2_bus_equiv_pu: float = 0.01,
@@ -359,10 +353,6 @@ def build_ipm_setup(
             ``median(σ²_data) / boxed_balance_weight_factor`` (never looser than
             the soft one): the box already carries the node's freedom, so a
             loose balance only hides data conflicts as an imbalance. ``0`` — off.
-        bound_relax: extra margin from the strict NODE_DTYPE bounds
-            (widens [lo, hi] by ``bound_relax * (hi-lo)``). Default 0.
-            Deprecated: no pipeline setting reaches it any more; kept for
-            direct ``estimate(..., bound_relax=...)`` callers.
         default_box_halfwidth_pu: half-width (p.u.) of the default box
             ``[-hw, +hw]`` for an exist_* node with unset bounds.
             Default 50 p.u. (±5 GW/GVAr), deliberately wider than any
@@ -399,7 +389,6 @@ def build_ipm_setup(
     pgen_sec, qgen_sec, pnag_sec, qnag_sec = _collect_box_sections(
         nodes_arr,
         bus_id_to_pos,
-        bound_relax=bound_relax,
         default_box_halfwidth_pu=default_box_halfwidth_pu,
         prior_sigma2_normal_pu=prior_sigma2_normal_pu,
         prior_sigma2_bus_equiv_pu=prior_sigma2_bus_equiv_pu,

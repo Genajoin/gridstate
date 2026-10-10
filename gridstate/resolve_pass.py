@@ -19,7 +19,6 @@ This module holds the shared part of that shape:
   before the first edit (:meth:`ResolvePass.arm`), and the accept/revert
   decision (:meth:`ResolvePass.settle` with the uniform rule, or
   :meth:`ResolvePass.revert` for a pass with its own acceptance criterion).
-  ``ResolveGuard`` is its former name.
 
 Acceptance rule: a re-solve that did not converge while the solution it
 started from did is rejected — the snapshot (measurement edits and V/δ) and
@@ -218,7 +217,3 @@ class ResolvePass:
             stats["revert_reason"] = REVERT_REASON_OUT_OF_RANGE
             stats["state_violation"] = violation
         return self.base
-
-
-#: Former name of :class:`ResolvePass`.
-ResolveGuard = ResolvePass

@@ -10,7 +10,9 @@ import numpy as np
 import pytest
 
 from gridstate.constants import MeasurementObjectType, MeasurementType, NodeType
-from gridstate.pipeline import PipelineConfig, _Ctx, _s_flow_sigma_floor
+from gridstate.pipeline import PipelineConfig
+from gridstate.pipeline.context import _Ctx
+from gridstate.pipeline.preparation import _s_flow_sigma_floor
 from gridstate.telemetry import apply_flow_sigma_floor
 from gridstate.working import Working
 

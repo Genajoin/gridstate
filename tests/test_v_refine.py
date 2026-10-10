@@ -16,7 +16,9 @@ from types import SimpleNamespace
 import numpy as np
 
 from gridstate.constants import BranchType, NodeType
-from gridstate.pipeline import PipelineConfig, _Ctx, _s_v_refine, run
+from gridstate.pipeline import PipelineConfig, run
+from gridstate.pipeline.context import _Ctx
+from gridstate.pipeline.passes import _s_v_refine
 from gridstate.v_refine import (
     VRefinePlan,
     apply_v_refine_plan,
