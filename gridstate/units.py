@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.constants import NodeType
 from gridstate.utils import id_to_pos_map
 
 
@@ -133,7 +134,7 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
 
     bus_type = active_nodes["node_type"].astype(np.int8, copy=True)
 
-    slack_positions = np.where(bus_type == 2)[0]
+    slack_positions = np.where(bus_type == NodeType.SLACK)[0]
     if slack_positions.size == 0:
         raise ValueError("В Working нет slack-узла (node_type=SLACK). SE требует ровно один slack.")
     if slack_positions.size > 1:

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from gridstate._arrays import active_ids
+from gridstate.constants import MeasurementObjectType
 from gridstate.working import table_copy, table_replace
 
 
@@ -69,15 +70,15 @@ def _deactivate_orphan_on_arrays(
             continue
         ot = int(meas_arr[i]["object_type"])
         oid = int(meas_arr[i]["object_id"])
-        if ot == 0:  # NODE
+        if ot == MeasurementObjectType.NODE:
             if oid not in active_nodes:
                 meas_arr[i]["status"] = False
                 stats["node_meas"] += 1
-        elif ot == 1:  # BRANCH
+        elif ot == MeasurementObjectType.BRANCH:
             if oid not in active_branches:
                 meas_arr[i]["status"] = False
                 stats["branch_meas"] += 1
-        elif ot == 2:  # GENERATOR
+        elif ot == MeasurementObjectType.GENERATOR:
             if oid not in active_gens:
                 meas_arr[i]["status"] = False
                 stats["gen_meas"] += 1

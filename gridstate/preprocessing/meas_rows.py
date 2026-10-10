@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from gridstate.constants import MeasurementQuality
 from gridstate.z_vector import OBJ_NODE
 
 
@@ -56,7 +57,7 @@ def pseudo_node_measurement(
         "value": value,
         "variance": variance,
         "status": True,
-        "quality": 0,
+        "quality": int(MeasurementQuality.GOOD),
         "is_pseudo": True,
     }
     if branch_side is not None:

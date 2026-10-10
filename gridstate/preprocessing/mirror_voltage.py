@@ -40,10 +40,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gridstate._arrays import active_ids
+from gridstate.constants import BranchType
 from gridstate.measurement_ids import MIRROR_V_ID_BASE, IdAllocator
 from gridstate.preprocessing._scan import scan_node_voltage
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
-from gridstate.z_vector import KIND_VOLTAGE
+from gridstate.z_vector import KIND_VOLTAGE, SIDE_NONE
 
 
 if TYPE_CHECKING:
@@ -102,7 +103,7 @@ def _mirror_voltage_on_arrays(
                 KIND_VOLTAGE,
                 val,
                 var,
-                branch_side=-1,
+                branch_side=SIDE_NONE,
                 source_code="mirror_unit_tap",
             )
         )
@@ -111,7 +112,7 @@ def _mirror_voltage_on_arrays(
     for r in branches_arr:
         if not r["status"]:
             continue
-        if int(r["branch_type"]) != 1:
+        if int(r["branch_type"]) != BranchType.TRANSFORMER:
             continue
         if abs(float(r["tap_ratio"]) - 1.0) >= tap_tolerance:
             continue

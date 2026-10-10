@@ -35,6 +35,7 @@ import numpy as np
 from scipy.sparse import csr_matrix, diags
 
 from gridstate._arrays import meas_mask
+from gridstate.constants import MeasurementObjectType, MeasurementType
 from gridstate.utils import id_to_pos_map
 from gridstate.working import table_view
 
@@ -52,13 +53,13 @@ _NONFINITE_REPORTED: weakref.WeakKeyDictionary[object, set[int]] = weakref.WeakK
 
 
 # Кодировка типа измерения в ``MeasurementIndex.kind`` совпадает с
-# ``gridstate.constants.MeasurementType``.
-KIND_POWER_P = 0
-KIND_POWER_Q = 1
-KIND_VOLTAGE = 2
-KIND_CURRENT = 3
-KIND_POWER_INJECTION_P = 4
-KIND_POWER_INJECTION_Q = 5
+# ``gridstate.constants.MeasurementType`` (plain ints for hot comparison loops).
+KIND_POWER_P = int(MeasurementType.POWER_P)
+KIND_POWER_Q = int(MeasurementType.POWER_Q)
+KIND_VOLTAGE = int(MeasurementType.VOLTAGE)
+KIND_CURRENT = int(MeasurementType.CURRENT)
+KIND_POWER_INJECTION_P = int(MeasurementType.POWER_INJECTION_P)
+KIND_POWER_INJECTION_Q = int(MeasurementType.POWER_INJECTION_Q)
 
 # IPM-режим: узловой balance связывает Sbus(V, δ) с переменными
 # Pgen/Qgen/Pnag/Qnag из state-vector. ``z=0``, ``σ²=tiny`` (hard
@@ -81,10 +82,10 @@ KIND_BOX_PRIOR_QGEN = 9
 KIND_BOX_PRIOR_PNAG = 10
 KIND_BOX_PRIOR_QNAG = 11
 
-# Тип объекта измерения (соответствует ``MEASUREMENT_DTYPE.object_type``).
-OBJ_NODE = 0
-OBJ_BRANCH = 1
-OBJ_GENERATOR = 2
+# Тип объекта измерения (``gridstate.constants.MeasurementObjectType``).
+OBJ_NODE = int(MeasurementObjectType.NODE)
+OBJ_BRANCH = int(MeasurementObjectType.BRANCH)
+OBJ_GENERATOR = int(MeasurementObjectType.GENERATOR)
 
 SIDE_FROM = 0
 SIDE_TO = 1

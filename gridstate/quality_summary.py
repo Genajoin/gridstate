@@ -26,6 +26,7 @@ from scipy.sparse import csr_matrix
 from scipy.stats import chi2 as _chi2_dist
 
 from gridstate.algebra.normalized_residuals import normalized_residuals
+from gridstate.constants import MeasurementObjectType
 from gridstate.result import (
     Chi2Summary,
     ImbalanceRow,
@@ -125,9 +126,9 @@ def top_worst_residuals(
         obj_pos = int(meas_index.object_pos[pos])
         obj_id = 0
         if network_pu is not None:
-            if obj_kind == 0 and 0 <= obj_pos < network_pu.n_bus:
+            if obj_kind == MeasurementObjectType.NODE and 0 <= obj_pos < network_pu.n_bus:
                 obj_id = int(network_pu.bus_ids[obj_pos])
-            elif obj_kind == 1 and 0 <= obj_pos < network_pu.n_branch:
+            elif obj_kind == MeasurementObjectType.BRANCH and 0 <= obj_pos < network_pu.n_branch:
                 obj_id = int(network_pu.branch_ids[obj_pos])
         rows.append(
             ResidualRow(
