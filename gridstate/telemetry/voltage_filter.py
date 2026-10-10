@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from gridstate._arrays import meas_mask
 from gridstate.bounds import is_sentinel
 from gridstate.constants import (
     MeasurementObjectType,
@@ -160,11 +161,10 @@ def _voltage_range_filter_on_arrays(
     }
     by_vnom: dict[int, int] = {}
 
-    for i, m in enumerate(meas_arr):
-        if not bool(m["status"]):
-            continue
-        if int(m["object_type"]) != ot_node or int(m["measurement_type"]) != mt_v:
-            continue
+    # Only the current row is mutated in the loop, so the mask taken up front
+    # selects exactly the rows the former per-row status/type checks did.
+    for i in np.flatnonzero(meas_mask(meas_arr, kinds=mt_v, obj=ot_node)).tolist():
+        m = meas_arr[i]
         node_id = int(m["object_id"])
         ni = node_by_id.get(node_id)
         if ni is None:
@@ -363,13 +363,7 @@ def _voltage_meas_calibration_on_arrays(
     tighten = mode == "tighten"
     n_updated = 0
     n_kept = 0
-    for i in range(len(meas_arr)):
-        if not bool(meas_arr[i]["status"]):
-            continue
-        if int(meas_arr[i]["object_type"]) != ot_node:
-            continue
-        if int(meas_arr[i]["measurement_type"]) != mt_v:
-            continue
+    for i in np.flatnonzero(meas_mask(meas_arr, kinds=mt_v, obj=ot_node)).tolist():
         if int(meas_arr[i]["object_id"]) not in target_ids:
             continue
         if int(meas_arr[i]["quality"]) != int(MeasurementQuality.GOOD):

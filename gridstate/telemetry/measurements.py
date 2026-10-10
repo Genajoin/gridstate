@@ -7,12 +7,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
+from gridstate._arrays import active_ids
 from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from gridstate.working import Working
 
 
@@ -58,9 +59,9 @@ def _deactivate_orphan_on_arrays(
     каждой active-меры с неактивным/отсутствующим объектом ставит ``status=False``.
     Mutates ``meas_arr`` in place; no external dependencies.
     """
-    active_branches = {int(b["id"]) for b in branches_arr if b["status"]}
-    active_nodes = {int(n["id"]) for n in nodes_arr if n["status"]}
-    active_gens = {int(g["id"]) for g in gens_arr if g["status"]}
+    active_branches = active_ids(branches_arr)
+    active_nodes = active_ids(nodes_arr)
+    active_gens = active_ids(gens_arr)
 
     stats = {"branch_meas": 0, "node_meas": 0, "gen_meas": 0, "orphan_object_id": 0}
     for i in range(len(meas_arr)):

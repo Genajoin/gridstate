@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gridstate._arrays import active_ids
 from gridstate.preprocessing._scan import scan_node_voltage
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.z_vector import KIND_VOLTAGE
@@ -77,7 +78,7 @@ def _mirror_voltage_on_arrays(
     all_v_by_node, real_v_by_node = scan_node_voltage(meas_arr)
     any_v_by_node: set[int] = set(all_v_by_node)
 
-    active_node_ids = {int(r["id"]) for r in nodes_arr if r["status"]}
+    active_node_ids = active_ids(nodes_arr)
 
     # Свободный id: скан множества существующих id (== live-коллекция на момент
     # снятия meas_arr) + инкремент-only внутри прохода. Дословно повторяет

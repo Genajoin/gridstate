@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate._arrays import meas_mask
 from gridstate.bounds import resolve_bounds
 from gridstate.constants import FilterFlag
 from gridstate.telemetry._specs import _INJ_MT, _NODE_INJ_MAP
@@ -156,9 +157,7 @@ def release_load_only_injections(
         _INJ_MT["Q"]: load_only.get("Q", frozenset()) & gen_nodes,
     }
     meas = table_copy(model.measurements)
-    base = (
-        meas["status"].astype(bool) & ~meas["is_pseudo"].astype(bool) & (meas["object_type"] == 0)
-    )
+    base = meas_mask(meas, obj=0, pseudo=False)
     released: dict[int, set[int]] = {}
     for mt, node_set in targets.items():
         if not node_set:
@@ -198,12 +197,7 @@ def relax_generation_min_to_injection(
     """
     nodes = model.nodes.to_numpy()
     meas = model.measurements.to_numpy()
-    sel = (
-        meas["status"].astype(bool)
-        & ~meas["is_pseudo"].astype(bool)
-        & (meas["object_type"] == 0)
-        & (meas["measurement_type"] == _INJ_MT["P"])
-    )
+    sel = meas_mask(meas, kinds=_INJ_MT["P"], obj=0, pseudo=False)
     reading: dict[int, tuple[float, float]] = {}
     for k in np.flatnonzero(sel):
         reading.setdefault(
@@ -272,12 +266,7 @@ def widen_generation_only_injections(
     released = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
     if box or unknown:
         meas = table_copy(model.measurements)
-        sel = (
-            meas["status"].astype(bool)
-            & ~meas["is_pseudo"].astype(bool)
-            & (meas["object_type"] == 0)
-            & np.isin(meas["measurement_type"], list(counts))
-        )
+        sel = meas_mask(meas, kinds=list(counts), obj=0, pseudo=False)
         for k in np.flatnonzero(sel):
             mt = int(meas["measurement_type"][k])
             key = (int(meas["object_id"][k]), mt)

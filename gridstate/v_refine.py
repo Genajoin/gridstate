@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate._arrays import meas_mask
 from gridstate.working import table_copy, table_replace
 from gridstate.z_vector import KIND_VOLTAGE
 
@@ -67,12 +68,8 @@ def classify_v_refine(measurements: np.ndarray, *, rn_threshold: float) -> VRefi
     Returns:
         :class:`VRefinePlan` (может быть ``empty`` — тогда re-solve не нужен).
     """
-    sel: np.ndarray = (
-        measurements["status"].astype(bool)
-        & ~measurements["is_pseudo"].astype(bool)
-        & (measurements["measurement_type"] == KIND_VOLTAGE)
-        & np.isfinite(measurements["estimated_si"])
-    )
+    # Any object type: V readings are not restricted to NODE objects here.
+    sel = meas_mask(measurements, kinds=KIND_VOLTAGE, pseudo=False, finite_estimate=True)
     z = measurements["value"][sel]
     h = measurements["estimated_si"][sel]
     sig = np.sqrt(measurements["variance"][sel])

@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate._arrays import active_adjacency, active_ids, id_value_map, meas_mask
 from gridstate.constants import BranchType
 from gridstate.utils import branch_endpoints_map
 from gridstate.working import table_copy, table_replace
@@ -73,10 +74,35 @@ class VMirrorPlan:
         return not self.new_values
 
 
+def _node_maps(nodes: np.ndarray) -> tuple[dict[int, float], dict[int, float], set[int]]:
+    """``(vn_map, vse_map, active)``: nominal and solved V by node id, active node ids."""
+    return (
+        id_value_map(nodes, "voltage_nominal"),
+        id_value_map(nodes, "voltage_magnitude"),
+        active_ids(nodes),
+    )
+
+
+def _flat_pseudo_v(measurements: np.ndarray, vn_map: dict[int, float]) -> dict[int, float]:
+    """Nodes whose active pseudo-V is a nominal placeholder -> their ``Vnom``.
+
+    A placeholder is ``|value − Vnom| < _FLAT_REL_TOL · Vnom`` on a node with
+    ``Vnom > 0``.
+    """
+    psv_flat: dict[int, float] = {}
+    sel_ps = meas_mask(measurements, kinds=KIND_VOLTAGE, obj=OBJ_NODE, pseudo=True)
+    for j in np.where(sel_ps)[0]:
+        nid = int(measurements["object_id"][j])
+        vnom = vn_map.get(nid, 0.0)
+        if vnom > 0 and abs(float(measurements["value"][j]) - vnom) < _FLAT_REL_TOL * vnom:
+            psv_flat[nid] = vnom
+    return psv_flat
+
+
 def _measured_nodes(measurements: np.ndarray, branches: np.ndarray) -> set[int]:
     """Узлы, накрытые real-TM (узловой мерой или стороной branch-меры)."""
     b2n = branch_endpoints_map(branches)
-    sel_real = measurements["status"].astype(bool) & ~measurements["is_pseudo"].astype(bool)
+    sel_real = meas_mask(measurements, pseudo=False)
     measured: set[int] = set()
     for j in np.where(sel_real)[0]:
         ot = int(measurements["object_type"][j])
@@ -113,52 +139,24 @@ def classify_v_mirror(
     Returns:
         :class:`VMirrorPlan` (может быть ``empty``).
     """
-    vn_map = {int(i): float(v) for i, v in zip(nodes["id"], nodes["voltage_nominal"], strict=True)}
-    vse_map = {
-        int(i): float(v) for i, v in zip(nodes["id"], nodes["voltage_magnitude"], strict=True)
-    }
-    active = {int(i) for i, st in zip(nodes["id"], nodes["status"], strict=True) if st}
+    vn_map, vse_map, active = _node_maps(nodes)
 
-    adj: dict[int, set[int]] = defaultdict(set)
-    for f, t, st in zip(
-        branches["from_node"], branches["to_node"], branches["status"], strict=True
-    ):
-        if st:
-            fi, ti = int(f), int(t)
-            adj[fi].add(ti)
-            adj[ti].add(fi)
+    adj = active_adjacency(branches)
 
     # Cross-AT (Q2, gated): adjacency только по активным трансформаторам
     # (branch_type==1, tap>0) — для фолбэка слепых кластеров без границы того
     # же класса (граница лишь за АТ). pu-инвариант к идеальному tap.
-    trafo_adj: dict[int, set[int]] = defaultdict(set)
+    trafo_adj: defaultdict[int, set[int]] = defaultdict(set)
     if cross_at:
-        for f, t, st, bt, tap in zip(
-            branches["from_node"],
-            branches["to_node"],
-            branches["status"],
-            branches["branch_type"],
-            branches["tap_ratio"],
-            strict=True,
-        ):
-            if st and int(bt) == BranchType.TRANSFORMER and float(tap) > 0:
-                fi, ti = int(f), int(t)
-                trafo_adj[fi].add(ti)
-                trafo_adj[ti].add(fi)
+        trafo_adj = active_adjacency(
+            branches,
+            branches["status"].astype(bool)
+            & (branches["branch_type"] == BranchType.TRANSFORMER)
+            & (branches["tap_ratio"] > 0),
+        )
 
     # pseudo-V-плейсхолдеры (value == Vnom) по узлам
-    psv_flat: dict[int, float] = {}
-    sel_ps = (
-        measurements["status"].astype(bool)
-        & measurements["is_pseudo"].astype(bool)
-        & (measurements["measurement_type"] == KIND_VOLTAGE)
-        & (measurements["object_type"] == OBJ_NODE)
-    )
-    for j in np.where(sel_ps)[0]:
-        nid = int(measurements["object_id"][j])
-        vnom = vn_map.get(nid, 0.0)
-        if vnom > 0 and abs(float(measurements["value"][j]) - vnom) < _FLAT_REL_TOL * vnom:
-            psv_flat[nid] = vnom
+    psv_flat = _flat_pseudo_v(measurements, vn_map)
 
     unmeas = active - _measured_nodes(measurements, branches)
 
@@ -254,11 +252,7 @@ def classify_chain_mirror(
     lift-гейт ``pu_target − pu_узла > min_lift`` (двигаем лишь систематически
     провисшие узлы). σ приоров не трогается.
     """
-    vn_map = {int(i): float(v) for i, v in zip(nodes["id"], nodes["voltage_nominal"], strict=True)}
-    vse_map = {
-        int(i): float(v) for i, v in zip(nodes["id"], nodes["voltage_magnitude"], strict=True)
-    }
-    active = {int(i) for i, st in zip(nodes["id"], nodes["status"], strict=True) if st}
+    vn_map, vse_map, active = _node_maps(nodes)
 
     # рёбра распространения pu: тот же класс всегда; через активный АТ ≥110 кВ
     # обеих сторон — только при cross_at (pu-инвариант к идеальному tap)
@@ -290,12 +284,7 @@ def classify_chain_mirror(
             adj[ti].add(fi)
 
     # источники: живые real node-V-меры с правдоподобным решённым pu
-    sel_src = (
-        measurements["status"].astype(bool)
-        & ~measurements["is_pseudo"].astype(bool)
-        & (measurements["measurement_type"] == KIND_VOLTAGE)
-        & (measurements["object_type"] == OBJ_NODE)
-    )
+    sel_src = meas_mask(measurements, kinds=KIND_VOLTAGE, obj=OBJ_NODE, pseudo=False)
     level: dict[int, float] = {}
     for j in np.where(sel_src)[0]:
         nid = int(measurements["object_id"][j])
@@ -308,18 +297,7 @@ def classify_chain_mirror(
             level[nid] = pu
 
     # флэт-плейсхолдеры pseudo-V (кандидаты в цели)
-    psv_flat: set[int] = set()
-    sel_ps = (
-        measurements["status"].astype(bool)
-        & measurements["is_pseudo"].astype(bool)
-        & (measurements["measurement_type"] == KIND_VOLTAGE)
-        & (measurements["object_type"] == OBJ_NODE)
-    )
-    for j in np.where(sel_ps)[0]:
-        nid = int(measurements["object_id"][j])
-        vnom = vn_map.get(nid, 0.0)
-        if vnom > 0 and abs(float(measurements["value"][j]) - vnom) < _FLAT_REL_TOL * vnom:
-            psv_flat.add(nid)
+    psv_flat = _flat_pseudo_v(measurements, vn_map)
 
     # level-synchronous multi-source BFS: узел получает median pu первого фронта
     dist: dict[int, int] = dict.fromkeys(level, 0)
@@ -357,11 +335,9 @@ def apply_v_mirror_plan(model: Working, plan: VMirrorPlan) -> dict:
         return {"clusters": 0, "nodes": 0}
     new_by_node = dict(plan.new_values)
     m = table_copy(model.measurements)
-    sel = (
-        (m["measurement_type"] == KIND_VOLTAGE)
-        & (m["object_type"] == OBJ_NODE)
-        & m["is_pseudo"].astype(bool)
-        & np.isin(m["object_id"], list(new_by_node))
+    # Inactive pseudo-V rows are retargeted too (no status filter).
+    sel = meas_mask(m, kinds=KIND_VOLTAGE, obj=OBJ_NODE, active=False, pseudo=True) & np.isin(
+        m["object_id"], list(new_by_node)
     )
     n = 0
     for j in np.where(sel)[0]:

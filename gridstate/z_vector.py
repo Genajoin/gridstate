@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 from scipy.sparse import csr_matrix, diags
 
-from gridstate.constants import MeasurementQuality
+from gridstate._arrays import meas_mask
 from gridstate.utils import id_to_pos_map
 from gridstate.working import table_view
 
@@ -146,9 +146,7 @@ def build_z_and_r(
     value = arr["value"].astype(np.float64)
     variance = arr["variance"].astype(np.float64)
 
-    keep = arr["status"].astype(bool) & (
-        arr["quality"].astype(np.int64) != int(MeasurementQuality.BAD)
-    )
+    keep = meas_mask(arr, exclude_bad=True)
     nonfinite = keep & ~(np.isfinite(value) & np.isfinite(variance))
     if nonfinite.any():
         _warn_nonfinite(measurements, ids[nonfinite], value[nonfinite], variance[nonfinite])

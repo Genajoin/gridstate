@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate._arrays import id_value_map, meas_mask
 from gridstate.z_vector import KIND_VOLTAGE, OBJ_NODE
 
 
@@ -57,11 +58,7 @@ class ShuntSanityPlan:
 
 def sum_rn2(measurements: np.ndarray) -> float:
     """Σ((z−h)²/σ²) по живым real-мерам — скаляр согласия решения с мерами."""
-    sel = (
-        measurements["status"].astype(bool)
-        & ~measurements["is_pseudo"].astype(bool)
-        & np.isfinite(measurements["estimated_si"])
-    )
+    sel = meas_mask(measurements, pseudo=False, finite_estimate=True)
     z = measurements["value"][sel]
     h = measurements["estimated_si"][sel]
     var = np.maximum(measurements["variance"][sel], 1e-12)
@@ -84,16 +81,13 @@ def classify_shunt_candidates(
     Возвращает не более ``max_candidates`` узлов (по убыванию невязки) —
     каждый кандидат стоит до двух warm re-solve.
     """
-    vn = {int(i): float(v) for i, v in zip(nodes["id"], nodes["voltage_nominal"], strict=True)}
-    vh = {int(i): float(v) for i, v in zip(nodes["id"], nodes["voltage_magnitude"], strict=True)}
+    vn = id_value_map(nodes, "voltage_nominal")
+    vh = id_value_map(nodes, "voltage_magnitude")
     shunt_nodes = {
         int(n) for n, st in zip(shunts["node_id"], shunts["status"], strict=True) if bool(st)
     }
-    selv = (
-        ~measurements["is_pseudo"].astype(bool)
-        & (measurements["measurement_type"] == KIND_VOLTAGE)
-        & (measurements["object_type"] == OBJ_NODE)
-    )
+    # No status filter: an inactive real V reading still nominates its node.
+    selv = meas_mask(measurements, kinds=KIND_VOLTAGE, obj=OBJ_NODE, active=False, pseudo=False)
     worst: dict[int, float] = {}
     for j in np.where(selv)[0]:
         nid = int(measurements["object_id"][j])

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from gridstate._arrays import meas_mask
 from gridstate.z_vector import KIND_VOLTAGE, OBJ_NODE
 
 
@@ -37,19 +38,15 @@ def scan_node_meas_by_kind(
     once via ``dtype.names``; absent, every row counts as real).
     """
     out: dict[int, set[int]] = {k: set() for k in kinds}
-    names = meas_arr.dtype.names
-    has_pseudo = names is not None and "is_pseudo" in names
-    for r in meas_arr:
-        if not r["status"]:
-            continue
-        if int(r["object_type"]) != OBJ_NODE:
-            continue
-        if real_only and has_pseudo and bool(r["is_pseudo"]):
-            continue
-        kind = int(r["measurement_type"])
-        bucket = out.get(kind)
+    sel = meas_mask(
+        meas_arr, obj=OBJ_NODE, pseudo=False if real_only else None, missing_pseudo="real"
+    )
+    for kind, oid in zip(
+        meas_arr["measurement_type"][sel].tolist(), meas_arr["object_id"][sel].tolist(), strict=True
+    ):
+        bucket = out.get(int(kind))
         if bucket is not None:
-            bucket.add(int(r["object_id"]))
+            bucket.add(int(oid))
     return out
 
 
@@ -65,18 +62,18 @@ def scan_node_voltage(
     """
     all_v: dict[int, tuple[float, float]] = {}
     real_v: dict[int, tuple[float, float]] = {}
-    names = meas_arr.dtype.names
-    has_pseudo = names is not None and "is_pseudo" in names
-    for r in meas_arr:
-        if not r["status"]:
-            continue
-        if int(r["object_type"]) != OBJ_NODE:
-            continue
-        if int(r["measurement_type"]) != KIND_VOLTAGE:
-            continue
-        nid = int(r["object_id"])
-        vv = (float(r["value"]), float(r["variance"]))
+    sel = meas_mask(meas_arr, kinds=KIND_VOLTAGE, obj=OBJ_NODE)
+    pseudo = meas_mask(meas_arr, active=False, pseudo=True, missing_pseudo="real")[sel]
+    for oid, value, variance, is_pseudo in zip(
+        meas_arr["object_id"][sel].tolist(),
+        meas_arr["value"][sel].tolist(),
+        meas_arr["variance"][sel].tolist(),
+        pseudo.tolist(),
+        strict=True,
+    ):
+        nid = int(oid)
+        vv = (float(value), float(variance))
         all_v[nid] = vv
-        if not (has_pseudo and bool(r["is_pseudo"])):
+        if not is_pseudo:
             real_v[nid] = vv
     return all_v, real_v

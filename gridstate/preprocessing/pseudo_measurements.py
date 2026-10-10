@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate._arrays import meas_mask
 from gridstate.bounds import resolve_bounds
 from gridstate.constants import NodeType
 from gridstate.preprocessing._scan import scan_node_meas_by_kind
@@ -145,24 +146,15 @@ def _unknown_load_determined_nodes(
     * Q: every active incident branch carries a real Q flow measurement or
       real V measurements at both ends.
     """
-    names = meas_arr.dtype.names or ()
-    real = meas_arr["status"].astype(bool)
-    if "is_pseudo" in names:
-        real &= ~meas_arr["is_pseudo"].astype(bool)
-    on_branch = real & (meas_arr["object_type"] == OBJ_BRANCH)
-    flow_p = set(
-        meas_arr["object_id"][on_branch & (meas_arr["measurement_type"] == KIND_POWER_P)].tolist()
-    )
-    flow_q = set(
-        meas_arr["object_id"][on_branch & (meas_arr["measurement_type"] == KIND_POWER_Q)].tolist()
-    )
-    real_v = set(
-        meas_arr["object_id"][
-            real
-            & (meas_arr["object_type"] == OBJ_NODE)
-            & (meas_arr["measurement_type"] == KIND_VOLTAGE)
-        ].tolist()
-    )
+
+    # A missing ``is_pseudo`` column means every row is real.
+    def _real(kind: int, obj: int) -> set[int]:
+        sel = meas_mask(meas_arr, kinds=kind, obj=obj, pseudo=False, missing_pseudo="real")
+        return set(meas_arr["object_id"][sel].tolist())
+
+    flow_p = _real(KIND_POWER_P, OBJ_BRANCH)
+    flow_q = _real(KIND_POWER_Q, OBJ_BRANCH)
+    real_v = _real(KIND_VOLTAGE, OBJ_NODE)
 
     incident: dict[int, list[int]] = {}
     covered_q = set(flow_q)

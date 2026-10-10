@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from gridstate._arrays import meas_mask
 from gridstate.algebra.base import (
     KIND_CURRENT,
     KIND_POWER_INJECTION_P,
@@ -753,12 +754,10 @@ def refine_anti_overshoot(
 
     me = snapshot.measurements
     real_v: set[int] = {
-        int(me["object_id"][i])
-        for i in range(len(me))
-        if bool(me["status"][i])
-        and not bool(me["is_pseudo"][i])
-        and int(me["object_type"][i]) == OBJ_NODE
-        and int(me["measurement_type"][i]) == KIND_VOLTAGE
+        int(x)
+        for x in me["object_id"][
+            meas_mask(me, kinds=KIND_VOLTAGE, obj=OBJ_NODE, pseudo=False)
+        ].tolist()
     }
 
     tightened: set[int] = set()

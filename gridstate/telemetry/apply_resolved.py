@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate._arrays import id_value_map
 from gridstate.constants import FilterFlag
 from gridstate.telemetry._filters import build_measurement_index
 from gridstate.telemetry._specs import _INJ_MT, _KIND_MAP, _NODE_INJ_MAP
@@ -485,16 +486,12 @@ def _apply_telemetry_on_arrays(
     meas_idx = build_measurement_index(meas_arr)
 
     # node_id → voltage_nominal для расчёта sigma_V.
-    vn_by_node: dict[int, float] = {
-        int(i): float(v) for i, v in zip(nodes_arr["id"], nodes_arr["voltage_nominal"], strict=True)
-    }
+    vn_by_node: dict[int, float] = id_value_map(nodes_arr, "voltage_nominal")
     # branch_id → status. Меру нельзя ставить на отключённую ветвь:
     # WLS получит residual P/Q≠0 на ветви где Y-bus её зануляет —
     # iter будет компенсировать через V/δ соседних узлов и портит
     # решение. Проверяется при активации branch-meas (ot=1).
-    branch_status_by_id: dict[int, bool] = {
-        int(i): bool(s) for i, s in zip(branches_arr["id"], branches_arr["status"], strict=True)
-    }
+    branch_status_by_id: dict[int, bool] = id_value_map(branches_arr, "status", bool)
 
     # Сначала отключим ВСЕ measurements (на входе они приходят со status=True
     # по умолчанию). После apply сделаем status=True только для тех, что
@@ -525,14 +522,8 @@ def _apply_telemetry_on_arrays(
         int(bid): vn_by_node.get(int(fn), 0.0)
         for bid, fn in zip(branches_arr["id"], branches_arr["from_node"], strict=True)
     }
-    branch_b: dict[int, float] = {
-        int(bid): float(b)
-        for bid, b in zip(branches_arr["id"], branches_arr["susceptance"], strict=True)
-    }
-    branch_x: dict[int, float] = {
-        int(bid): float(x)
-        for bid, x in zip(branches_arr["id"], branches_arr["reactance"], strict=True)
-    }
+    branch_b: dict[int, float] = id_value_map(branches_arr, "susceptance")
+    branch_x: dict[int, float] = id_value_map(branches_arr, "reactance")
 
     inconsistent_branches = _detect_sign_inconsistent_branches(
         arg_keys, resolved, config.sign_inconsistency_threshold_mw
