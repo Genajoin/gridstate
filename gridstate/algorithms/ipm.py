@@ -43,7 +43,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.sparse import csr_matrix, diags
+from scipy.sparse import csr_matrix
 
 from gridstate.algebra.estimators import HuberReweighter
 from gridstate.algorithms.kkt_solver import KKTSolver
@@ -420,12 +420,13 @@ def solve_ipm(
                 inner_converged = True
                 break
 
-            G = (HtRinv @ H).tocsc()
-            if has_box:
-                G = G + diags(hess_b, format="csc")
-
+            # G = HᵀR⁻¹H (+ diag(∂²B/∂x²)) is assembled by the solver: on the
+            # fixed Jacobian pattern when it can (numba), otherwise as
+            # (HtRinv @ H).tocsc() + diags(hess_b) with scipy.
             try:
-                dx = solver.solve(G, -grad)
+                dx = solver.solve_normal(
+                    H, r_inv_diag, -grad, diag=hess_b if has_box else None, HtW=HtRinv
+                )
             except Exception as exc:
                 logger.warning("ipm: kkt solve fail outer=%d inner=%d: %s", outer_iter, inner, exc)
                 return _error_result(

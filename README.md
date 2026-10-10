@@ -49,6 +49,19 @@ pip install -e ".[dev]"
 
 Runtime dependencies are just `numpy>=1.24` and `scipy>=1.10`. Python 3.10+.
 
+Optional extras speed up large models without changing any result bit:
+
+- `fast` (cvxopt): CHOLMOD Newton solves with symbolic factorization reuse;
+  without it the solver falls back to `scipy.sparse.linalg.spsolve`.
+- `numba` (with `fast`): IPM assembles `HᵀR⁻¹H` with a numba kernel on the
+  fixed Jacobian pattern instead of scipy sparse products. The kernel is
+  compiled on first use in a process (about 0.5 s) and cached on disk next to
+  the package, or in numba's user cache when that is not writable; point
+  `NUMBA_CACHE_DIR` at a writable directory to control the location (e.g. a
+  read-only container image). Long-running services can warm it up with
+  `gridstate.algorithms.kkt_solver.numba_gram_available()`.
+  `GRIDSTATE_NUMBA=0` switches the numba path off.
+
 ## Quick start
 
 The public boundary is a `.npz` data-contract file. Load it, run the
