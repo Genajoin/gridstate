@@ -31,6 +31,7 @@ from scipy.sparse import csr_matrix
 from scipy.stats import chi2 as _chi2_dist
 
 from gridstate.algebra.normalized_residuals import (
+    SELINV_REFINE_BELOW,
     NormalizedResiduals,
     compute_normalized_residuals,
 )
@@ -103,6 +104,7 @@ def top_worst_residuals(
     scope: str = "real",
     rn_method: str = "solve",
     normalized: NormalizedResiduals | None = None,
+    rn_refine_below: float = SELINV_REFINE_BELOW,
 ) -> list[ResidualRow]:
     """Top-``n`` measurements by ``|r_N|`` (default 10).
 
@@ -129,7 +131,9 @@ def top_worst_residuals(
             ``"selected_inversion"``, see
             :mod:`gridstate.algebra.normalized_residuals`).
         normalized: precomputed normalized residuals of the same ``scope``
-            (``rn_method`` is then ignored).
+            (``rn_method`` and ``rn_refine_below`` are then ignored).
+        rn_refine_below: ``"selected_inversion"`` refinement threshold (see
+            :func:`gridstate.algebra.normalized_residuals.normalized_residuals`).
     """
     if r.size == 0:
         return []
@@ -138,7 +142,7 @@ def top_worst_residuals(
         return []
     if normalized is None:
         normalized = compute_normalized_residuals(
-            r, H, sigma2, rows_mask=rows_mask, method=rn_method
+            r, H, sigma2, rows_mask=rows_mask, method=rn_method, refine_below=rn_refine_below
         )
     rn = normalized.rn
     finite_mask = np.isfinite(rn)

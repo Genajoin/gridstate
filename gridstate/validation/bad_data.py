@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
-from gridstate.algebra.normalized_residuals import normalized_residuals
+from gridstate.algebra.normalized_residuals import SELINV_REFINE_BELOW, normalized_residuals
 from gridstate.api import estimate
 from gridstate.constants import MeasurementQuality
 from gridstate.result import SEResult
@@ -113,6 +113,7 @@ def compute_normalized_residuals_report(
     top_n: int = 5,
     rn_threshold: float = 3.0,
     rn_method: str = "solve",
+    rn_refine_below: float = SELINV_REFINE_BELOW,
 ) -> NormalizedResidualReport:
     """Build a report on the normalized residuals after SE.
 
@@ -129,6 +130,8 @@ def compute_normalized_residuals_report(
         rn_method: method of ``diag(H G⁻¹ Hᵀ)`` (``"solve"`` |
             ``"selected_inversion"``, see
             :mod:`gridstate.algebra.normalized_residuals`).
+        rn_refine_below: ``"selected_inversion"`` refinement threshold (see
+            :func:`gridstate.algebra.normalized_residuals.normalized_residuals`).
 
     Returns:
         ``NormalizedResidualReport``. ``inf`` values are excluded from the top.
@@ -146,7 +149,7 @@ def compute_normalized_residuals_report(
             n_above_threshold=0,
             rn_max_finite=0.0,
         )
-    rn = _normalized_residuals(diag, method=rn_method)
+    rn = _normalized_residuals(diag, method=rn_method, refine_below=rn_refine_below)
     meas_ids = np.asarray(diag.meas_index.meas_id, dtype=np.int64)
     finite_mask = np.isfinite(rn)
     n_above = int(np.sum((rn > rn_threshold) & finite_mask))
@@ -209,7 +212,9 @@ class BadDataResult:
     critical_meas_ids: list[int] = field(default_factory=list)
 
 
-def _normalized_residuals(diag: Diagnostics, *, method: str = "solve") -> np.ndarray:
+def _normalized_residuals(
+    diag: Diagnostics, *, method: str = "solve", refine_below: float = SELINV_REFINE_BELOW
+) -> np.ndarray:
     """``r^N = |r| / √(diag(Ω))``, where ``Ω = R − H G⁻¹ Hᵀ``.
 
     If ``Ω_ii`` is numerically zero or negative (poor conditioning of
@@ -220,7 +225,9 @@ def _normalized_residuals(diag: Diagnostics, *, method: str = "solve") -> np.nda
     :func:`gridstate.algebra.normalized_residuals.normalized_residuals`
     (also used by the quality summary): no ``m × m`` matrix is formed.
     """
-    return normalized_residuals(diag.r, diag.H, diag.sigma2, method=method)
+    return normalized_residuals(
+        diag.r, diag.H, diag.sigma2, method=method, refine_below=refine_below
+    )
 
 
 def remove_bad_data(

@@ -7,22 +7,42 @@ is computed by one of two methods:
 * ``"solve"`` (default): triangular solves with every row of ``H`` — sparse
   CHOLMOD with sparse right-hand sides; without cvxopt, a dense Cholesky factor
   of ``G`` and a blocked triangular solve.
-* ``"selected_inversion"``: the entries of ``G⁻¹`` on the pattern of the
-  sparse Cholesky factor ``L`` (Takahashi recurrence), then one quadratic form
-  per row of ``H``. Every pair of states coupled by a row of ``H`` is an entry
-  of ``G`` and so lies in the filled pattern of ``L``; no per-row solve is
-  needed. ``L`` is the CHOLMOD factor (the same symbolic and numeric
-  factorization as ``"solve"``); without cvxopt it is assembled from a scipy
-  SuperLU factorization with a symmetric ordering and diagonal pivots
-  (``G = L D Lᵀ``). The kernels need numba (the optional ``numba`` extra);
-  without numba, with ``GRIDSTATE_NUMBA=0`` or when no usable factor is
-  available, ``"solve"`` is used.
+* ``"selected_inversion"``: a hybrid. First the entries of ``G⁻¹`` on the
+  pattern of the sparse Cholesky factor ``L`` (Takahashi recurrence), then one
+  quadratic form per row of ``H``. Every pair of states coupled by a row of
+  ``H`` is an entry of ``G`` and so lies in the filled pattern of ``L``; no
+  per-row solve is needed. ``L`` is the CHOLMOD factor (the same symbolic and
+  numeric factorization as ``"solve"``); without cvxopt it is assembled from a
+  scipy SuperLU factorization with a symmetric ordering and diagonal pivots
+  (``G = L D Lᵀ``). Then the rows whose ratio ``Ω_ii / σ²_i`` from the selected
+  inverse is below ``refine_below`` (:data:`SELINV_REFINE_BELOW` by default),
+  and the rows whose ``Ω_ii`` is at or below the critical cut-off
+  (:data:`OMEGA_CUTOFF`), are recomputed by the ``"solve"`` path: per-row
+  solves on a CHOLMOD factorization identical to the first one (extracting the
+  factor consumes it, so ``G`` is factorized once more when any row needs a
+  solve), or the dense fallback of ``"solve"`` without cvxopt. The kernels need numba (the optional ``numba`` extra); without
+  numba, with ``GRIDSTATE_NUMBA=0`` or when no usable factor is available,
+  ``"solve"`` is used for every row.
 
-The two methods agree to rounding on ordinary measurements. Where ``Ω_ii`` is
-a small difference of two nearly equal numbers (``σ²_i ≈ (H G⁻¹ Hᵀ)_ii``, a
-nearly critical measurement), the cancellation amplifies the rounding of either
-method by ``σ²_i / Ω_ii``; :func:`compute_normalized_residuals` reports the
-ratio ``Ω_ii / σ²_i`` so that callers can tell such measurements apart.
+The selected inverse is less accurate than the per-row solves on an
+ill-conditioned ``G``: the recurrence propagates the rounding through every
+entry of ``G⁻¹`` on the factor pattern, and on a gain with a condition number
+of ~1e14 it loses 1.5–2 more digits of ``(H G⁻¹ Hᵀ)_ii``. Where ``Ω_ii`` is a
+small difference of two nearly equal numbers (``σ²_i ≈ (H G⁻¹ Hᵀ)_ii``, a
+nearly critical measurement), the cancellation amplifies that rounding by
+``σ²_i / Ω_ii``: ``r_N`` may be off by tens of per cent, and a critical
+measurement may look redundant or vice versa. Hence the refinement: every row
+whose selected-inversion ratio is below the threshold carries the ``"solve"``
+value, and so does every row reported as critical (``r_N = inf`` only on a
+``"solve"`` value). With the default threshold the rows left to the selected
+inverse are off from ``"solve"`` by a small multiple of the rounding of
+``(H G⁻¹ Hᵀ)_ii`` (relative ~1e-4 of ``r_N`` at a ratio of 1e-2 on such a
+gain, less on better-conditioned ones). With ``refine_below=0`` only the
+critical rows are recomputed: no false ``inf``, but a critical measurement
+whose selected-inversion ratio came out positive keeps a finite ``r_N``.
+Even ``"solve"`` loses the leading digits of a very small ratio;
+:func:`compute_normalized_residuals` reports the ratio ``Ω_ii / σ²_i`` so that
+callers can tell such measurements apart.
 """
 
 from __future__ import annotations
@@ -30,6 +50,8 @@ from __future__ import annotations
 import contextlib
 import functools
 import logging
+import math
+import numbers
 import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -43,6 +65,14 @@ logger = logging.getLogger(__name__)
 
 #: Methods of ``diag(H G⁻¹ Hᵀ)`` (see the module docstring).
 RN_METHODS = ("solve", "selected_inversion")
+
+#: ``Ω_ii`` at or below this value marks a critical (non-redundant)
+#: measurement: its ``r_N`` is ``inf``.
+OMEGA_CUTOFF = 1e-12
+
+#: Default ratio ``Ω_ii / σ²_i`` below which ``"selected_inversion"``
+#: recomputes a row by per-row solves (see the module docstring).
+SELINV_REFINE_BELOW = 1e-2
 
 
 @dataclass(frozen=True)
@@ -72,6 +102,7 @@ def normalized_residuals(
     rows_mask: np.ndarray | None = None,
     *,
     method: str = "solve",
+    refine_below: float = SELINV_REFINE_BELOW,
 ) -> np.ndarray:
     """``r_N = |r| / √diag(Ω)``, where ``Ω = R − H G⁻¹ Hᵀ``, ``R = diag(sigma2)``.
 
@@ -86,8 +117,16 @@ def normalized_residuals(
             per-row part is masked. ``None`` — all rows.
         method: ``"solve"`` | ``"selected_inversion"`` (see the module
             docstring).
+        refine_below: ``"selected_inversion"`` only: rows whose ratio
+            ``Ω_ii / σ²_i`` from the selected inverse is below this value are
+            recomputed by per-row solves. ``0`` disables this refinement;
+            rows at or below the critical cut-off are recomputed regardless,
+            ``1`` recomputes every row (see the module docstring). Ignored by
+            ``"solve"``.
     """
-    return compute_normalized_residuals(r, H, sigma2, rows_mask, method=method).rn
+    return compute_normalized_residuals(
+        r, H, sigma2, rows_mask, method=method, refine_below=refine_below
+    ).rn
 
 
 def compute_normalized_residuals(
@@ -97,6 +136,7 @@ def compute_normalized_residuals(
     rows_mask: np.ndarray | None = None,
     *,
     method: str = "solve",
+    refine_below: float = SELINV_REFINE_BELOW,
 ) -> NormalizedResiduals:
     """``r_N`` together with the ratio ``Ω_ii / σ²_i`` of every row.
 
@@ -104,10 +144,10 @@ def compute_normalized_residuals(
     depend on whether the ratio is used.
 
     Raises:
-        ValueError: unknown ``method``.
+        ValueError: unknown ``method`` or a negative / non-finite
+            ``refine_below``.
     """
-    if method not in RN_METHODS:
-        raise ValueError(f"unknown normalized residuals method {method!r}; available: {RN_METHODS}")
+    check_rn_options(method, refine_below)
     if r.size == 0:
         empty = np.array([], dtype=np.float64)
         return NormalizedResiduals(rn=empty, omega_ratio=empty.copy())
@@ -115,7 +155,7 @@ def compute_normalized_residuals(
     H_csr = H.tocsr()
     m = H_csr.shape[0]
     row_idx = np.arange(m) if rows_mask is None else np.where(rows_mask)[0]
-    HGH_diag = _hgh_diag(H_csr, sigma2, row_idx, method)
+    HGH_diag = _hgh_diag(H_csr, sigma2, row_idx, method, refine_below)
     if HGH_diag is None:
         return NormalizedResiduals(
             rn=np.full_like(r, np.inf, dtype=np.float64),
@@ -124,7 +164,7 @@ def compute_normalized_residuals(
 
     omega_diag = sigma2 - HGH_diag
     omega_ratio = omega_diag / sigma2
-    omega_diag = np.where(omega_diag > 1e-12, omega_diag, np.nan)
+    omega_diag = np.where(omega_diag > OMEGA_CUTOFF, omega_diag, np.nan)
     rn = np.abs(r) / np.sqrt(omega_diag)
     if rows_mask is not None:
         # Unmasked rows stay nan (left out of any top list); masked rows with
@@ -135,13 +175,38 @@ def compute_normalized_residuals(
     return NormalizedResiduals(rn=np.where(np.isnan(rn), np.inf, rn), omega_ratio=omega_ratio)
 
 
+def check_rn_options(method: str, refine_below: float = SELINV_REFINE_BELOW) -> None:
+    """Validate the options of :func:`compute_normalized_residuals`.
+
+    Raises:
+        ValueError: unknown ``method`` or a negative / non-finite
+            ``refine_below``.
+    """
+    if method not in RN_METHODS:
+        raise ValueError(f"unknown normalized residuals method {method!r}; available: {RN_METHODS}")
+    value: object = refine_below  # checked at runtime whatever the annotation says
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, numbers.Real)
+        or not math.isfinite(value)
+        or value < 0.0
+    ):
+        raise ValueError(
+            f"selected inversion refine_below must be a finite number >= 0, got {refine_below!r}"
+        )
+
+
 def _hgh_diag(
-    H_csr: csr_matrix, sigma2: np.ndarray, row_idx: np.ndarray, method: str
+    H_csr: csr_matrix,
+    sigma2: np.ndarray,
+    row_idx: np.ndarray,
+    method: str,
+    refine_below: float = SELINV_REFINE_BELOW,
 ) -> np.ndarray | None:
     """``diag(H G⁻¹ Hᵀ)`` for ``row_idx`` by ``method``; ``None`` — ``G`` is singular."""
     if method == "selected_inversion":
         try:
-            return hgh_diag_selinv(H_csr, sigma2, row_idx)
+            return hgh_diag_selinv(H_csr, sigma2, row_idx, refine_below=refine_below)
         except SelectedInversionUnavailableError as exc:
             logger.debug("r_N: selected inversion unavailable, per-row solves used (%s)", exc)
     try:
@@ -199,37 +264,58 @@ def hgh_diag_cholmod(
     Returns:
         ``None`` when ``G`` is not positive definite.
     """
+    import cvxopt  # noqa: F401  (ImportError before assembling G)
+
+    A = _cholmod_lower(_gain(H_csr, sigma2))
+    hgh = np.full(H_csr.shape[0], np.nan, dtype=np.float64)
+    with _supernodal_cholmod() as cholmod:
+        F = _cholmod_numeric(cholmod, A)
+        if F is None:
+            return None
+        _cholmod_hgh_rows(cholmod, F, H_csr, row_idx, hgh, block)
+    return hgh
+
+
+def _cholmod_numeric(cholmod: Any, A: Any) -> Any | None:
+    """Symbolic and numeric CHOLMOD factorization; ``None`` — not positive definite."""
+    F = cholmod.symbolic(A, uplo="L")
+    try:
+        cholmod.numeric(A, F)
+    except ArithmeticError as exc:
+        logger.warning("r_N: G is not positive definite — r_N = inf (%s)", exc)
+        return None
+    return F
+
+
+def _cholmod_hgh_rows(
+    cholmod: Any,
+    F: Any,
+    H_csr: csr_matrix,
+    row_idx: np.ndarray,
+    hgh: np.ndarray,
+    block: int = 16384,
+) -> None:
+    """Write ``‖L⁻¹ Pᵀ hᵢ‖²`` of the rows ``row_idx`` into ``hgh`` (CHOLMOD factor ``F``)."""
     from cvxopt import spmatrix
 
-    G = _gain(H_csr, sigma2)
-    A = _cholmod_lower(G)
-    hgh = np.full(H_csr.shape[0], np.nan, dtype=np.float64)
     HT = H_csr.T.tocsc()
-    with _supernodal_cholmod() as cholmod:
-        F = cholmod.symbolic(A, uplo="L")
-        try:
-            cholmod.numeric(A, F)
-        except ArithmeticError as exc:
-            logger.warning("r_N: G is not positive definite — r_N = inf (%s)", exc)
-            return None
-        for s in range(0, row_idx.size, block):
-            sel = row_idx[s : s + block]
-            rhs = HT[:, sel].tocoo()
-            B = spmatrix(
-                rhs.data,
-                rhs.row.astype(np.int64),
-                rhs.col.astype(np.int64),
-                (HT.shape[0], sel.size),
-            )
-            Y = cholmod.spsolve(F, cholmod.spsolve(F, B, sys=7), sys=4)  # L⁻¹ · Pᵀ · B
-            values = np.asarray(Y.V).ravel()
-            colptr = np.asarray(Y.CCS[0]).ravel()
-            sq = np.zeros(sel.size, dtype=np.float64)
-            filled = colptr[1:] > colptr[:-1]
-            if values.size:
-                sq[filled] = np.add.reduceat(values * values, colptr[:-1][filled])
-            hgh[sel] = sq
-    return hgh
+    for s in range(0, row_idx.size, block):
+        sel = row_idx[s : s + block]
+        rhs = HT[:, sel].tocoo()
+        B = spmatrix(
+            rhs.data,
+            rhs.row.astype(np.int64),
+            rhs.col.astype(np.int64),
+            (HT.shape[0], sel.size),
+        )
+        Y = cholmod.spsolve(F, cholmod.spsolve(F, B, sys=7), sys=4)  # L⁻¹ · Pᵀ · B
+        values = np.asarray(Y.V).ravel()
+        colptr = np.asarray(Y.CCS[0]).ravel()
+        sq = np.zeros(sel.size, dtype=np.float64)
+        filled = colptr[1:] > colptr[:-1]
+        if values.size:
+            sq[filled] = np.add.reduceat(values * values, colptr[:-1][filled])
+        hgh[sel] = sq
 
 
 def hgh_diag_dense(H_csr: csr_matrix, sigma2: np.ndarray, row_idx: np.ndarray) -> np.ndarray | None:
@@ -410,32 +496,46 @@ def cholmod_factor(G: csc_matrix) -> CholeskyFactor | None:
 
     Raises:
         ImportError: cvxopt is not installed.
+        SelectedInversionUnavailableError: the factor is not in the expected
+            form.
 
     Returns:
         ``None`` when ``G`` is not positive definite.
     """
-    from cvxopt import matrix
-
-    n = G.shape[0]
     A = _cholmod_lower(G)
     with _supernodal_cholmod() as cholmod:
-        F = cholmod.symbolic(A, uplo="L")
-        try:
-            cholmod.numeric(A, F)
-        except ArithmeticError as exc:
-            logger.warning("r_N: G is not positive definite — r_N = inf (%s)", exc)
+        F = _cholmod_numeric(cholmod, A)
+        if F is None:
             return None
-        # x = P b: perm[k] is the state at position k of the factor ordering.
-        b = matrix(np.arange(n, dtype=np.float64))
-        cholmod.solve(F, b, sys=7)
-        perm = np.asarray(b, dtype=np.float64).ravel().astype(np.int64)
-        L = cholmod.getfactor(F)
+        return _factor_of_cholmod(cholmod, F, G.shape[0])
+
+
+def _factor_of_cholmod(cholmod: Any, F: Any, n: int) -> CholeskyFactor:
+    """:class:`CholeskyFactor` of a numeric CHOLMOD factor ``F``.
+
+    ``cholmod.getfactor`` moves the numeric values out of ``F``: ``F`` is
+    left symbolic and cannot be used for solves afterwards.
+
+    Raises:
+        SelectedInversionUnavailableError: the factor is not in the expected
+            form.
+    """
+    from cvxopt import matrix
+
+    # x = P b: perm[k] is the state at position k of the factor ordering.
+    b = matrix(np.arange(n, dtype=np.float64))
+    cholmod.solve(F, b, sys=7)
+    perm = np.asarray(b, dtype=np.float64).ravel().astype(np.int64)
+    L = cholmod.getfactor(F)
     colptr = np.asarray(L.CCS[0], dtype=np.int64).ravel()
     rowind = np.asarray(L.CCS[1], dtype=np.int64).ravel()
     lval = np.asarray(L.CCS[2], dtype=np.float64).ravel()
     perm_inv = np.empty(n, dtype=np.int64)
     perm_inv[perm] = np.arange(n, dtype=np.int64)
-    return _checked_factor(colptr, rowind, lval, perm_inv)
+    factor = _checked_factor(colptr, rowind, lval, perm_inv)
+    if factor is None:
+        raise SelectedInversionUnavailableError("CHOLMOD factor is not in the expected form")
+    return factor
 
 
 def superlu_factor(G: csc_matrix) -> CholeskyFactor:
@@ -505,16 +605,24 @@ def hgh_diag_selinv(
     row_idx: np.ndarray,
     *,
     kernels: SelinvKernels | None = None,
+    refine_below: float = SELINV_REFINE_BELOW,
 ) -> np.ndarray | None:
-    """``diag(H G⁻¹ Hᵀ)`` for ``row_idx`` via selected inversion of the factor of ``G``.
+    """``diag(H G⁻¹ Hᵀ)`` for ``row_idx``: selected inversion refined by per-row solves.
 
-    The factor is CHOLMOD's (cvxopt) or, without cvxopt, SuperLU's
-    (:func:`superlu_factor`). Rows of ``H`` that couple a pair of states
-    whose entry of ``G`` cancelled to an exact zero (and so is missing from
-    the factor pattern) are computed by per-row solves.
+    The selected inverse of the factor of ``G`` gives every row; the rows
+    returned by :func:`_rows_to_refine` (ratio ``Ω_ii / σ²_i`` below
+    ``refine_below``, ``Ω_ii`` at or below :data:`OMEGA_CUTOFF`, or a pair of
+    states missing from the factor pattern because their entry of ``G``
+    cancelled to an exact zero) are then recomputed as :func:`hgh_diag_cholmod`
+    does, on an identical CHOLMOD factorization. Without cvxopt the factor is SuperLU's
+    (:func:`superlu_factor`) and the refined rows come from
+    :func:`hgh_diag_dense`, the ``"solve"`` path without cvxopt.
 
     Args:
         kernels: kernels to run; ``None`` — the numba-compiled ones.
+        refine_below: ratio ``Ω_ii / σ²_i`` below which a row is recomputed;
+            ``0`` recomputes only the rows at the cut-off and outside the
+            pattern.
 
     Raises:
         SelectedInversionUnavailableError: no compiled kernels (numba missing or
@@ -522,7 +630,7 @@ def hgh_diag_selinv(
             caller uses per-row solves.
 
     Returns:
-        ``None`` when ``G`` is not positive definite (CHOLMOD path).
+        ``None`` when ``G`` is not positive definite.
     """
     if kernels is None:
         if _numba_switched_off():
@@ -531,24 +639,69 @@ def hgh_diag_selinv(
         if kernels is None:
             raise SelectedInversionUnavailableError("numba kernels unavailable")
     G = _gain(H_csr, sigma2)
-    factor: CholeskyFactor | None
     try:
-        factor = cholmod_factor(G)
-        if factor is None:
-            return None
+        A = _cholmod_lower(G)
     except ImportError:
-        factor = superlu_factor(G)
+        return _hgh_selinv_superlu(G, H_csr, sigma2, row_idx, kernels, refine_below)
+    with _supernodal_cholmod() as cholmod:
+        F = _cholmod_numeric(cholmod, A)
+        if F is None:
+            return None
+        factor = _factor_of_cholmod(cholmod, F, G.shape[0])
     hgh = _selinv_hgh(factor, H_csr, row_idx, kernels)
     if hgh is None:
         raise SelectedInversionUnavailableError("factor pattern is not closed under elimination")
-    missing = row_idx[np.isnan(hgh[row_idx])]
-    if missing.size:
-        logger.debug("r_N: %d rows outside the factor pattern, per-row solves", missing.size)
-        try:
-            rest = hgh_diag_cholmod(H_csr, sigma2, missing)
-        except ImportError:
-            rest = hgh_diag_dense(H_csr, sigma2, missing)
+    refine = _rows_to_refine(hgh, sigma2, row_idx, refine_below)
+    if refine.size:
+        # Extracting the factor leaves F symbolic: factorize again, exactly as
+        # hgh_diag_cholmod does (a deterministic factorization, so the refined
+        # rows carry the "solve" values).
+        with _supernodal_cholmod() as cholmod:
+            F = _cholmod_numeric(cholmod, A)
+            if F is None:
+                return None
+            _cholmod_hgh_rows(cholmod, F, H_csr, refine, hgh)
+    return hgh
+
+
+def _hgh_selinv_superlu(
+    G: csc_matrix,
+    H_csr: csr_matrix,
+    sigma2: np.ndarray,
+    row_idx: np.ndarray,
+    kernels: SelinvKernels,
+    refine_below: float,
+) -> np.ndarray | None:
+    """:func:`hgh_diag_selinv` without cvxopt: SuperLU factor, dense refinement."""
+    hgh = _selinv_hgh(superlu_factor(G), H_csr, row_idx, kernels)
+    if hgh is None:
+        raise SelectedInversionUnavailableError("factor pattern is not closed under elimination")
+    refine = _rows_to_refine(hgh, sigma2, row_idx, refine_below)
+    if refine.size:
+        rest = hgh_diag_dense(H_csr, sigma2, refine)
         if rest is None:
             return None
-        hgh[missing] = rest[missing]
+        hgh[refine] = rest[refine]
     return hgh
+
+
+def _rows_to_refine(
+    hgh: np.ndarray, sigma2: np.ndarray, row_idx: np.ndarray, refine_below: float
+) -> np.ndarray:
+    """Rows of ``row_idx`` whose selected-inversion value is recomputed by solves.
+
+    A row is recomputed when its ``(H G⁻¹ Hᵀ)_ii`` is missing (outside the
+    factor pattern), when ``Ω_ii / σ²_i < refine_below`` (the cancellation in
+    ``Ω_ii`` amplifies the rounding of the selected inverse by
+    ``σ²_i / Ω_ii``), and when ``Ω_ii ≤ OMEGA_CUTOFF``, so that the critical
+    decision of :func:`compute_normalized_residuals` is taken on a solve.
+    """
+    values = hgh[row_idx]
+    s2 = sigma2[row_idx]
+    omega = s2 - values
+    with np.errstate(invalid="ignore"):
+        refine = np.isnan(values) | (omega <= OMEGA_CUTOFF) | (omega / s2 < refine_below)
+    rows: np.ndarray = row_idx[refine]
+    if rows.size:
+        logger.debug("r_N: %d of %d rows recomputed by per-row solves", rows.size, row_idx.size)
+    return rows

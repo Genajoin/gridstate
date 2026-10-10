@@ -341,6 +341,7 @@ def run(
         ctx.result,
         top_n=cfg.top_residuals_n,
         rn_method=cfg.normalized_residuals_method,
+        rn_refine_below=cfg.selected_inversion_refine_below,
         near_critical=cfg.near_critical_threshold,
     )
     _emit(

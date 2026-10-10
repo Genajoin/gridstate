@@ -417,10 +417,28 @@ class PipelineConfig:
         help="How diag(H G⁻¹ Hᵀ) of the quality summary r_N is computed. solve: one "
         "triangular solve per measurement (the previous behaviour, bit for bit). "
         "selected_inversion: the entries of G⁻¹ on the pattern of the sparse Cholesky "
-        "factor (Takahashi recurrence) and one quadratic form per measurement; many "
-        "times faster on large models, needs the numba extra (otherwise solve is used). "
-        "The methods agree to rounding except on nearly critical measurements, whose "
-        "r_N is numerically unreliable with either method (see near_critical_threshold).",
+        "factor (Takahashi recurrence) and one quadratic form per measurement, then the "
+        "measurements with a small Ω/σ² recomputed by solves (see "
+        "selected_inversion_refine_below); many times faster on large models, needs the "
+        "numba extra (otherwise solve is used). The methods agree to rounding on the "
+        "remaining measurements; a nearly critical measurement's r_N is numerically "
+        "unreliable with either method (see near_critical_threshold).",
+    )
+    selected_inversion_refine_below: float = _param(
+        1e-2,
+        group=_G_EST,
+        label="Selected inversion: refine below Ω/σ²",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"normalized_residuals_method": "selected_inversion"},
+        help="A measurement whose Ω_ii/σ²_i from the selected inverse is below this value "
+        "is recomputed by a solve on the same factorization: on an ill-conditioned gain "
+        "the selected inverse loses digits that the cancellation σ²_i − (H G⁻¹ Hᵀ)_ii "
+        "amplifies by σ²/Ω. Measurements at the critical cut-off (r_N = inf) are always "
+        "recomputed, so no r_N = inf comes from the selected inverse. 0 — only those "
+        "(a critical measurement may then keep a finite r_N); 1 — every measurement "
+        "(slower than solve).",
     )
     near_critical_threshold: float = _param(
         1e-4,

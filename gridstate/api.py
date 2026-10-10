@@ -13,7 +13,11 @@ import numpy as np
 
 from gridstate.algebra.base import BaseAlgebra
 from gridstate.algebra.estimators import build_branch_pq_huber_mask
-from gridstate.algebra.normalized_residuals import RN_METHODS, compute_normalized_residuals
+from gridstate.algebra.normalized_residuals import (
+    SELINV_REFINE_BELOW,
+    check_rn_options,
+    compute_normalized_residuals,
+)
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.status import SUCCESS_POLICIES, SuccessPolicy, success_from_status
@@ -85,6 +89,7 @@ def estimate(
     quality_summary_scope: str = "real",
     x0: InitialPoint | None = None,
     quality_summary_rn_method: str = "solve",
+    quality_summary_rn_refine_below: float = SELINV_REFINE_BELOW,
     quality_summary_near_critical: float = NEAR_CRITICAL_THRESHOLD,
     success_policy: SuccessPolicy = "legacy",
     **ipm_kwargs: Any,
@@ -150,6 +155,10 @@ def estimate(
             ``"selected_inversion"`` (Takahashi recurrence on the sparse
             Cholesky factor, needs numba; see
             :mod:`gridstate.algebra.normalized_residuals`).
+        quality_summary_rn_refine_below: ``"selected_inversion"`` only —
+            measurements whose ``Ω_ii / σ²_i`` from the selected inverse is
+            below this value are recomputed by per-row solves; those at the
+            critical cut-off always are. ``0`` — only those.
         quality_summary_near_critical: ``Ω_ii / σ²_i`` threshold of
             ``near_critical_measurements``; ``0`` reports none.
         success_policy: how ``SEResult.success`` is derived. ``"legacy"``
@@ -172,10 +181,11 @@ def estimate(
     Raises:
         NotImplementedError: for unsupported ``algorithm`` or
             ``zero_injection``.
-        ValueError: unknown ``quality_summary_rn_method``.
+        ValueError: unknown ``quality_summary_rn_method`` or an invalid
+            ``quality_summary_rn_refine_below``.
     """
     if include_quality_summary:
-        _check_rn_method(quality_summary_rn_method)
+        check_rn_options(quality_summary_rn_method, quality_summary_rn_refine_below)
     if algorithm not in ("wls", "ipm"):
         raise NotImplementedError(
             f"Algorithm {algorithm!r} is not implemented yet; available: 'wls' and 'ipm'."
@@ -352,15 +362,11 @@ def estimate(
             top_n=quality_summary_top_n,
             scope=quality_summary_scope,
             rn_method=quality_summary_rn_method,
+            rn_refine_below=quality_summary_rn_refine_below,
             near_critical=quality_summary_near_critical,
         )
 
     return result
-
-
-def _check_rn_method(method: str) -> None:
-    if method not in RN_METHODS:
-        raise ValueError(f"unknown normalized residuals method {method!r}; available: {RN_METHODS}")
 
 
 def _wls_objective(
@@ -401,6 +407,7 @@ def _populate_quality_summary(
     top_n: int,
     scope: str = "real",
     rn_method: str = "solve",
+    rn_refine_below: float = SELINV_REFINE_BELOW,
     near_critical: float = NEAR_CRITICAL_THRESHOLD,
 ) -> None:
     """Fill ``result.chi2 / worst_residuals / worst_imbalance /
@@ -439,7 +446,12 @@ def _populate_quality_summary(
         rows_mask = residual_scope_mask(scope, is_pseudo_z)
         if rows_mask is None or rows_mask.any():
             normalized = compute_normalized_residuals(
-                r_vec, H, sigma2, rows_mask=rows_mask, method=rn_method
+                r_vec,
+                H,
+                sigma2,
+                rows_mask=rows_mask,
+                method=rn_method,
+                refine_below=rn_refine_below,
             )
             result.worst_residuals = top_worst_residuals(
                 r_vec,
@@ -473,6 +485,7 @@ def populate_quality_summary(
     top_n: int = 10,
     scope: str = "real",
     rn_method: str = "solve",
+    rn_refine_below: float = SELINV_REFINE_BELOW,
     near_critical: float = NEAR_CRITICAL_THRESHOLD,
 ) -> None:
     """Compute the quality summary post hoc — from the final ``result.model``.
@@ -486,13 +499,14 @@ def populate_quality_summary(
     of the model must correspond to the final solve (in the pipeline they do:
     the revert branches roll back both measurements and V/δ).
 
-    ``top_n`` / ``scope`` / ``rn_method`` / ``near_critical`` have the meaning
-    of the ``quality_summary_*`` arguments of :func:`estimate`.
+    ``top_n`` / ``scope`` / ``rn_method`` / ``rn_refine_below`` /
+    ``near_critical`` have the meaning of the ``quality_summary_*`` arguments
+    of :func:`estimate`.
 
     Raises:
-        ValueError: unknown ``rn_method``.
+        ValueError: unknown ``rn_method`` or an invalid ``rn_refine_below``.
     """
-    _check_rn_method(rn_method)
+    check_rn_options(rn_method, rn_refine_below)
     model = result.model
     measurements = model.measurements
     network_pu = model_to_pu(model)
@@ -516,6 +530,7 @@ def populate_quality_summary(
         top_n=top_n,
         scope=scope,
         rn_method=rn_method,
+        rn_refine_below=rn_refine_below,
         near_critical=near_critical,
     )
 

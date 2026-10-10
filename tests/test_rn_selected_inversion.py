@@ -10,7 +10,7 @@ from scipy.sparse import csc_matrix, csr_matrix
 from scipy.sparse import random as sparse_random
 
 import gridstate.algebra.normalized_residuals as nr
-from gridstate.api import estimate
+from gridstate.api import estimate, populate_quality_summary
 from gridstate.contract import run as run_se
 from gridstate.contract.serialize import load_se_input_npz
 from gridstate.pipeline import PipelineConfig, manifest
@@ -319,6 +319,12 @@ def test_config_defaults_and_validation() -> None:
         PipelineConfig(near_critical_threshold=-1.0)
     with pytest.raises(ValueError, match="near_critical_threshold"):
         PipelineConfig(near_critical_threshold=2.0)
+    assert cfg.selected_inversion_refine_below == nr.SELINV_REFINE_BELOW == 1e-2
+    PipelineConfig(selected_inversion_refine_below=0.0)
+    PipelineConfig(selected_inversion_refine_below=1.0)
+    for bad in (-1e-3, 1.5, float("nan")):
+        with pytest.raises(ValueError, match="selected_inversion_refine_below"):
+            PipelineConfig(selected_inversion_refine_below=bad)
 
 
 def test_config_fields_are_in_the_manifest() -> None:
@@ -326,6 +332,10 @@ def test_config_fields_are_in_the_manifest() -> None:
     assert "normalized_residuals_method" in text
     assert "selected_inversion" in text
     assert "near_critical_threshold" in text
+    entry = next(p for p in manifest()["params"] if p["name"] == "selected_inversion_refine_below")
+    assert entry["default"] == 1e-2
+    assert (entry["min"], entry["max"]) == (0.0, 1.0)
+    assert entry["depends"] == {"normalized_residuals_method": "selected_inversion"}
 
 
 def test_pipeline_uses_the_configured_method(python_kernels) -> None:
@@ -348,3 +358,228 @@ def test_pipeline_uses_the_configured_method(python_kernels) -> None:
     )
     assert base.near_critical_measurements == []
     assert len(alt.near_critical_measurements) > 0
+
+
+# ---------------------------------------------------------------------------
+# Hybrid: selected inversion refined by per-row solves
+# ---------------------------------------------------------------------------
+
+
+def _ill_conditioned_case(seed: int = 12) -> tuple[csr_matrix, np.ndarray]:
+    """DC-flow-like ``H`` on a 12 x 15 meshed grid with an ill-conditioned gain.
+
+    Branch flows ``b_ij (x_i − x_j)`` with ``b`` over five decades, nodal sums
+    on half of the nodes and absolute readings of ~30 % of the states whose
+    variances span 14 decades: ``cond(G) ~ 1e14``. Precise readings next to
+    loose ones make many measurements nearly critical (``Ω/σ²`` down to
+    ~1e-12), a few exactly critical.
+    """
+    rng = np.random.default_rng(seed)
+    rows, cols = 12, 15
+    n = rows * cols
+    edges = []
+    for r in range(rows):
+        for c in range(cols):
+            k = r * cols + c
+            if c + 1 < cols:
+                edges.append((k, k + 1))
+            if r + 1 < rows and (c == 0 or rng.random() < 0.35):
+                edges.append((k, k + cols))
+    b = 10.0 ** rng.uniform(0.0, 5.0, len(edges))
+    trip: list[tuple[int, int, float]] = []
+    sigma2: list[float] = []
+    for m, ((i, j), bij) in enumerate(zip(edges, b, strict=True)):
+        trip += [(m, i, bij), (m, j, -bij)]
+        sigma2.append(10.0 ** rng.uniform(-6.0, 0.0))
+    adj: dict[int, list[tuple[int, float]]] = {}
+    for (i, j), bij in zip(edges, b, strict=True):
+        adj.setdefault(i, []).append((j, bij))
+        adj.setdefault(j, []).append((i, bij))
+    m = len(edges)
+    for i in range(n):
+        if rng.random() < 0.5:
+            trip.append((m, i, sum(v for _, v in adj[i])))
+            trip += [(m, j, -v) for j, v in adj[i]]
+            sigma2.append(10.0 ** rng.uniform(-6.0, 0.0))
+            m += 1
+    for i in range(n):
+        if rng.random() < 0.3 or i == 0:
+            trip.append((m, i, 1.0))
+            sigma2.append(10.0 ** rng.uniform(-10.0, 4.0))
+            m += 1
+    r_idx, c_idx, vals = zip(*trip, strict=True)
+    return csr_matrix((vals, (r_idx, c_idx)), shape=(m, n)), np.asarray(sigma2)
+
+
+def _reference_hgh(H: csr_matrix, sigma2: np.ndarray) -> np.ndarray:
+    """``diag(H G⁻¹ Hᵀ)`` of the float64 ``G`` by iterative refinement.
+
+    Dense Cholesky solves refined with residuals in extended precision
+    (``np.longdouble``; plain float64 where the platform has no wider type).
+    """
+    from scipy.linalg import cho_factor, cho_solve
+
+    G = nr._gain(H, sigma2).toarray()
+    G_ext = G.astype(np.longdouble)
+    B = H.toarray().T.astype(np.longdouble)
+    c = cho_factor(G, lower=True)
+    X = cho_solve(c, np.asarray(B, dtype=np.float64)).astype(np.longdouble)
+    for _ in range(4):
+        R = B - G_ext @ X
+        X = X + cho_solve(c, np.asarray(R, dtype=np.float64)).astype(np.longdouble)
+    return np.asarray(np.einsum("ij,ij->j", B, X), dtype=np.float64)
+
+
+def _plain_selinv_hgh(H: csr_matrix, sigma2: np.ndarray, kernels: nr.SelinvKernels) -> np.ndarray:
+    """Selected inversion without refinement, on the factor the hybrid uses."""
+    G = nr._gain(H, sigma2)
+    try:
+        factor = nr.cholmod_factor(G)
+    except ImportError:
+        factor = nr.superlu_factor(G)
+    assert factor is not None
+    hgh = nr._selinv_hgh(factor, H, np.arange(H.shape[0]), kernels)
+    assert hgh is not None and np.isfinite(hgh).all()
+    return hgh
+
+
+def test_hybrid_matches_solve_on_an_ill_conditioned_gain(python_kernels) -> None:
+    H, sigma2 = _ill_conditioned_case()
+    m = H.shape[0]
+    assert np.linalg.cond(nr._gain(H, sigma2).toarray()) > 1e12
+    r = np.random.default_rng(0).normal(size=m) * np.sqrt(sigma2)
+
+    solve = nr.compute_normalized_residuals(r, H, sigma2, method="solve")
+    hybrid = nr.compute_normalized_residuals(r, H, sigma2, method="selected_inversion")
+    plain_hgh = _plain_selinv_hgh(H, sigma2, python_kernels)
+    plain_ratio = (sigma2 - plain_hgh) / sigma2
+    ref_ratio = (sigma2 - _reference_hgh(H, sigma2)) / sigma2
+
+    # Plain selected inversion loses digits on near-critical rows, solve does not.
+    # (The reference itself is good to ~1e-10 in the ratio here, so rows with
+    # a ratio near zero are left out of this comparison.)
+    near = (ref_ratio < 1e-4) & (ref_ratio > 1e-8)
+    assert near.sum() >= 10
+    err_plain = np.abs(plain_ratio - ref_ratio)[near] / ref_ratio[near]
+    err_solve = np.abs(solve.omega_ratio - ref_ratio)[near] / ref_ratio[near]
+    assert err_plain.max() > 1e-2
+    assert err_solve.max() < 1e-4
+    assert np.median(err_solve) < 1e-2 * np.median(err_plain)
+
+    # Refined rows (selected-inversion ratio below the threshold, or Ω at the
+    # cut-off) carry the solve values; inf decisions are those of solve.
+    refined = (plain_ratio < nr.SELINV_REFINE_BELOW) | (sigma2 - plain_hgh <= nr.OMEGA_CUTOFF)
+    assert 0 < refined.sum() < m
+    np.testing.assert_array_equal(np.isinf(hybrid.rn), np.isinf(solve.rn))
+    assert np.isinf(solve.rn).any()
+    finite = refined & np.isfinite(solve.rn)
+    np.testing.assert_allclose(hybrid.rn[finite], solve.rn[finite], rtol=1e-9, atol=0.0)
+    np.testing.assert_allclose(
+        hybrid.omega_ratio[refined], solve.omega_ratio[refined], rtol=1e-9, atol=1e-15
+    )
+    # Every row whose (true) ratio is below the threshold was refined.
+    assert refined[solve.omega_ratio < 0.5 * nr.SELINV_REFINE_BELOW].all()
+
+    # The other rows keep the selected-inversion values.
+    keep = ~refined
+    np.testing.assert_array_equal(hybrid.omega_ratio[keep], plain_ratio[keep])
+    # ... which are close to solve: there the rounding of the selected inverse
+    # is amplified by at most 1 / SELINV_REFINE_BELOW. (Observed |Δ ratio|:
+    # ~2e-6 on the CHOLMOD factor, ~7e-4 on the SuperLU one.)
+    np.testing.assert_allclose(
+        hybrid.omega_ratio[keep], solve.omega_ratio[keep], rtol=5e-2, atol=0.0
+    )
+
+
+def test_refine_below_zero_recomputes_only_the_cutoff_rows(python_kernels) -> None:
+    H, sigma2 = _ill_conditioned_case()
+    m = H.shape[0]
+    r = np.ones(m)
+    solve = nr.compute_normalized_residuals(r, H, sigma2, method="solve")
+    plain_hgh = _plain_selinv_hgh(H, sigma2, python_kernels)
+    at_cutoff = sigma2 - plain_hgh <= nr.OMEGA_CUTOFF
+    assert at_cutoff.any()
+    calls: list[np.ndarray] = []
+    original = nr._rows_to_refine
+
+    def spy(hgh, s2, row_idx, refine_below):  # type: ignore[no-untyped-def]
+        rows = original(hgh, s2, row_idx, refine_below)
+        calls.append(rows)
+        return rows
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(nr, "_rows_to_refine", spy)
+        only_cutoff = nr.compute_normalized_residuals(
+            r, H, sigma2, method="selected_inversion", refine_below=0.0
+        )
+        everything = nr.compute_normalized_residuals(
+            r, H, sigma2, method="selected_inversion", refine_below=1.0
+        )
+    np.testing.assert_array_equal(calls[0], np.where(at_cutoff)[0])
+    np.testing.assert_array_equal(calls[1], np.arange(m))
+    # No false inf: a row is critical only if solve says so. (Without the
+    # ratio refinement a critical row may still get a finite r_N.)
+    assert not (np.isinf(only_cutoff.rn) & ~np.isinf(solve.rn)).any()
+    np.testing.assert_allclose(
+        only_cutoff.omega_ratio[at_cutoff], solve.omega_ratio[at_cutoff], rtol=1e-9, atol=1e-15
+    )
+    np.testing.assert_allclose(everything.omega_ratio, solve.omega_ratio, rtol=1e-9, atol=1e-15)
+    np.testing.assert_array_equal(np.isinf(everything.rn), np.isinf(solve.rn))
+
+
+def test_refinement_uses_the_solve_values_bit_for_bit(python_kernels) -> None:
+    # The refined rows come from the same factorization and the same solves as
+    # method="solve": with refine_below=1 every row is recomputed.
+    H, sigma2 = _ill_conditioned_case(seed=4)
+    r = np.random.default_rng(1).normal(size=H.shape[0])
+    solve = nr.compute_normalized_residuals(r, H, sigma2, method="solve")
+    full = nr.compute_normalized_residuals(
+        r, H, sigma2, method="selected_inversion", refine_below=1.0
+    )
+    np.testing.assert_allclose(full.rn, solve.rn, rtol=1e-12, atol=0.0)
+    np.testing.assert_array_equal(np.isinf(full.rn), np.isinf(solve.rn))
+
+
+@pytest.mark.parametrize("bad", [-1e-3, float("nan"), float("inf"), True, "0.01"])
+def test_invalid_refine_below_is_rejected(bad) -> None:
+    H, sigma2 = _random_case(0, m=40, n=10)
+    with pytest.raises(ValueError, match="refine_below"):
+        nr.compute_normalized_residuals(
+            np.ones(40), H, sigma2, method="selected_inversion", refine_below=bad
+        )
+
+
+def test_refine_below_is_threaded_through(python_kernels, monkeypatch) -> None:
+    seen: list[float] = []
+    original = nr.hgh_diag_selinv
+
+    def spy(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(kwargs["refine_below"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(nr, "hgh_diag_selinv", spy)
+    model = load_se_input_npz(_DATA_DIR / "case14.npz").model
+    res = estimate(
+        model,
+        algorithm="wls",
+        quality_summary_rn_method="selected_inversion",
+        quality_summary_rn_refine_below=0.25,
+    )
+    assert seen == [0.25]
+    populate_quality_summary(res, rn_method="selected_inversion", rn_refine_below=0.5)
+    assert seen == [0.25, 0.5]
+    run_se(
+        load_se_input_npz(_DATA_DIR / "case14.npz"),
+        config=PipelineConfig(
+            normalized_residuals_method="selected_inversion",
+            selected_inversion_refine_below=0.125,
+        ),
+    )
+    assert seen[-1] == 0.125
+    with pytest.raises(ValueError, match="refine_below"):
+        estimate(
+            load_se_input_npz(_DATA_DIR / "case14.npz").model,
+            quality_summary_rn_refine_below=-1.0,
+        )
+    with pytest.raises(ValueError, match="refine_below"):
+        populate_quality_summary(res, rn_refine_below=float("nan"))

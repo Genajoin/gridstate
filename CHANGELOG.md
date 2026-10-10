@@ -130,6 +130,21 @@ cut by tagging the merged main commit; the version is derived from that tag.
   `solve_status` (`kkt` and `mu_schedule_done` only), so the post-solve
   passes skip a non-converged base solution and the re-solve revert (#44)
   also acts on IPM re-solves (#57)
+- `normalized_residuals_method="selected_inversion"` is a hybrid: after the
+  selected inverse, every measurement whose `Ω_ii / σ²_i` is below
+  `PipelineConfig.selected_inversion_refine_below` (default `1e-2`; also
+  `estimate(quality_summary_rn_refine_below=...)`,
+  `populate_quality_summary(rn_refine_below=...)`,
+  `compute_normalized_residuals(refine_below=...)`), and every measurement at
+  the critical cut-off `Ω_ii ≤ 1e-12`, is recomputed by the per-row solves of
+  `"solve"` on the same factorization (the dense fallback without cvxopt). On
+  an ill-conditioned gain (cond ~1e14) the plain selected inverse was off by
+  tens of per cent in `r_N` on near-critical measurements and could mark a
+  measurement critical (`inf`) that is not; those rows now carry the
+  `"solve"` values and every `inf` comes from a solve. `0` recomputes only the
+  critical rows. The cost grows with the share of recomputed rows (about that
+  share of the `"solve"` time); the default `"solve"` is unchanged bit for
+  bit (#60)
 
 ### Fix
 
