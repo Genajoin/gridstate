@@ -321,11 +321,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 44.99764078204862,
+   "objective_value": 46.78060527079605,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.57135789668254,
+    "value": 93.45374959363134,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -586,9 +586,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 40.64973056004053,
+     "objective_value": 42.26330550247608,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.4607451091905
+     "objective_wls": 84.3691107027574
     }
    },
    {
@@ -651,7 +651,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.57135789668254
+     "objective_wls": 93.45374959363134
     }
    },
    {
@@ -675,11 +675,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 44.99764078204862,
+   "objective_value": 46.78060527079605,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.57135789668254,
+    "value": 93.45374959363134,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -940,9 +940,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 40.64973056004053,
+     "objective_value": 42.26330550247608,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.4607451091905
+     "objective_wls": 84.3691107027574
     }
    },
    {
@@ -970,7 +970,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.57135789668254
+     "objective_wls": 93.45374959363134
     }
    },
    {
@@ -1022,11 +1022,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 44.99764078204862,
+   "objective_value": 46.78060527079605,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.57135789668254,
+    "value": 93.45374959363134,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -1287,9 +1287,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 40.64973056004053,
+     "objective_value": 42.26330550247608,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.4607451091905
+     "objective_wls": 84.3691107027574
     }
    },
    {
@@ -1352,7 +1352,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.57135789668254
+     "objective_wls": 93.45374959363134
     }
    },
    {
@@ -1386,11 +1386,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 44.99764078204862,
+   "objective_value": 46.78060527079605,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.57135789668254,
+    "value": 93.45374959363134,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -1651,9 +1651,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 40.64973056004053,
+     "objective_value": 42.26330550247608,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.4607451091905
+     "objective_wls": 84.3691107027574
     }
    },
    {
@@ -1716,7 +1716,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.57135789668254
+     "objective_wls": 93.45374959363134
     }
    },
    {
@@ -1749,11 +1749,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 44.99746149658869,
+   "objective_value": 46.780605453307466,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.57162683853372,
+    "value": 93.45374847484781,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -2018,9 +2018,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 40.6413927060757,
+     "objective_value": 42.25670257396209,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.47234972879879
+     "objective_wls": 84.35770450647796
     }
    },
    {
@@ -2083,7 +2083,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.57162683853372
+     "objective_wls": 93.45374847484781
     }
    },
    {

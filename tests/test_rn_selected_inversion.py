@@ -190,6 +190,23 @@ def test_numba_switch_off_uses_solve(monkeypatch: pytest.MonkeyPatch) -> None:
     np.testing.assert_array_equal(a, b)
 
 
+def test_default_method_uses_solve_with_numba_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default (selected inversion) falls back to solves, bit for bit, without numba."""
+    monkeypatch.setenv("GRIDSTATE_NUMBA", "0")
+    H, sigma2 = _random_case(7)
+    r = np.random.default_rng(7).normal(size=H.shape[0])
+    a = nr.normalized_residuals(r, H, sigma2, method="solve")
+    np.testing.assert_array_equal(nr.normalized_residuals(r, H, sigma2), a)
+
+    def rn_top(**kwargs):
+        model = load_se_input_npz(_DATA_DIR / "case14.npz").model
+        res = estimate(model, algorithm="wls", **kwargs)
+        assert res.success
+        return [(row.measurement_id, row.normalized_residual) for row in res.worst_residuals]
+
+    assert rn_top() == rn_top(quality_summary_rn_method="solve")
+
+
 def test_missing_kernels_use_solve(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nr, "_load_selinv_kernels", lambda: None)
     monkeypatch.setattr(nr, "_numba_switched_off", lambda: False)
@@ -284,9 +301,9 @@ def test_estimate_reports_near_critical_and_keeps_default_rn(python_kernels) -> 
         assert res.success
         return res
 
-    base = solve()
+    base = solve(quality_summary_rn_method="solve")
     assert base.near_critical_measurements == []  # fully redundant IEEE telemetry
-    selinv = solve(quality_summary_rn_method="selected_inversion")
+    selinv = solve()
     assert [r.measurement_id for r in selinv.worst_residuals] == [
         r.measurement_id for r in base.worst_residuals
     ]
@@ -310,9 +327,9 @@ def test_estimate_reports_near_critical_and_keeps_default_rn(python_kernels) -> 
 
 def test_config_defaults_and_validation() -> None:
     cfg = PipelineConfig()
-    assert cfg.normalized_residuals_method == "solve"
+    assert cfg.normalized_residuals_method == "selected_inversion"
     assert cfg.near_critical_threshold == 1e-4
-    PipelineConfig(normalized_residuals_method="selected_inversion")
+    PipelineConfig(normalized_residuals_method="solve")
     with pytest.raises(ValueError, match="normalized_residuals_method"):
         PipelineConfig(normalized_residuals_method="inverse")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="near_critical_threshold"):
@@ -325,6 +342,30 @@ def test_config_defaults_and_validation() -> None:
     for bad in (-1e-3, 1.5, float("nan")):
         with pytest.raises(ValueError, match="selected_inversion_refine_below"):
             PipelineConfig(selected_inversion_refine_below=bad)
+
+
+def test_library_defaults_follow_the_pipeline() -> None:
+    """estimate()/populate_quality_summary()/compute_normalized_residuals() default to
+    the same r_N method as PipelineConfig."""
+    import inspect
+
+    from gridstate import api, quality_summary
+    from gridstate.validation import bad_data
+
+    method = PipelineConfig().normalized_residuals_method
+    assert method == "selected_inversion"
+    checks = [
+        (api.estimate, "quality_summary_rn_method"),
+        (api.populate_quality_summary, "rn_method"),
+        (api._populate_quality_summary, "rn_method"),
+        (quality_summary.top_worst_residuals, "rn_method"),
+        (bad_data.compute_normalized_residuals_report, "rn_method"),
+        (bad_data._normalized_residuals, "method"),
+        (nr.compute_normalized_residuals, "method"),
+        (nr.normalized_residuals, "method"),
+    ]
+    for func, name in checks:
+        assert inspect.signature(func).parameters[name].default == method, func.__qualname__
 
 
 def test_config_fields_are_in_the_manifest() -> None:
@@ -340,7 +381,7 @@ def test_config_fields_are_in_the_manifest() -> None:
 
 def test_pipeline_uses_the_configured_method(python_kernels) -> None:
     se_in = load_se_input_npz(_DATA_DIR / "case30.npz")
-    base = run_se(se_in, config=PipelineConfig()).result
+    base = run_se(se_in, config=PipelineConfig(normalized_residuals_method="solve")).result
     alt = run_se(
         load_se_input_npz(_DATA_DIR / "case30.npz"),
         config=PipelineConfig(normalized_residuals_method="selected_inversion"),

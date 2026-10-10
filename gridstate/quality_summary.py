@@ -14,10 +14,12 @@ After ``estimate()`` converges it collects:
   not affected.
 
 Exactly one pass over ``H``/``R⁻¹`` is used: ``Ω = R − H G⁻¹ Hᵀ`` is
-computed with sparse CHOLMOD and sparse right-hand sides (no cvxopt —
-dense Cholesky + block triangular substitution) or, on request
-(``rn_method="selected_inversion"``), by selected inversion of the sparse
-Cholesky factor. Dense algebra on large models (tens of thousands of
+computed by selected inversion of the sparse Cholesky factor, the rows with a
+small ``Ω_ii / σ²_i`` recomputed by solves (default,
+``rn_method="selected_inversion"``; needs numba), or with sparse CHOLMOD and
+sparse right-hand sides for every row (``rn_method="solve"``, also the
+fallback without numba; no cvxopt — dense Cholesky + block triangular
+substitution). Dense algebra on large models (tens of thousands of
 measurements) dominated the whole state estimation time. The ``r_N``
 computation lives in
 :mod:`gridstate.algebra.normalized_residuals`, shared with the bad-data test
@@ -102,7 +104,7 @@ def top_worst_residuals(
     network_pu: NetworkPU | None = None,
     is_pseudo: np.ndarray | None = None,
     scope: str = "real",
-    rn_method: str = "solve",
+    rn_method: str = "selected_inversion",
     normalized: NormalizedResiduals | None = None,
     rn_refine_below: float = SELINV_REFINE_BELOW,
     near_critical: float = NEAR_CRITICAL_THRESHOLD,

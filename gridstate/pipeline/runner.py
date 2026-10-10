@@ -280,12 +280,12 @@ def run(
             :class:`~gridstate.state.InitialPoint`) for a **warm start** (the
             chain ``run(wls)`` → ``run(ipm, init_state=res_wls)``); init is
             forced to ``"results"``. ``cfg.warm_start_mode`` decides what the
-            previous V/δ are: ``"seed_inputs"`` (default) seeds them into the
-            working copy before preprocessing, so they are both the start and
-            the V operating point of the pseudo-V priors; ``"x0_only"`` passes
-            them to the ``estimate`` step as an explicit initial point only and
-            the estimation problem is the cold-start one. ``None``: cold start
-            from ``cfg.init``.
+            previous V/δ are: ``"x0_only"`` (default) passes them to the
+            ``estimate`` step as an explicit initial point only and the
+            estimation problem is the cold-start one; ``"seed_inputs"`` seeds
+            them into the working copy before preprocessing, so they are both
+            the start and the V operating point of the pseudo-V priors.
+            ``None``: cold start from ``cfg.init``.
 
     Returns:
         ``SEResult`` (``ctx.result``); the result is in ``result.model`` (the

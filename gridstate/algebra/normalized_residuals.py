@@ -4,10 +4,10 @@ The single implementation shared by the quality summary and the bad-data
 (``rn_max``) test. Neither path forms an ``m × m`` matrix. ``diag(H G⁻¹ Hᵀ)``
 is computed by one of two methods:
 
-* ``"solve"`` (default): triangular solves with every row of ``H`` — sparse
+* ``"solve"``: triangular solves with every row of ``H`` — sparse
   CHOLMOD with sparse right-hand sides; without cvxopt, a dense Cholesky factor
   of ``G`` and a blocked triangular solve.
-* ``"selected_inversion"``: a hybrid. First the entries of ``G⁻¹`` on the
+* ``"selected_inversion"`` (default): a hybrid. First the entries of ``G⁻¹`` on the
   pattern of the sparse Cholesky factor ``L`` (Takahashi recurrence), then one
   quadratic form per row of ``H``. Every pair of states coupled by a row of
   ``H`` is an entry of ``G`` and so lies in the filled pattern of ``L``; no
@@ -107,7 +107,7 @@ def normalized_residuals(
     sigma2: np.ndarray,
     rows_mask: np.ndarray | None = None,
     *,
-    method: str = "solve",
+    method: str = "selected_inversion",
     refine_below: float = SELINV_REFINE_BELOW,
 ) -> np.ndarray:
     """``r_N = |r| / √diag(Ω)``, where ``Ω = R − H G⁻¹ Hᵀ``, ``R = diag(sigma2)``.
@@ -141,7 +141,7 @@ def compute_normalized_residuals(
     sigma2: np.ndarray,
     rows_mask: np.ndarray | None = None,
     *,
-    method: str = "solve",
+    method: str = "selected_inversion",
     refine_below: float = SELINV_REFINE_BELOW,
 ) -> NormalizedResiduals:
     """``r_N`` together with the ratio ``Ω_ii / σ²_i`` of every row.

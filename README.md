@@ -96,7 +96,7 @@ Runtime dependencies are just `numpy>=1.24` and `scipy>=1.10`. Python 3.10+.
 | Extra | Adds | Purpose |
 | --- | --- | --- |
 | `fast` | `cvxopt` | CHOLMOD (SuiteSparse) Newton solves with symbolic factorization reuse; without it the solver falls back to `scipy.sparse.linalg.spsolve` (`kkt_solver="auto"` picks the best available backend) |
-| `numba` | `numba` | IPM assembles `HᵀR⁻¹H` with a numba kernel on the fixed Jacobian pattern instead of scipy sparse products; enables the opt-in `selected_inversion` method of the normalized residuals |
+| `numba` | `numba` | IPM assembles `HᵀR⁻¹H` with a numba kernel on the fixed Jacobian pattern instead of scipy sparse products; enables the default `selected_inversion` method of the normalized residuals (without numba every residual is computed by a solve) |
 | `test-models` | `pandapower` | regenerating the IEEE test fixtures with `tools/gen_ieee_fixtures.py`; not needed to run the tests |
 | `test`, `dev` | pytest, ruff, mypy, build tools, … | running and developing the package |
 | `build` | Cython and build tooling | the optional compiled distribution (`build_cython.py`) |
@@ -118,16 +118,19 @@ Notes on the numba path:
   `gridstate.algorithms.kkt_solver.numba_gram_available()`.
 - `GRIDSTATE_NUMBA=0` switches the numba path off; the scipy path is used
   instead and gives identical results.
-- The quality summary can compute `diag(H G⁻¹ Hᵀ)` of the normalized
-  residuals by selected inversion of the sparse Cholesky factor
-  (`PipelineConfig.normalized_residuals_method="selected_inversion"`, or
-  `estimate(..., quality_summary_rn_method="selected_inversion")`): many times
-  faster than the default per-measurement solves on large models. It is
-  opt-in because it is not bit-identical: the two methods agree to rounding,
-  except on nearly critical measurements (`Ω_ii/σ²_i` tiny), which the
-  quality summary lists in `near_critical_measurements` (and leaves out of the
-  worst-residual ranking) with either method.
-  Without numba (or with `GRIDSTATE_NUMBA=0`) the default method is used.
+- The quality summary computes `diag(H G⁻¹ Hᵀ)` of the normalized residuals
+  by selected inversion of the sparse Cholesky factor, and recomputes by
+  per-measurement solves the measurements whose `Ω_ii/σ²_i` is below
+  `PipelineConfig.selected_inversion_refine_below` (default `1e-2`): many times
+  faster than solving for every measurement on large models, and identical to
+  it on the refined measurements; on the others the two agree to rounding.
+  Nearly critical measurements (`Ω_ii/σ²_i` below `near_critical_threshold`)
+  are listed in `near_critical_measurements` and left out of the
+  worst-residual ranking with either method.
+  Without numba (or with `GRIDSTATE_NUMBA=0`) every measurement is solved.
+  `PipelineConfig.normalized_residuals_method="solve"` (or
+  `estimate(..., quality_summary_rn_method="solve")`) selects the per-row
+  solves explicitly.
 
 ## Quick start
 

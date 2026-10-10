@@ -135,7 +135,7 @@ def compute_normalized_residuals_report(
     *,
     top_n: int = 5,
     rn_threshold: float = 3.0,
-    rn_method: str = "solve",
+    rn_method: str = "selected_inversion",
     rn_refine_below: float = SELINV_REFINE_BELOW,
     near_critical_threshold: float = NEAR_CRITICAL_THRESHOLD,
 ) -> NormalizedResidualReport:
@@ -251,7 +251,10 @@ class BadDataResult:
 
 
 def _normalized_residuals(
-    diag: Diagnostics, *, method: str = "solve", refine_below: float = SELINV_REFINE_BELOW
+    diag: Diagnostics,
+    *,
+    method: str = "selected_inversion",
+    refine_below: float = SELINV_REFINE_BELOW,
 ) -> np.ndarray:
     """``r^N = |r| / √(diag(Ω))``, where ``Ω = R − H G⁻¹ Hᵀ``.
 

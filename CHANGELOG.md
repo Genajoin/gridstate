@@ -50,6 +50,26 @@ cut by tagging the merged main commit; the version is derived from that tag.
 
 ### Behavior changes
 
+- New defaults of three `PipelineConfig` options, evaluated on 8
+  production-size inputs; the previous behaviour stays available by setting
+  the old value explicitly. Results of IPM runs, of warm starts on inputs with
+  pseudo-V priors, and the last digits of `r_N` change:
+  - `ipm_trust_region_scope="state"` (was `"all"`; also the default of
+    `estimate(..., trust_region_scope=)` and `solve_ipm(tr_exclude_box=True)`):
+    inner Newton iterations -7…-67 %, wall time ×0.47–0.95, estimate quality
+    equal to the third digit (V shift ≤ 0.017 kV) (#59)
+  - `warm_start_mode="x0_only"` (was `"seed_inputs"`): a warm-started result
+    matches the cold one to the solver tolerance (≤ 1.4e-3 kV, against
+    0.49–2.31 kV and a drift up to 4.37 kV over a 4-run chain with
+    `"seed_inputs"`) (#58)
+  - `normalized_residuals_method="selected_inversion"` with
+    `selected_inversion_refine_below=1e-2` (was `"solve"`; also the default of
+    `estimate(quality_summary_rn_method=)`, `populate_quality_summary(rn_method=)`,
+    `compute_normalized_residuals(method=)`, `compute_normalized_residuals_report`
+    and `remove_bad_data`): `r_N` in 8–36 % of the time, refined rows equal to
+    `"solve"`, the others within 5.6e-6 relative, identical `inf` sets and
+    top-20 lists; without numba (or with `GRIDSTATE_NUMBA=0`) `"solve"` is used
+    (#60)
 - Duplicate node measurements are no longer merged on inputs without a
   telemetry plan (the removed step summed P/Q duplicates) (#46)
 - Measurements with a non-finite value or variance are skipped like
@@ -112,17 +132,18 @@ cut by tagging the merged main commit; the version is derived from that tag.
   solver from the given node V/δ without touching the node table (and thus the
   pseudo-measurements built from it); `InitialPoint.from_result` takes it from
   a previous result, and `run(init_state=...)` also accepts an `InitialPoint`.
-  `PipelineConfig.warm_start_mode`: `"seed_inputs"` (default, unchanged: the
-  previous V/δ are seeded into the node table before preprocessing, so they
-  are also the operating point of the pseudo-V priors) or `"x0_only"` (the
-  previous solution is only the initial point of the main solve; the
-  estimation problem is the cold-start one) (#58)
+  `PipelineConfig.warm_start_mode`: `"seed_inputs"` (the previous behaviour:
+  the previous V/δ are seeded into the node table before preprocessing, so
+  they are also the operating point of the pseudo-V priors) or `"x0_only"`
+  (the previous solution is only the initial point of the main solve; the
+  estimation problem is the cold-start one; the default, see "Behavior
+  changes") (#58)
 - `PipelineConfig.ipm_trust_region_scope` (`estimate(..., trust_region_scope=)`,
-  `solve_ipm(tr_exclude_box=)`): `"all"` (default, unchanged bit for bit) or
+  `solve_ipm(tr_exclude_box=)`): `"all"` (the previous behaviour, bit for bit) or
   `"state"` — the IPM trust region is measured on V/δ only, and the resulting
   factor scales the whole Newton step, so a generation/load box variable that
   has to move far no longer shrinks the V/δ step; boxes stay protected by
-  fraction-to-boundary. Opt-in for A/B evaluation (#59)
+  fraction-to-boundary. `"state"` is the default, see "Behavior changes" (#59)
 - Near-critical report of the quality summary: `SEResult.near_critical_measurements`
   lists (`NearCriticalRow`) the measurements whose `Ω_ii / σ²_i` is below
   `PipelineConfig.near_critical_threshold` (default `1e-4`; also
@@ -161,8 +182,7 @@ cut by tagging the merged main commit; the version is derived from that tag.
   measurement critical (`inf`) that is not; those rows now carry the
   `"solve"` values and every `inf` comes from a solve. `0` recomputes only the
   critical rows. The cost grows with the share of recomputed rows (about that
-  share of the `"solve"` time); the default `"solve"` is unchanged bit for
-  bit (#60)
+  share of the `"solve"` time); `"solve"` is unchanged bit for bit (#60)
 
 ### Fix
 
@@ -214,15 +234,16 @@ cut by tagging the merged main commit; the version is derived from that tag.
   `NUMBA_CACHE_DIR`, `GRIDSTATE_NUMBA=0` and
   `kkt_solver.numba_gram_available()` for warm-up (about -36 % wall time on the
   largest benchmark) (#49)
-- Opt-in `PipelineConfig.normalized_residuals_method="selected_inversion"`
-  (also `estimate(quality_summary_rn_method=...)`): `diag(H G⁻¹ Hᵀ)` of the
+- `PipelineConfig.normalized_residuals_method="selected_inversion"`
+  (also `estimate(quality_summary_rn_method=...)`; the default, see "Behavior
+  changes"): `diag(H G⁻¹ Hᵀ)` of the
   normalized residuals from the selected inverse of the sparse Cholesky factor
   (Takahashi recurrence; CHOLMOD factor, or scipy SuperLU without cvxopt)
   instead of one triangular solve per measurement. Needs the `numba` extra
-  (otherwise, and with `GRIDSTATE_NUMBA=0`, the default `"solve"` is used).
+  (otherwise, and with `GRIDSTATE_NUMBA=0`, `"solve"` is used).
   The quality summary of a 3000-bus synthetic network drops from 1.4 s to
-  0.07 s; `r_N` agrees to ~1e-12 except on near-critical measurements. The
-  default stays bit-identical (#60)
+  0.07 s; `r_N` agrees to ~1e-12 except on near-critical measurements.
+  `"solve"` stays bit-identical (#60)
 
 ### Refactor
 

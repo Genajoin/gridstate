@@ -131,9 +131,12 @@ def test_all_problems_are_reported_together() -> None:
 def test_ipm_trust_region_scope_default_and_forwarding() -> None:
     from gridstate.pipeline.passes import _estimate_kwargs
 
-    assert PipelineConfig().ipm_trust_region_scope == "all"
-    cfg = PipelineConfig(algorithm="ipm", ipm_trust_region_scope="state")
-    assert _estimate_kwargs(cfg, init="flat")["trust_region_scope"] == "state"
+    assert PipelineConfig().ipm_trust_region_scope == "state"
+    assert _estimate_kwargs(PipelineConfig(algorithm="ipm"), init="flat")["trust_region_scope"] == (
+        "state"
+    )
+    cfg = PipelineConfig(algorithm="ipm", ipm_trust_region_scope="all")
+    assert _estimate_kwargs(cfg, init="flat")["trust_region_scope"] == "all"
     # WLS never sees the IPM knob.
     assert "trust_region_scope" not in _estimate_kwargs(PipelineConfig(), init="flat")
 

@@ -339,7 +339,7 @@ class PipelineConfig:
         help="flat (V=1,δ=0) | results | slack.",
     )
     warm_start_mode: str = _param(
-        "seed_inputs",
+        "x0_only",
         group=_G_EST,
         label="Режим warm start",
         control="select",
@@ -347,9 +347,10 @@ class PipelineConfig:
         help="How run(init_state=...) uses the previous solution. seed_inputs: its "
         "V/δ are written into the node table before preprocessing, so they are both "
         "the solver start and the V operating point the pseudo-V priors are built "
-        "from (default, previous behaviour). x0_only: the previous solution is only "
-        "the solver initial point; the priors come from the input exactly as on a "
-        "cold start.",
+        "from (the previous default; the result depends on the history of "
+        "warm starts). x0_only (default): the previous solution is only the solver "
+        "initial point; the priors come from the input exactly as on a cold start, "
+        "so a warm result matches the cold one to the solver tolerance.",
     )
     tolerance: float = _param(
         1e-3,
@@ -409,20 +410,21 @@ class PipelineConfig:
         help="Размер worst_residuals/worst_imbalance в quality summary (bad-data панель).",
     )
     normalized_residuals_method: Literal["solve", "selected_inversion"] = _param(
-        "solve",
+        "selected_inversion",
         group=_G_EST,
         label="Normalized residuals method",
         control="select",
         choices=["solve", "selected_inversion"],
         help="How diag(H G⁻¹ Hᵀ) of the quality summary r_N is computed. solve: one "
-        "triangular solve per measurement (the previous behaviour, bit for bit). "
-        "selected_inversion: the entries of G⁻¹ on the pattern of the sparse Cholesky "
-        "factor (Takahashi recurrence) and one quadratic form per measurement, then the "
-        "measurements with a small Ω/σ² recomputed by solves (see "
-        "selected_inversion_refine_below); many times faster on large models, needs the "
-        "numba extra (otherwise solve is used). The methods agree to rounding on the "
-        "remaining measurements; a nearly critical measurement's r_N is numerically "
-        "unreliable with either method (see near_critical_threshold).",
+        "triangular solve per measurement (the most accurate; the previous default). "
+        "selected_inversion (default): the entries of G⁻¹ on the pattern of the "
+        "sparse Cholesky factor (Takahashi recurrence) and one quadratic form per "
+        "measurement, then the measurements with a small Ω/σ² recomputed by solves "
+        "(see selected_inversion_refine_below); many times faster on large models, "
+        "needs the numba extra (otherwise solve is used for every measurement). The "
+        "methods agree to rounding on the remaining measurements; a nearly critical "
+        "measurement's r_N is numerically unreliable with either method (see "
+        "near_critical_threshold).",
     )
     selected_inversion_refine_below: float = _param(
         1e-2,
@@ -489,7 +491,7 @@ class PipelineConfig:
         help="default 0.01 p.u.².",
     )
     ipm_trust_region_scope: str = _param(
-        "all",
+        "state",
         group=_G_IPM,
         label="Trust region scope",
         control="select",
@@ -497,9 +499,10 @@ class PipelineConfig:
         depends={"algorithm": "ipm"},
         help="Coordinates whose Newton step is bounded by the trust region (0.5 p.u.). "
         "all — the whole state vector, generation/load box variables included "
-        "(previous behaviour); state — V and δ only: a box variable that has to move "
-        "far no longer shrinks the V/δ step (boxes stay protected by "
-        "fraction-to-boundary). Under A/B evaluation.",
+        "(the previous default); state (default) — V and δ only: a box variable "
+        "that has to move far no longer shrinks the V/δ step (boxes stay protected "
+        "by fraction-to-boundary), fewer inner Newton iterations at the same "
+        "estimate quality.",
     )
 
     # --- Post-processing ---

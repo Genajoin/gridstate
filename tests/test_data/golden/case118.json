@@ -323,11 +323,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 393.32894780769504,
+   "objective_value": 395.29708505775994,
    "algorithm": "ipm",
-   "convergence_status": "completed",
+   "convergence_status": "kkt",
    "chi2": {
-    "value": 789.3586435426,
+    "value": 789.2957682480255,
     "dof": 863,
     "threshold": 932.4536984554023,
     "passes": true
@@ -587,9 +587,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.2199426016654,
+     "objective_value": 300.2204080576151,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 601.3975695398065
+     "objective_wls": 601.3973592538798
     }
    },
    {
@@ -651,8 +651,8 @@
      },
      "success": true,
      "iterations": 9,
-     "solve_status": "mu_schedule_done",
-     "objective_wls": 789.3586435426
+     "solve_status": "kkt",
+     "objective_wls": 789.2957682480255
     }
    },
    {
@@ -676,11 +676,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 393.32894780769504,
+   "objective_value": 395.29708505775994,
    "algorithm": "ipm",
-   "convergence_status": "completed",
+   "convergence_status": "kkt",
    "chi2": {
-    "value": 789.3586435426,
+    "value": 789.2957682480255,
     "dof": 863,
     "threshold": 932.4536984554023,
     "passes": true
@@ -940,9 +940,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.2199426016654,
+     "objective_value": 300.2204080576151,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 601.3975695398065
+     "objective_wls": 601.3973592538798
     }
    },
    {
@@ -969,8 +969,8 @@
      "conflicting": 0,
      "success": true,
      "iterations": 9,
-     "solve_status": "mu_schedule_done",
-     "objective_wls": 789.3586435426
+     "solve_status": "kkt",
+     "objective_wls": 789.2957682480255
     }
    },
    {
@@ -1022,11 +1022,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 393.32894780769504,
+   "objective_value": 395.29708505775994,
    "algorithm": "ipm",
-   "convergence_status": "completed",
+   "convergence_status": "kkt",
    "chi2": {
-    "value": 789.3586435426,
+    "value": 789.2957682480255,
     "dof": 863,
     "threshold": 932.4536984554023,
     "passes": true
@@ -1286,9 +1286,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.2199426016654,
+     "objective_value": 300.2204080576151,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 601.3975695398065
+     "objective_wls": 601.3973592538798
     }
    },
    {
@@ -1350,8 +1350,8 @@
      },
      "success": true,
      "iterations": 9,
-     "solve_status": "mu_schedule_done",
-     "objective_wls": 789.3586435426
+     "solve_status": "kkt",
+     "objective_wls": 789.2957682480255
     }
    },
    {
@@ -1364,8 +1364,8 @@
     "stats": {
      "tightened": 0,
      "accepted": false,
-     "max_ratio_before": 1.0515,
-     "max_ratio_after": 1.0515
+     "max_ratio_before": 1.0514,
+     "max_ratio_after": 1.0514
     }
    },
    {
@@ -1385,11 +1385,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 393.32894780769504,
+   "objective_value": 395.29708505775994,
    "algorithm": "ipm",
-   "convergence_status": "completed",
+   "convergence_status": "kkt",
    "chi2": {
-    "value": 789.3586435426,
+    "value": 789.2957682480255,
     "dof": 863,
     "threshold": 932.4536984554023,
     "passes": true
@@ -1649,9 +1649,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.2199426016654,
+     "objective_value": 300.2204080576151,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 601.3975695398065
+     "objective_wls": 601.3973592538798
     }
    },
    {
@@ -1713,8 +1713,8 @@
      },
      "success": true,
      "iterations": 9,
-     "solve_status": "mu_schedule_done",
-     "objective_wls": 789.3586435426
+     "solve_status": "kkt",
+     "objective_wls": 789.2957682480255
     }
    },
    {
@@ -1747,11 +1747,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 393.32892511072464,
+   "objective_value": 395.2970850577641,
    "algorithm": "ipm",
-   "convergence_status": "completed",
+   "convergence_status": "kkt",
    "chi2": {
-    "value": 789.3586653937731,
+    "value": 789.2957682440815,
     "dof": 863,
     "threshold": 932.4536984554023,
     "passes": true
@@ -2015,9 +2015,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.21362560129944,
-     "solve_status": "mu_schedule_done",
-     "objective_wls": 601.4013715064611
+     "objective_value": 301.3328623053176,
+     "solve_status": "kkt",
+     "objective_wls": 601.3742571933722
     }
    },
    {
@@ -2079,8 +2079,8 @@
      },
      "success": true,
      "iterations": 9,
-     "solve_status": "mu_schedule_done",
-     "objective_wls": 789.3586653937731
+     "solve_status": "kkt",
+     "objective_wls": 789.2957682440815
     }
    },
    {
