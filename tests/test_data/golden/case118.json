@@ -4,14 +4,14 @@
   "scalars": {
    "success": true,
    "iterations": 3,
-   "objective_value": 3905.303657918251,
+   "objective_value": 845.3285893926766,
    "algorithm": "wls",
    "convergence_status": "converged",
    "chi2": {
-    "value": 3905.303657918251,
+    "value": 845.3285893926765,
     "dof": 863,
     "threshold": 932.4536984554023,
-    "passes": false
+    "passes": true
    }
   },
   "events": [
@@ -267,7 +267,7 @@
      "algorithm": "wls",
      "success": true,
      "iterations": 3,
-     "objective_value": 3905.303657918251
+     "objective_value": 845.3285893926766
     }
    },
    {
@@ -300,8 +300,8 @@
     "stats": {
      "tightened": 0,
      "accepted": false,
-     "max_ratio_before": 1.0522,
-     "max_ratio_after": 1.0522
+     "max_ratio_before": 1.0505,
+     "max_ratio_after": 1.0505
     }
    },
    {
@@ -321,14 +321,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 938.9126924268653,
+   "objective_value": 393.32894780769504,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 1967.1911041802073,
-    "dof": 862,
-    "threshold": 931.4140839171632,
-    "passes": false
+    "value": 789.3586435426,
+    "dof": 863,
+    "threshold": 932.4536984554023,
+    "passes": true
    }
   },
   "events": [
@@ -585,7 +585,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 835.6722912670205
+     "objective_value": 300.2199426016654
     }
    },
    {
@@ -596,14 +596,8 @@
     "type": "step_done",
     "name": "bad_data_repass",
     "stats": {
-     "flips": 0,
-     "rejects": 1,
-     "damped": 0,
-     "candidates": 1,
-     "immune": 0,
-     "restored": 0,
-     "success": true,
-     "iterations": 9
+     "candidates": 0,
+     "skipped": "<text>"
     }
    },
    {
@@ -648,8 +642,8 @@
     "name": "refine_merged",
     "stats": {
      "v_refine": {
-      "tightened": 116,
-      "conflicting": 2
+      "tightened": 118,
+      "conflicting": 0
      },
      "success": true,
      "iterations": 9
@@ -676,14 +670,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 938.9126924268653,
+   "objective_value": 393.32894780769504,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 1967.1911041802073,
-    "dof": 862,
-    "threshold": 931.4140839171632,
-    "passes": false
+    "value": 789.3586435426,
+    "dof": 863,
+    "threshold": 932.4536984554023,
+    "passes": true
    }
   },
   "events": [
@@ -940,7 +934,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 835.6722912670205
+     "objective_value": 300.2199426016654
     }
    },
    {
@@ -951,14 +945,8 @@
     "type": "step_done",
     "name": "bad_data_repass",
     "stats": {
-     "flips": 0,
-     "rejects": 1,
-     "damped": 0,
-     "candidates": 1,
-     "immune": 0,
-     "restored": 0,
-     "success": true,
-     "iterations": 9
+     "candidates": 0,
+     "skipped": "<text>"
     }
    },
    {
@@ -969,8 +957,8 @@
     "type": "step_done",
     "name": "v_refine",
     "stats": {
-     "tightened": 116,
-     "conflicting": 2,
+     "tightened": 118,
+     "conflicting": 0,
      "success": true,
      "iterations": 9
     }
@@ -1024,14 +1012,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 938.9126924268653,
+   "objective_value": 393.32894780769504,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 1967.1911041802073,
-    "dof": 862,
-    "threshold": 931.4140839171632,
-    "passes": false
+    "value": 789.3586435426,
+    "dof": 863,
+    "threshold": 932.4536984554023,
+    "passes": true
    }
   },
   "events": [
@@ -1288,7 +1276,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 835.6722912670205
+     "objective_value": 300.2199426016654
     }
    },
    {
@@ -1299,14 +1287,8 @@
     "type": "step_done",
     "name": "bad_data_repass",
     "stats": {
-     "flips": 0,
-     "rejects": 1,
-     "damped": 0,
-     "candidates": 1,
-     "immune": 0,
-     "restored": 0,
-     "success": true,
-     "iterations": 9
+     "candidates": 0,
+     "skipped": "<text>"
     }
    },
    {
@@ -1351,8 +1333,8 @@
     "name": "refine_merged",
     "stats": {
      "v_refine": {
-      "tightened": 116,
-      "conflicting": 2
+      "tightened": 118,
+      "conflicting": 0
      },
      "success": true,
      "iterations": 9
@@ -1368,8 +1350,8 @@
     "stats": {
      "tightened": 0,
      "accepted": false,
-     "max_ratio_before": 1.0524,
-     "max_ratio_after": 1.0524
+     "max_ratio_before": 1.0515,
+     "max_ratio_after": 1.0515
     }
    },
    {
@@ -1389,14 +1371,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 938.9126924268653,
+   "objective_value": 393.32894780769504,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 1967.1911041802073,
-    "dof": 862,
-    "threshold": 931.4140839171632,
-    "passes": false
+    "value": 789.3586435426,
+    "dof": 863,
+    "threshold": 932.4536984554023,
+    "passes": true
    }
   },
   "events": [
@@ -1653,7 +1635,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 835.6722912670205
+     "objective_value": 300.2199426016654
     }
    },
    {
@@ -1664,14 +1646,8 @@
     "type": "step_done",
     "name": "bad_data_repass",
     "stats": {
-     "flips": 0,
-     "rejects": 1,
-     "damped": 0,
-     "candidates": 1,
-     "immune": 0,
-     "restored": 0,
-     "success": true,
-     "iterations": 9
+     "candidates": 0,
+     "skipped": "<text>"
     }
    },
    {
@@ -1716,8 +1692,8 @@
     "name": "refine_merged",
     "stats": {
      "v_refine": {
-      "tightened": 116,
-      "conflicting": 2
+      "tightened": 118,
+      "conflicting": 0
      },
      "success": true,
      "iterations": 9
@@ -1753,14 +1729,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 938.91263668197,
+   "objective_value": 393.32892511072464,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 1967.1911184690107,
-    "dof": 862,
-    "threshold": 931.4140839171632,
-    "passes": false
+    "value": 789.3586653937731,
+    "dof": 863,
+    "threshold": 932.4536984554023,
+    "passes": true
    }
   },
   "events": [
@@ -2021,7 +1997,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 835.7904079581537
+     "objective_value": 300.21362560129944
     }
    },
    {
@@ -2032,14 +2008,8 @@
     "type": "step_done",
     "name": "bad_data_repass",
     "stats": {
-     "flips": 0,
-     "rejects": 1,
-     "damped": 0,
-     "candidates": 1,
-     "immune": 0,
-     "restored": 0,
-     "success": true,
-     "iterations": 9
+     "candidates": 0,
+     "skipped": "<text>"
     }
    },
    {
@@ -2084,8 +2054,8 @@
     "name": "refine_merged",
     "stats": {
      "v_refine": {
-      "tightened": 116,
-      "conflicting": 2
+      "tightened": 118,
+      "conflicting": 0
      },
      "success": true,
      "iterations": 9

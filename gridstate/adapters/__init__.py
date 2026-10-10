@@ -10,7 +10,11 @@ numpy/scipy-only; внешняя библиотека (pandapower) импорт�
 
 from __future__ import annotations
 
-from gridstate.adapters.from_pandapower import from_pandapower, measurement_array
+from gridstate.adapters.from_pandapower import (
+    from_pandapower,
+    measurement_array,
+    network_injection,
+)
 
 
-__all__ = ["from_pandapower", "measurement_array"]
+__all__ = ["from_pandapower", "measurement_array", "network_injection"]

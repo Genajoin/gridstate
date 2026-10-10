@@ -9,9 +9,16 @@ WLS SE and compares |V| and angles with the power flow solution.
 
 Angles are compared **relative to the slack node**: a global phase rotation is unobservable
 without an absolute angle anchor, and pandapower sets a slack angle != 0 in different cases
-(case118: 30 deg). Tolerances achieved on the current fixtures (max over nodes, with noise
-sigma_V=0.5% Vn, sigma_P/Q=2 MW): |dV| <= 0.006 p.u., |dtheta| <= 0.7 deg; the thresholds below are taken
-with a margin.
+(case118: 30 deg). Errors achieved on the current fixtures (max over nodes, with noise
+sigma_V=0.5% Vn, sigma_P/Q=2 MW): |dV| = 0.0034 / 0.0058 / 0.0043 p.u. and |dtheta| =
+0.25 / 0.66 / 0.40 deg (case14 / case30 / case118); the thresholds below are taken
+with a margin. With noise-free measurements the estimate reproduces the power flow
+to ~1e-8 p.u., so what remains is the measurement noise.
+
+The fixtures are also checked for consistency with their own noise model: the WLS
+objective J = sum(r^2 / sigma^2) must stay within the chi-square bound of its
+degrees of freedom. A model or measurement mismatch in the generator (such as bus
+shunt power counted in the nodal injections) shows up there first.
 """
 
 from __future__ import annotations
@@ -28,9 +35,11 @@ from gridstate.pipeline import PipelineConfig
 
 _DATA_DIR = Path(__file__).parent / "test_data" / "ieee"
 
-# Tolerances (with a margin over the achieved ~0.006 p.u. / ~0.7 deg).
-_TOL_V_PU = 0.015
-_TOL_DELTA_DEG = 2.0
+# Tolerances (with a margin over the achieved <= 0.0058 p.u. / <= 0.66 deg).
+_TOL_V_PU = 0.008
+_TOL_DELTA_DEG = 1.0
+# Upper tail probability of the chi-square bound on the WLS objective.
+_CHI2_ALPHA = 1e-3
 
 _CASES = ["case14", "case30", "case118"]
 
@@ -88,6 +97,20 @@ def test_ieee_case_se_matches_powerflow(case: str) -> None:
     assert success, f"{case}: WLS did not converge ({iters} iterations)"
     assert max_dv <= _TOL_V_PU, f"{case}: max|dV|={max_dv:.4f} p.u. > {_TOL_V_PU}"
     assert max_dd <= _TOL_DELTA_DEG, f"{case}: max|dδ|={max_dd:.4f}° > {_TOL_DELTA_DEG}"
+
+
+@pytest.mark.parametrize("case", _CASES)
+def test_ieee_case_objective_matches_the_noise_level(case: str) -> None:
+    """J(x_hat) is chi-square distributed with m - (2n - 1) degrees of freedom when the
+    measurements are the power flow plus the declared noise and nothing else."""
+    from scipy.stats import chi2
+
+    se_in = load_se_input_npz(_DATA_DIR / f"{case}.npz")
+    out = run_se(se_in, config=PipelineConfig(algorithm="wls"), validate=False)
+    dof = len(se_in.model.measurements) - (2 * len(se_in.model.nodes) - 1)
+    bound = float(chi2.ppf(1.0 - _CHI2_ALPHA, dof))
+    assert out.success
+    assert out.objective_value <= bound, f"{case}: J={out.objective_value:.1f} > {bound:.1f}"
 
 
 def test_ieee_cases_are_nontrivial() -> None:

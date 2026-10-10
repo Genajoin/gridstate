@@ -106,6 +106,22 @@ cut by tagging the merged main commit; the version is derived from that tag.
   transformer. The guess is kept only for branch tables without `branch_type`,
   and no longer treats split line charging as a one-sided shunt. Totals are
   unchanged (#55)
+- IEEE fixture generator: nodal P/Q injection measurements no longer include
+  the power of bus shunts, which gridstate models in the Y-bus (they were
+  biased by up to 21 Mvar on case14 and 40 Mvar on case118, i.e. 10-20 sigma).
+  The shared helper `gridstate.adapters.network_injection` returns the
+  shunt-free injection of a solved pandapower network. Fixtures and golden
+  snapshots are regenerated; the WLS objective of every IEEE fixture is now
+  within the chi-square bound of its noise, and the IEEE test tolerances are
+  tightened to 0.008 p.u. / 1 degree (#79)
+- `from_pandapower` keeps the transformer magnetising branch (`i0_percent`,
+  `pfe_kw`) in the branch shunt fields, using pandapower's T equivalent circuit
+  (its power-flow default) or the pi circuit, selected by the new
+  `trafo_model` argument or taken from the last power flow. The series
+  impedance follows pandapower's equations as well, which also fixes
+  transformers with an off-nominal LV-side tap or rated voltages that differ
+  from the bus voltages. The Y-bus matches pandapower to 1e-13 p.u. on IEEE
+  case14 / case30 / case118 (case118 differed by 0.4 p.u.) (#80)
 
 ### Perf
 

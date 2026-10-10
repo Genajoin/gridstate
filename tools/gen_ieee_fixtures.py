@@ -7,7 +7,8 @@ For each model (``case14`` / ``case30`` / ``case118`` from ``pandapower.networks
 2. builds a ``SEInput`` via :func:`gridstate.adapters.from_pandapower`;
 3. synthesises a **redundant observable** z-vector from the PF solution: |V| at all
    buses, P/Q branch flows at both ends of every branch (line: from/to, trafo: hv/lv),
-   P/Q injections at all nodes, with Gaussian noise (fixed seed) and
+   P/Q network injections at all nodes (bus shunts excluded: they are part of
+   the Y-bus), with Gaussian noise (fixed seed) and
    ``variance = σ²``;
 4. saves the SE input to ``tests/test_data/ieee/caseNN.npz`` (contract npz via
    :func:`gridstate.save_se_input`);
@@ -44,7 +45,7 @@ _SEED = 20260602
 
 def _build_measurements(net: Any, rng: np.random.Generator) -> np.ndarray:
     """Synthesise an observable redundant z-vector from the PF solution (+ noise)."""
-    from gridstate.adapters import measurement_array
+    from gridstate.adapters import measurement_array, network_injection
     from gridstate.z_vector import (
         KIND_POWER_INJECTION_P,
         KIND_POWER_INJECTION_Q,
@@ -69,10 +70,12 @@ def _build_measurements(net: Any, rng: np.random.Generator) -> np.ndarray:
         vn = float(net.bus.vn_kv[bus])
         add(OBJ_NODE, int(bus), KIND_VOLTAGE, net.res_bus.vm_pu[bus] * vn, _SIGMA_V_FRAC * vn)
 
-    # P/Q injections at all nodes (gen - load = -res_bus.p_mw, the consumer sign is inverted).
+    # P/Q injections at all nodes: the network injection (generation - load) without
+    # the bus shunt power, which gridstate keeps in the Y-bus (see network_injection).
+    p_inj, q_inj = network_injection(net)
     for bus in net.bus.index:
-        add(OBJ_NODE, int(bus), KIND_POWER_INJECTION_P, -net.res_bus.p_mw[bus], _SIGMA_PQ_MW)
-        add(OBJ_NODE, int(bus), KIND_POWER_INJECTION_Q, -net.res_bus.q_mvar[bus], _SIGMA_PQ_MW)
+        add(OBJ_NODE, int(bus), KIND_POWER_INJECTION_P, p_inj[bus], _SIGMA_PQ_MW)
+        add(OBJ_NODE, int(bus), KIND_POWER_INJECTION_Q, q_inj[bus], _SIGMA_PQ_MW)
 
     # Flows at both ends of all lines (branch id 1..n_line - adapter order).
     n_line = len(net.line)
