@@ -6,8 +6,8 @@ from dataclasses import dataclass, fields, replace
 
 import pytest
 
-from gridstate.pipeline import PipelineConfig, _param, prepare_network, run
-from gridstate.pipeline.config import _G_POST
+from gridstate.pipeline import PipelineConfig, prepare_network, run
+from gridstate.pipeline.config import _G_POST, _param
 
 
 def test_defaults_are_valid() -> None:

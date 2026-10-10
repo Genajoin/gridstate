@@ -24,7 +24,6 @@ from gridstate.contract.serialize import load_se_input_npz
 from gridstate.pipeline import PipelineConfig
 from gridstate.resolve_pass import (
     REVERT_REASON_NOT_CONVERGED,
-    ResolveGuard,
     ResolvePass,
     ResolveSnapshot,
     resolve_regressed,
@@ -281,7 +280,7 @@ def test_guard_keeps_failed_resolve_when_base_failed_too():
     model = _load().model
     base = SimpleNamespace(success=False)
     resolved = SimpleNamespace(success=False)
-    guard = ResolveGuard(model, base)  # type: ignore[arg-type]
+    guard = ResolvePass(model, base)  # type: ignore[arg-type]
     guard.arm()
     stats: dict = {}
     assert guard.settle(resolved, stats) is resolved  # type: ignore[arg-type]
@@ -291,7 +290,7 @@ def test_guard_keeps_failed_resolve_when_base_failed_too():
 def test_guard_arm_is_idempotent_and_required():
     model = _load().model
     v0 = model.nodes.to_numpy()["voltage_magnitude"].copy()
-    guard = ResolveGuard(model, SimpleNamespace(success=True))  # type: ignore[arg-type]
+    guard = ResolvePass(model, SimpleNamespace(success=True))  # type: ignore[arg-type]
     with pytest.raises(RuntimeError):
         guard.settle(SimpleNamespace(success=False), {})  # type: ignore[arg-type]
     guard.arm()
@@ -304,9 +303,8 @@ def test_guard_arm_is_idempotent_and_required():
     assert np.array_equal(model.nodes.to_numpy()["voltage_magnitude"], v0)
 
 
-def test_resolve_pass_guard_revert_and_former_name():
+def test_resolve_pass_guard_and_revert():
     model = _load().model
-    assert ResolveGuard is ResolvePass
     assert ResolvePass(model, SimpleNamespace(success=True)).usable  # type: ignore[arg-type]
     assert not ResolvePass(model, SimpleNamespace(success=False)).usable  # type: ignore[arg-type]
     rp = ResolvePass(model, SimpleNamespace(success=True))  # type: ignore[arg-type]

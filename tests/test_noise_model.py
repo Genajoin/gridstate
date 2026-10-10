@@ -10,9 +10,7 @@ from gridstate.contract import SE_INPUT
 from gridstate.telemetry import noise, units
 
 
-def test_units_module_reexports_the_noise_functions() -> None:
-    for name in ("variance_voltage", "variance_power", "variance_branch_q"):
-        assert getattr(units, name) is getattr(noise, name)
+def test_normalize_guid() -> None:
     assert units.normalize_guid("{AB-cd}") == "ab-cd"
 
 

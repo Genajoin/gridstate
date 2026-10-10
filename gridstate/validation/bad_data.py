@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 # Measurement quality code "BAD" in the contract (value of the ``quality`` column).
-QUALITY_BAD = int(MeasurementQuality.BAD)
+_QUALITY_BAD = int(MeasurementQuality.BAD)
 
 
 class ResidualTopRecord(NamedTuple):
@@ -378,7 +378,7 @@ def remove_bad_data(
             )
             return _result(converged=False)
         bad_meas.status = False
-        bad_meas.quality = QUALITY_BAD
+        bad_meas.quality = _QUALITY_BAD
         removed.append(bad_id)
         logger.info(
             "rn_max: itr %d, removed measurement id=%d (r^N=%.2f > %.2f)",

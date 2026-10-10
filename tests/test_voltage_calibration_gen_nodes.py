@@ -418,6 +418,7 @@ def test_pipeline_config_field_and_step_wiring() -> None:
     from types import SimpleNamespace
 
     from gridstate import pipeline as P  # noqa: N812
+    from gridstate.pipeline.preparation import _s_gen_v_calibration
 
     cfg = P.PipelineConfig()
     assert cfg.gen_v_calibration_mode == "absolute"
@@ -432,5 +433,5 @@ def test_pipeline_config_field_and_step_wiring() -> None:
         aggregate_generators_to_node(m)
         _set_variances(m, {1: 0.01})
         ctx = SimpleNamespace(model=m, cfg=P.PipelineConfig(gen_v_calibration_mode=mode))
-        P._s_gen_v_calibration(ctx)  # type: ignore[arg-type]
+        _s_gen_v_calibration(ctx)  # type: ignore[arg-type]
         assert _meas_by_id(m)[1]["variance"] == pytest.approx(expected), mode

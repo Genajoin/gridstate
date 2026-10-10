@@ -17,7 +17,9 @@ from types import SimpleNamespace
 import numpy as np
 
 from gridstate.constants import BranchType, NodeType
-from gridstate.pipeline import PipelineConfig, _Ctx, _s_v_mirror, run
+from gridstate.pipeline import PipelineConfig, run
+from gridstate.pipeline.context import _Ctx
+from gridstate.pipeline.passes import _s_v_mirror
 from gridstate.v_mirror import (
     VMirrorPlan,
     apply_v_mirror_plan,

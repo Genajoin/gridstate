@@ -5,8 +5,8 @@ materialization (``_materialize_area_on_arrays``) plus thin adapters that apply
 ready-made numeric plans (``apply_telemetry_resolved`` /
 ``apply_materialize_resolved``). The plans are computed outside the core by the
 data producer; this module only applies them to ``SE_INPUT`` arrays (no source
-format layer). The measurement kind maps (``_KIND_MAP`` / ``_NODE_INJ_MAP`` /
-``_INJ_MT``) live in ``gridstate.telemetry._specs``.
+format layer). The measurement kind maps (``KIND_MAP`` / ``NODE_INJ_MAP`` /
+``INJ_MT``) live in :mod:`gridstate.telemetry.kinds`.
 """
 
 from __future__ import annotations
@@ -19,10 +19,15 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gridstate._arrays import id_value_map
-from gridstate.constants import FilterFlag, MeasurementObjectType, MeasurementType
+from gridstate.constants import (
+    FilterFlag,
+    MeasurementObjectType,
+    MeasurementQuality,
+    MeasurementType,
+)
 from gridstate.measurement_ids import IdAllocator
 from gridstate.telemetry._filters import build_measurement_index
-from gridstate.telemetry._specs import _INJ_MT, _KIND_MAP, _NODE_INJ_MAP
+from gridstate.telemetry.kinds import INJ_MT, KIND_MAP, NODE_INJ_MAP
 from gridstate.telemetry.loss_filter import is_branch_q_consistent_with_physics
 from gridstate.telemetry.noise import (
     QUESTIONABLE_SIGMA2_MULTIPLIER,
@@ -32,7 +37,7 @@ from gridstate.telemetry.noise import (
     variance_power,
     variance_voltage,
 )
-from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_QUESTIONABLE, aggregate_qualities
+from gridstate.telemetry.quality import aggregate_qualities
 from gridstate.working import table_copy, table_replace
 from gridstate.z_vector import SIDE_NONE
 
@@ -45,6 +50,8 @@ _OT_NODE = int(MeasurementObjectType.NODE)
 _OT_BRANCH = int(MeasurementObjectType.BRANCH)
 _MT_Q = int(MeasurementType.POWER_Q)
 _MT_V = int(MeasurementType.VOLTAGE)
+_Q_BAD = int(MeasurementQuality.BAD)
+_Q_QUESTIONABLE = int(MeasurementQuality.QUESTIONABLE)
 
 
 @dataclass(frozen=True)
@@ -53,8 +60,8 @@ class TelemetryApplyConfig:
 
     Single source of truth for the defaults that were previously duplicated
     between the public wrapper :func:`apply_telemetry_resolved` and the core.
-    The wrapper keeps its individual keyword arguments for backward
-    compatibility and assembles this config to hand down.
+    The public wrapper takes the same values as individual keyword arguments
+    and assembles this config to hand down.
     """
 
     questionable_sigma2_multiplier: float = QUESTIONABLE_SIGMA2_MULTIPLIER
@@ -296,7 +303,7 @@ def _apply_measurement_loop(
         # accumulate for the later .add(). PG_G* and QG_G* count as a
         # positive contribution of P_gen/Q_gen to the node (like a plain PG/QG).
         kind_base = kind.split("_G", 1)[0] if kind.startswith(("PG_G", "QG_G")) else kind
-        if kind_base in _NODE_INJ_MAP:
+        if kind_base in NODE_INJ_MAP:
             value, n_res, guid_first, q = resolved[(obj_id, kind)]
             if value is None:
                 if n_res == 0:
@@ -304,15 +311,15 @@ def _apply_measurement_loop(
                 else:
                     stats["skipped_formula_error"] += 1
                 continue
-            if q == QUALITY_BAD:
+            if q == _Q_BAD:
                 stats["skipped_bad_quality"] += 1
                 continue
-            pq, mult = _NODE_INJ_MAP[kind_base]
+            pq, mult = NODE_INJ_MAP[kind_base]
             val = value * mult
             inj_acc.setdefault((obj_id, pq), []).append((val, guid_first, q))
             continue
 
-        if kind not in _KIND_MAP:
+        if kind not in KIND_MAP:
             stats["skipped_kind_unsupported"] += 1
             continue
         # A branch with sign-inconsistent P-meas: none of the 4 measurements of
@@ -320,7 +327,7 @@ def _apply_measurement_loop(
         if kind in ("PBEG", "PEND", "QBEG", "QEND") and obj_id in inconsistent_branches:
             stats.setdefault("skipped_sign_inconsistent", 0)
             stats["skipped_sign_inconsistent"] += 1
-            ot_f, mt_f, side_f, _ = _KIND_MAP[kind]
+            ot_f, mt_f, side_f, _ = KIND_MAP[kind]
             idx_f = meas_idx.get((ot_f, mt_f, side_f, obj_id))
             if idx_f is not None:
                 meas_arr[idx_f]["filter_flag"] = int(FilterFlag.P_SIGN_INCONSISTENCY)
@@ -329,7 +336,7 @@ def _apply_measurement_loop(
         if kind in ("QBEG", "QEND") and obj_id in q_inconsistent_branches:
             stats.setdefault("skipped_q_inconsistent", 0)
             stats["skipped_q_inconsistent"] += 1
-            ot_f, mt_f, side_f, _ = _KIND_MAP[kind]
+            ot_f, mt_f, side_f, _ = KIND_MAP[kind]
             idx_f = meas_idx.get((ot_f, mt_f, side_f, obj_id))
             if idx_f is not None:
                 meas_arr[idx_f]["filter_flag"] = int(FilterFlag.Q_INCONSISTENCY)
@@ -337,7 +344,7 @@ def _apply_measurement_loop(
         # Q-inconsistent on an HV line with action=downweight: do NOT drop; the
         # marker for the σ² ×factor increase is applied after the value is
         # activated (logic right below the val/var computation).
-        ot, mt, side, sign = _KIND_MAP[kind]
+        ot, mt, side, sign = KIND_MAP[kind]
         # Do not activate a measurement on a disconnected branch -- otherwise
         # WLS gets a P/Q residual ≠0 on a branch the Y-bus has zeroed.
         if ot == _OT_BRANCH and not branch_status_by_id.get(int(obj_id), False):
@@ -356,7 +363,7 @@ def _apply_measurement_loop(
             else:
                 stats["skipped_formula_error"] += 1
             continue
-        if q == QUALITY_BAD:
+        if q == _Q_BAD:
             stats["skipped_bad_quality"] += 1
             meas_arr[idx]["filter_flag"] = int(FilterFlag.BAD_QUALITY)
             continue
@@ -392,7 +399,7 @@ def _apply_measurement_loop(
             branch_b=branch_b,
             config=config,
         )
-        if int(meas_arr[idx]["quality"]) == QUALITY_QUESTIONABLE:
+        if int(meas_arr[idx]["quality"]) == _Q_QUESTIONABLE:
             var *= config.questionable_sigma2_multiplier
         # Per-measurement σ² scale of a node V measurement from the data
         # producer's plan ({node_id: factor}; factor<1 increases trust in the
@@ -421,7 +428,7 @@ def _apply_measurement_loop(
             meas_arr[idx]["filter_flag"] = int(FilterFlag.Q_INCONSISTENCY)  # q_inconsistency mark
         meas_arr[idx]["variance"] = float(var)
         meas_arr[idx]["weight"] = 1.0 / float(var)
-        if int(meas_arr[idx]["quality"]) == QUALITY_QUESTIONABLE:
+        if int(meas_arr[idx]["quality"]) == _Q_QUESTIONABLE:
             stats["applied_questionable"] += 1
         else:
             stats["applied"] += 1
@@ -445,9 +452,9 @@ def _build_node_injection_rows(
         net = sum(v for v, _, _ in entries)
         guid_first = entries[0][1]
         net_q = aggregate_qualities([q for _, _, q in entries])
-        mt = _INJ_MT[pq]
+        mt = INJ_MT[pq]
         var = variance_injection(net, "P" if pq == "P" else "Q")
-        if net_q == QUALITY_QUESTIONABLE:
+        if net_q == _Q_QUESTIONABLE:
             var *= config.questionable_sigma2_multiplier
         new_rows.append(
             {
@@ -465,7 +472,7 @@ def _build_node_injection_rows(
             }
         )
         stats["node_inj_added"] += 1
-        if net_q == QUALITY_QUESTIONABLE:
+        if net_q == _Q_QUESTIONABLE:
             stats["applied_questionable"] += 1
 
     return new_rows

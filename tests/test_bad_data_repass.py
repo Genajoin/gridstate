@@ -22,7 +22,9 @@ from gridstate.bad_data_repass import (
     classify_bad_data,
 )
 from gridstate.constants import BranchType, NodeType
-from gridstate.pipeline import PipelineConfig, _Ctx, _s_bad_data_repass, run
+from gridstate.pipeline import PipelineConfig, run
+from gridstate.pipeline.context import _Ctx
+from gridstate.pipeline.passes import _s_bad_data_repass
 from gridstate.working import Working
 from gridstate.z_vector import (
     KIND_POWER_INJECTION_P,
