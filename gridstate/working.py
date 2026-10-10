@@ -196,8 +196,9 @@ class _ArrayCollection:
         in-place updates and is detached by ``update_from_array``/``add``).
         """
         if copy:
-            return self._arr.copy()
-        view = self._arr.view()
+            fresh: np.ndarray = self._arr.copy()
+            return fresh
+        view: np.ndarray = self._arr.view()
         view.flags.writeable = False
         return view
 
