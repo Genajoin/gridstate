@@ -242,9 +242,7 @@ NODES = TableSchema(
             Role.WORKING,
             doc="Приоритет балансирования; читает refine_slack, пишет телеметрия.",
         ),
-        ColumnSpec(
-            "shunt_g", "f8", Role.WORKING, doc="G шунта, См. Пишет apply_reactors/one_sided."
-        ),
+        ColumnSpec("shunt_g", "f8", Role.WORKING, doc="G шунта, См. Пишет apply_reactors."),
         ColumnSpec(
             "shunt_b", "f8", Role.WORKING, doc="B шунта, См. Пишет apply_reactors (ШР→шунт)."
         ),
