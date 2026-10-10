@@ -34,7 +34,7 @@ class TestResolveBackend:
         assert resolve_backend("scipy") == "scipy"
 
     def test_unknown_raises(self) -> None:
-        with pytest.raises(ValueError, match="неизвестный kkt_solver"):
+        with pytest.raises(ValueError, match="unknown kkt_solver"):
             resolve_backend("pardiso")
 
     def test_auto_resolves(self) -> None:

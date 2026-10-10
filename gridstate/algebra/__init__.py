@@ -1,5 +1,5 @@
-"""Алгебра SE: функция измерений h(E), якобиан H, cost-функции.
+"""SE algebra: measurement function h(E), Jacobian H, cost functions.
 
-Изолирована от конкретного алгоритма — ``gridstate/algorithms/*`` используют
-этот слой как строительный блок.
+Isolated from any specific algorithm — ``gridstate/algorithms/*`` use
+this layer as a building block.
 """

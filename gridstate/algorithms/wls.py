@@ -1,44 +1,44 @@
-"""Weighted Least Squares — основной алгоритм SE (trust-region Gauss-Newton).
+"""Weighted Least Squares — the main SE algorithm (trust-region Gauss-Newton).
 
 Adapted from pandapower:
     pandapower/estimation/algorithm/base.py (class ``WLSAlgorithm``).
 Copyright (c) 2016-2025 University of Kassel and Fraunhofer IEE, Kassel.
 Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
 
-Отличия от оригинала:
-    - удалена зависимость от ``ExtendedPPCI`` и PYPOWER-формата;
-    - работает с ``BaseAlgebra``, ``StateLayout`` и ``MeasurementIndex``
-      напрямую;
-    - возвращает ``WLSResult`` вместо мутирующего ``eppci``;
-    - простой ``max_step``-clamp + α·line search заменён на гибридную
-      trust-region/Levenberg-Marquardt стратегию (см. ниже).
+Differences from the original:
+    - dropped the dependence on ``ExtendedPPCI`` and the PYPOWER format;
+    - works with ``BaseAlgebra``, ``StateLayout`` and ``MeasurementIndex``
+      directly;
+    - returns ``WLSResult`` instead of mutating ``eppci``;
+    - the simple ``max_step`` clamp + α·line search is replaced by a hybrid
+      trust-region/Levenberg-Marquardt strategy (see below).
 
-Стратегия шага:
-    1. Default — pure Gauss-Newton с TR-обрезанием по длине:
-       решаем ``G·d = rhs``, при ``|d|∞ > Δ`` масштабируем до Δ
-       (направление сохранено).
-    2. Ratio test ``ρ = (J_old − J_new) / (2·rhsᵀd − dᵀG d)`` оценивает
-       качество квадратичной модели:
-         - ``ared ≥ −ε``: шаг принят (защита от floating-point шума при
-           малых ΔJ); ``ρ`` используется только для адаптации Δ и λ.
-         - ``ared < −ε``: шаг отвергнут, Δ ← Δ·0.25, λ растёт (LM kick-in),
-           следующая попытка через λ-bisection меняет направление.
-    3. Proactive LM activation: если шаг at_boundary AND ``ρ < 0.25``,
-       активируем λ ≥ ``lam_init`` на следующей итерации — сигнал что
-       модель плохо описывает шаг у границы TR.
+Step strategy:
+    1. Default — pure Gauss-Newton with TR clipping by length:
+       solve ``G·d = rhs``, if ``|d|∞ > Δ`` scale to Δ
+       (the direction is preserved).
+    2. The ratio test ``ρ = (J_old − J_new) / (2·rhsᵀd − dᵀG d)`` assesses
+       the quality of the quadratic model:
+         - ``ared ≥ −ε``: the step is accepted (protection against floating-point noise at
+           small ΔJ); ``ρ`` is used only to adapt Δ and λ.
+         - ``ared < −ε``: the step is rejected, Δ ← Δ·0.25, λ grows (LM kick-in),
+           the next attempt via λ-bisection changes the direction.
+    3. Proactive LM activation: if the step is at_boundary AND ``ρ < 0.25``,
+       activate λ ≥ ``lam_init`` on the next iteration — a signal that the
+       model describes the step near the TR boundary badly.
     4. Δ_max = max_step. Letting the TR grow beyond the initial max_step
        speeds up the decrease of J but worsens accuracy on real telemetry:
        with inconsistent measurements the minimum of J lies away from the
        true state.
 
-Останов: ``max|ΔE| ≤ tolerance`` либо превышение ``max_iterations``.
+Stop: ``max|ΔE| ≤ tolerance`` or exceeding ``max_iterations``.
 
-Тонкости:
-    - σ² < 1e-10 регуляризируется, чтобы избежать переполнения R⁻¹.
-    - На первой итерации производные токов сингулярны (flat-старт);
-      они зануляются автоматически через нулевые строки H.
-    - Force-accept крошечных шагов (``|d|∞ ≤ tolerance``) защищает от
-      ложных reject-ов из-за floating-point шума в ``ared``.
+Subtleties:
+    - σ² < 1e-10 is regularized to avoid overflow of R⁻¹.
+    - On the first iteration the derivatives of the branch currents are singular (flat start);
+      they are zeroed automatically through zero rows of H.
+    - Force-accepting tiny steps (``|d|∞ ≤ tolerance``) protects against
+      false rejects caused by floating-point noise in ``ared``.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ def _solve_damped(
     lam: float,
     solver: KKTSolver,
 ) -> np.ndarray | None:
-    """Решить ``(G + λ·diag(G))·d = rhs``. Возвращает ``None`` при сбое."""
+    """Solve ``(G + λ·diag(G))·d = rhs``. Returns ``None`` on failure."""
     n = G.shape[0]
     if lam > 0.0:
         damping = csc_matrix(
@@ -119,26 +119,26 @@ def _solve_in_trust_region(
     lam_floor: float,
     solver: KKTSolver,
 ) -> tuple[np.ndarray, float, float, bool]:
-    """Подобрать шаг ``d`` так, чтобы ``|d|∞ ≤ tr_radius``.
+    """Choose a step ``d`` such that ``|d|∞ ≤ tr_radius``.
 
-    Два режима:
-        - ``lam_floor == 0``: чистый Gauss-Newton с обрезанием по TR
-          (масштабирование raw d до границы). Сохраняет GN-направление —
-          важно для well-conditioned задач (синтетика, типичные Power Flow).
+    Two modes:
+        - ``lam_floor == 0``: pure Gauss-Newton with TR clipping
+          (scaling the raw d to the boundary). Preserves the GN direction —
+          important for well-conditioned problems (synthetic, typical Power Flow).
         - ``lam_floor > 0``: Sorensen-style λ-bisection. λ ≥ lam_floor
-          растится геометрически до тех пор, пока ``|d|∞ ≤ tr_radius``,
-          затем bisection в log-пространстве ищет λ, дающее шаг у границы
-          TR ([0.7·TR, TR]). Меняет направление шага — нужно при
-          reject в основном цикле, чтобы выйти из плохой quadratic-модели.
+          is grown geometrically until ``|d|∞ ≤ tr_radius``,
+          then a bisection in log space looks for the λ that gives a step at the TR
+          boundary ([0.7·TR, TR]). Changes the step direction — needed on a
+          reject in the main loop, to get out of a bad quadratic model.
 
     Returns:
-        ``(d, step_inf, lam_used, ok)``. ``ok=False`` означает, что
-        линейная система не решилась (G сингулярна, NaN в результате) —
-        вызывающий код должен прервать итерации, а не считать это
-        «сошёлся за нулевой шаг».
+        ``(d, step_inf, lam_used, ok)``. ``ok=False`` means that the
+        linear system could not be solved (G singular, NaN in the result) —
+        the calling code must abort the iterations rather than treat it as
+        "converged in a zero step".
     """
     if lam_floor <= 0.0:
-        # Default mode: pure GN с TR-clamp по длине.
+        # Default mode: pure GN with TR clamp by length.
         d = _solve_damped(G, rhs, diag_G, 0.0, solver)
         if d is None or not np.all(np.isfinite(d)):
             return np.zeros_like(rhs), 0.0, 0.0, False
@@ -148,7 +148,7 @@ def _solve_in_trust_region(
             step = tr_radius
         return d, step, 0.0, True
 
-    # LM-bisection режим (после reject в основном цикле).
+    # LM-bisection mode (after a reject in the main loop).
     d_lo = _solve_damped(G, rhs, diag_G, lam_floor, solver)
     if d_lo is None or not np.all(np.isfinite(d_lo)):
         return np.zeros_like(rhs), 0.0, lam_floor, False
@@ -173,11 +173,11 @@ def _solve_in_trust_region(
                 break
         lam_hi *= 4.0
     else:
-        # Fallback: scaling d_lo до TR.
+        # Fallback: scaling d_lo to TR.
         scale = tr_radius / max(step_lo, 1e-30)
         return d_lo * scale, tr_radius, lam_floor, True
 
-    # Здесь loop вышел через break ⇒ d_hi гарантированно присвоен (не None).
+    # Here the loop exited via break ⇒ d_hi is guaranteed to be assigned (not None).
     lam_lo = lam_floor
     for _ in range(20):
         lam_mid = float(np.sqrt(lam_lo * lam_hi))
@@ -220,28 +220,28 @@ def solve_wls(
     huber_warmup_iters: int = 5,
     kkt_solver: KKTSolver | None = None,
 ) -> WLSResult:
-    """Выполнить trust-region Gauss-Newton WLS (опционально SHGM-IRLS).
+    """Run trust-region Gauss-Newton WLS (optionally SHGM-IRLS).
 
     Args:
-        e_init: начальное приближение ``E`` длины ``2·n_bus−1``.
-        z: вектор измерений в p.u.
-        r_matrix: диагональная ``(m × m)`` матрица σ² (в p.u.²).
-        ybus, yf, yt: проводимости в p.u.
-        meas_index: метаданные измерений (порядок строк в z и H).
-        layout: раскладка вектора состояния.
-        network_pu: топология (нужна BaseAlgebra для from_idx/to_idx).
-        tolerance: критерий останова по ``max|ΔE|``.
-        max_iterations: предельное число итераций.
-        max_step: стартовый радиус trust-region.
-        huber_c: параметр Huber ψ-функции для SHGM-IRLS. ``0.0`` (default)
-            — чистый WLS. ``>0`` — Schweppe-Huber M-estimator: в начале
-            каждой итерации (начиная со 2-й) веса измерений умножаются на
-            ``w_i = min(1, c / |r_N_i|)``, где ``r_N_i = r_i / σ_i`` —
-            standardized residual. Outliers с ``|r_N| > c`` получают
-            авто-downweight; нормальные измерения (``|r_N| ≤ c``)
-            работают как WLS. Типичные значения: 1.5 (агрессивно),
-            2.0 (стандарт Abur & Exposito), 3.0 (консервативно).
-            См. Abur & Exposito ch.6, Mili et al. 1991.
+        e_init: initial guess for ``E`` of length ``2·n_bus−1``.
+        z: measurement vector in p.u.
+        r_matrix: diagonal ``(m × m)`` σ² matrix (in p.u.²).
+        ybus, yf, yt: admittances in p.u.
+        meas_index: measurement metadata (row order in z and H).
+        layout: state vector layout.
+        network_pu: topology (needed by BaseAlgebra for from_idx/to_idx).
+        tolerance: stopping criterion on ``max|ΔE|``.
+        max_iterations: maximum number of iterations.
+        max_step: initial trust-region radius.
+        huber_c: parameter of the Huber ψ-function for SHGM-IRLS. ``0.0`` (default)
+            — pure WLS. ``>0`` — Schweppe-Huber M-estimator: at the start of
+            each iteration (from the 2nd) the measurement weights are multiplied by
+            ``w_i = min(1, c / |r_N_i|)``, where ``r_N_i = r_i / σ_i`` is the
+            standardized residual. Outliers with ``|r_N| > c`` get
+            automatic downweighting; normal measurements (``|r_N| ≤ c``)
+            work as WLS. Typical values: 1.5 (aggressive),
+            2.0 (Abur & Exposito standard), 3.0 (conservative).
+            See Abur & Exposito ch.6, Mili et al. 1991.
         huber_skip_transformers: exclude transformer-branch P/Q from
             reweighting (see ``build_branch_pq_huber_mask``).
         huber_leverage_b_threshold_pu: leverage-Q exclusion threshold
@@ -252,24 +252,24 @@ def solve_wls(
             (``c_eff = max(c, k * median|r_n|)``); 6.0 is the classic
             robust-statistics choice (Huber 1981).
         huber_warmup_iters: pure-WLS iterations before reweighting starts.
-        kkt_solver: решатель систем нормальных уравнений с реюзом
-            символьной факторизации (см. ``gridstate.algorithms.kkt_solver``).
-            ``None`` — scipy spsolve (прежнее поведение бит-в-бит).
+        kkt_solver: solver of the normal-equation systems that reuses the
+            symbolic factorization (see ``gridstate.algorithms.kkt_solver``).
+            ``None`` — scipy spsolve (the former behaviour, bit for bit).
 
     Returns:
         :class:`WLSResult` (``x``, ``success``, ``iterations``, ``objective``).
     """
     if e_init.shape != (layout.size,):
-        raise ValueError(f"e_init должен быть длины {layout.size}, получено {e_init.shape}")
+        raise ValueError(f"e_init must have length {layout.size}, got {e_init.shape}")
     if z.shape[0] != r_matrix.shape[0] or r_matrix.shape[0] != r_matrix.shape[1]:
-        raise ValueError(f"z ({z.shape}) и R ({r_matrix.shape}) несогласованы по размерности m")
+        raise ValueError(f"z ({z.shape}) and R ({r_matrix.shape}) are inconsistent in dimension m")
     if z.shape[0] != len(meas_index):
-        raise ValueError(f"z имеет длину {z.shape[0]}, MeasurementIndex — {len(meas_index)}")
+        raise ValueError(f"z has length {z.shape[0]}, MeasurementIndex has {len(meas_index)}")
 
     algebra = BaseAlgebra(ybus, yf, yt, meas_index, layout, network_pu)
     solver = kkt_solver if kkt_solver is not None else KKTSolver("scipy")
 
-    # σ² с регуляризацией; затем R⁻¹ как разреженная диагональ.
+    # σ² with regularization; then R⁻¹ as a sparse diagonal.
     sigma2 = floored_sigma2(r_matrix.diagonal())
     r_inv_diag_base = 1.0 / sigma2
     sigma_arr = np.sqrt(sigma2)
@@ -302,39 +302,39 @@ def solve_wls(
     )
 
     if n_meas == 0:
-        logger.warning("WLS вызван с пустым вектором измерений — возвращаю e_init")
+        logger.warning("WLS called with an empty measurement vector — returning e_init")
         return WLSResult(x=e_init.copy(), success=False, iterations=0, objective=float("nan"))
 
     E = e_init.astype(np.float64, copy=True)
 
-    # Trust-region параметры. Стартовый радиус = max_step (0.35) — это
-    # «безопасный» шаг в pu для Power Flow (~20° в δ или ~35% Unom в V).
+    # Trust-region parameters. Initial radius = max_step (0.35) — this is a
+    # "safe" step in pu for Power Flow (~20° in δ or ~35% of Unom in V).
     # The upper limit is max_step as well: on real telemetry with inconsistent
     # measurements the minimum of `J` lies away from the true state, and a
     # faster move towards it worsens |dV|.
-    # Адаптируем Δ только вниз (при reject), чтобы корректно «тормозить»
-    # на нелинейных участках.
+    # We adapt Δ only downwards (on reject), to correctly "brake"
+    # on nonlinear regions.
     tr_radius = float(max_step)
     tr_radius_max = float(max_step)
     tr_radius_min = 1e-10
     inner_max = 16
 
-    # LM-демпфирование как fallback при отказе от шага. По умолчанию λ=0
-    # (чистый Gauss-Newton + clamp до TR). λ активируется при rejection
-    # — направление меняется и шаг становится более «steepest descent»-
-    # подобным, что даёт шанс выйти из плохой quadratic-модели.
+    # LM damping as a fallback when a step is refused. By default λ=0
+    # (pure Gauss-Newton + clamp to TR). λ is activated on rejection
+    # — the direction changes and the step becomes more "steepest descent"-
+    # like, which gives a chance to get out of a bad quadratic model.
     lam = 0.0
     lam_init = 1e-3
     lam_grow = 10.0
     lam_shrink = 0.1
     lam_max = 1e8
 
-    # Когда TR ужался при reject, после успешного следующего шага можно
-    # его частично восстановить (×2, до tr_radius_max). Это не даёт TR
-    # «зависнуть» в маленьком значении после случайного reject.
+    # When the TR shrank on a reject, after the next successful step it can be
+    # partially restored (×2, up to tr_radius_max). This keeps the TR from
+    # "hanging" at a small value after an accidental reject.
     tr_recover = 2.0
 
-    # Текущие значения h, r, J — пересчитываем при принятии шага.
+    # Current values of h, r, J — recomputed when a step is accepted.
     delta, v = unpack(E, layout)
     h_cur = algebra.evaluate_h(v, delta)
     r_cur = z - h_cur
@@ -360,7 +360,7 @@ def solve_wls(
         rhs = np.asarray(Ht_Rinv @ r_cur, dtype=np.float64).ravel()
         diag_G = G.diagonal()
         if not np.any(diag_G != 0):
-            logger.warning("Нулевая диагональ G на итерации %d — прекращаю", cur_it)
+            logger.warning("Zero diagonal of G at iteration %d — stopping", cur_it)
             break
 
         accepted = False
@@ -379,18 +379,18 @@ def solve_wls(
                 solver,
             )
             if not solve_ok:
-                # Линейная система не решилась (singular G, NaN в результате)
-                # — это не «нулевой шаг», а провал итерации. Помечаем
-                # diverged, чтобы success=False, и выходим.
+                # The linear system could not be solved (singular G, NaN in the result)
+                # — this is not a "zero step" but an iteration failure. We mark
+                # diverged so that success=False, and exit.
                 logger.warning(
-                    "iter %d (inner %d): линейная система не решилась (G сингулярна?) — прекращаю",
+                    "iter %d (inner %d): linear system could not be solved (G singular?) — stopping",
                     cur_it,
                     inner,
                 )
                 diverged = True
                 break
             if step_inf < 1e-15:
-                # Шаг исчез — мы сошлись (rhs ≈ 0), либо TR схлопнулся.
+                # The step vanished — we converged (rhs ≈ 0), or the TR collapsed.
                 accepted = True
                 applied_step = 0.0
                 E_trial = E
@@ -405,11 +405,11 @@ def solve_wls(
             r_trial = z - h_trial
             obj_trial = float(r_trial @ (r_inv @ r_trial))
             if not np.isfinite(obj_trial) or not np.all(np.isfinite(h_trial)):
-                # Trial-точка дала NaN/Inf в h(E) или J — non-physical state.
-                # Прерываем: это либо плохая задача, либо плохой шаг
-                # (но force-accept уже не годится — данные испорчены).
+                # The trial point gave NaN/Inf in h(E) or J — a non-physical state.
+                # We abort: it is either a bad problem or a bad step
+                # (but force-accept no longer works — the data is corrupted).
                 logger.warning(
-                    "iter %d (inner %d): NaN/Inf в обновлённом state (J=%s) — прекращаю",
+                    "iter %d (inner %d): NaN/Inf in the updated state (J=%s) — stopping",
                     cur_it,
                     inner,
                     obj_trial,
@@ -417,8 +417,8 @@ def solve_wls(
                 diverged = True
                 break
 
-            # Прогноз снижения J по квадратичной модели:
-            # J(E+d) ≈ J − 2·rhsᵀd + dᵀG d  (т.к. ∇J = −2·rhs, ∇²J ≈ 2·G)
+            # Predicted decrease of J from the quadratic model:
+            # J(E+d) ≈ J − 2·rhsᵀd + dᵀG d  (since ∇J = −2·rhs, ∇²J ≈ 2·G)
             # → pred = 2·rhsᵀd − dᵀG d.
             Gd = G @ d_E
             pred_red = 2.0 * float(rhs @ d_E) - float(d_E @ Gd)
@@ -426,9 +426,9 @@ def solve_wls(
             applied_step = step_inf
             at_boundary = step_inf >= 0.9 * tr_radius
 
-            # Force-accept крошечных шагов: numerical noise в J может дать
-            # ложно-отрицательный ared, и ratio test становится бесполезен.
-            # Если шаг уже не больше tolerance, мы фактически сошлись.
+            # Force-accept tiny steps: numerical noise in J can give
+            # a falsely negative ared, and the ratio test becomes useless.
+            # If the step is already no larger than tolerance, we have effectively converged.
             if step_inf <= tolerance:
                 accepted = True
                 lam = max(0.0, lam * lam_shrink) if lam > 1e-12 else 0.0
@@ -441,25 +441,25 @@ def solve_wls(
                 )
                 break
 
-            # Принимаем любой не-ухудшающий шаг (ared ≥ −ε·|J|): защищаемся
-            # от floating-point шума в окрестности минимума.
+            # We accept any non-worsening step (ared ≥ −ε·|J|): protecting
+            # against floating-point noise near the minimum.
             obj_noise = max(1e-14 * max(abs(objective), 1.0), 1e-300)
             if ared >= -obj_noise:
                 accepted = True
                 rho = ared / pred_red if pred_red > 0 else float("inf")
 
-                # Proactive LM activation: если шаг застрял на границе TR
-                # И квадратичная модель плохо его описала (ρ<0.25), это
-                # симптом плохо обусловленной системы — активируем LM
-                # на следующей итерации, чтобы сместить направление, **и**
-                # сжимаем TR. Без shrink TR=max_step остаётся на 0.35 p.u.
-                # вечно (35% Vnom!), и WLS bouncing никогда не сходится.
+                # Proactive LM activation: if the step got stuck at the TR boundary
+                # AND the quadratic model described it badly (ρ<0.25), this is
+                # a symptom of an ill-conditioned system — activate LM
+                # on the next iteration to shift the direction, **and**
+                # shrink the TR. Without the shrink TR=max_step stays at 0.35 p.u.
+                # forever (35% of Vnom!), and WLS bouncing never converges.
                 if at_boundary and rho < 0.25:
                     lam = max(lam, lam_init)
                     tr_radius = max(tr_radius_min, 0.5 * tr_radius)
                 else:
-                    # Модель работает корректно — охлаждаем демпфер и,
-                    # если TR был ужат предыдущим reject'ом, восстанавливаем.
+                    # The model works correctly — we cool the damper and,
+                    # if the TR was shrunk by the previous reject, restore it.
                     lam = lam * lam_shrink if lam > 1e-12 else 0.0
                     if tr_radius < tr_radius_max and rho > 0.5:
                         tr_radius = min(tr_radius_max, tr_recover * tr_radius)
@@ -479,8 +479,8 @@ def solve_wls(
                 )
                 break
 
-            # Шаг отвергнут: ужимаем TR и активируем (или растим) LM-демпфер,
-            # чтобы изменить направление шага на следующей попытке.
+            # Step rejected: shrink the TR and activate (or grow) the LM damper
+            # to change the step direction on the next attempt.
             rho = ared / pred_red if pred_red > 0 else -1.0
             tr_radius = max(tr_radius_min, 0.25 * tr_radius)
             lam = max(lam_init, lam * lam_grow)
@@ -496,7 +496,7 @@ def solve_wls(
             )
             if lam > lam_max or tr_radius <= tr_radius_min:
                 logger.warning(
-                    "TR/LM коллапсировал на итерации %d (Δ=%.3e, λ=%.2e)",
+                    "TR/LM collapsed at iteration %d (Δ=%.3e, λ=%.2e)",
                     cur_it,
                     tr_radius,
                     lam,
@@ -506,7 +506,7 @@ def solve_wls(
 
         if not accepted:
             logger.warning(
-                "WLS не смог принять шаг за %d попыток на итерации %d (Δ=%.3e)",
+                "WLS could not accept a step in %d attempts at iteration %d (Δ=%.3e)",
                 inner_max,
                 cur_it,
                 tr_radius,
@@ -526,10 +526,10 @@ def solve_wls(
 
     success = current_error <= tolerance and not diverged
     if success:
-        logger.debug("WLS сошёлся за %d итераций (max|ΔE|=%.3e)", cur_it, current_error)
+        logger.debug("WLS converged in %d iterations (max|ΔE|=%.3e)", cur_it, current_error)
     else:
         logger.warning(
-            "WLS НЕ сошёлся: %d/%d итераций, max|ΔE|=%.3e (требуется ≤%.0e)",
+            "WLS did NOT converge: %d/%d iterations, max|ΔE|=%.3e (required ≤%.0e)",
             cur_it,
             max_iterations,
             current_error,
