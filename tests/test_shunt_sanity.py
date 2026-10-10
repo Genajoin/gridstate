@@ -147,3 +147,40 @@ def test_toggle_default_off_and_not_a_step():
     # Оркестрация — на уровне contract.run (полные re-run'ы), НЕ шаг пайплайна.
     assert PipelineConfig().shunt_sanity is False
     assert "shunt_sanity" not in [s.name for s in STEPS]
+
+
+# ---------------------------------------------------------------------------
+# Orchestration (gridstate.pipeline.orchestration) on a harness input whose
+# added reactor is a candidate the gate accepts.
+# ---------------------------------------------------------------------------
+
+
+def _sanity_input():
+    import dataclasses
+
+    from tests import _golden as golden
+
+    se_input = golden.load_ieee_input("case14" + golden.DEGRADED_SUFFIX)
+    cfg = dataclasses.replace(golden.CONFIGS["ipm_full"].config, shunt_sanity=True)
+    return se_input, cfg
+
+
+def _tables(model) -> dict[str, np.ndarray]:
+    names = ("nodes", "branches", "measurements", "generators", "shunts")
+    return {n: getattr(model, n).to_numpy().copy() for n in names}
+
+
+def test_orchestration_leaves_the_input_untouched():
+    """The trials copy the input itself: the base run never mutates it."""
+    from gridstate.contract import run as contract_run
+
+    se_input, cfg = _sanity_input()
+    before = _tables(se_input.model)
+    events: list[dict] = []
+    out = contract_run(se_input, config=cfg, on_event=events.append, validate=False)
+    after = _tables(se_input.model)
+    for name, arr in before.items():
+        assert np.array_equal(arr, after[name]), name
+    (sanity,) = [e for e in events if e.get("name") == "shunt_sanity"]
+    assert sanity["stats"]["accepted"] == 1
+    assert out.success

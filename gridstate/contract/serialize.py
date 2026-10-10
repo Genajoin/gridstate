@@ -35,7 +35,7 @@ from gridstate.contract.tables import SE_INPUT, SE_OUTPUT, io_dtype
 
 
 if TYPE_CHECKING:
-    from gridstate.contract.runtime import SEInput
+    from gridstate.contract.containers import SEInput
 
 
 _DERIVED_KEY = "__derived_pickle__"
@@ -173,7 +173,7 @@ def load_se_input_npz(path: str | Path) -> SEInput:
     Возвращаемый ``SEInput`` готов к ``run(se_input)``: ``derived`` —
     восстановленные числовые планы.
     """
-    from gridstate.contract.runtime import SEInput
+    from gridstate.contract.containers import SEInput
     from gridstate.contract.version import CONTRACT_VERSION, check_compatibility
     from gridstate.working import Working
 
