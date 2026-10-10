@@ -54,7 +54,7 @@ def _deactivate_orphan_on_arrays(
 
     Строит множества active-id из ``branches_arr``/``nodes_arr``/``gens_arr``, для
     каждой active-меры с неактивным/отсутствующим объектом ставит ``status=False``.
-    Мутирует ``meas_arr`` in place. БЕЗ внешних зависимостей и XML.
+    Mutates ``meas_arr`` in place; no external dependencies.
     """
     active_branches = {int(b["id"]) for b in branches_arr if b["status"]}
     active_nodes = {int(n["id"]) for n in nodes_arr if n["status"]}

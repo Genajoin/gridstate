@@ -235,8 +235,7 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
         # trafo K_pu = 1.0; off-nominal tap (~±10%) приводит к 0.9-1.1.
         # Без этой нормализации yff/yft в build_ybus получает
         # double-counting turn ratio: на ветви 750/330 при flat init
-        # h(P_flow_to) выходит 2160 p.u. = 216 ГВт (см. Group D в
-        # docs/audit/audit_runaway_node.md).
+        # h(P_flow_to) comes out at 2160 p.u. = 216 GW.
         vn_from = float(vn_kv[f_pos])
         vn_to = float(vn_kv[t_pos])
         if vn_from > 0 and vn_to > 0 and not math.isclose(vn_from, vn_to):

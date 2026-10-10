@@ -138,61 +138,61 @@ def _param(
     return field(default=default, metadata=md)
 
 
-_G_XML = "Препроцессинг входа"
+_G_INPUT = "Препроцессинг входа"
 _G_MODE = "Режим (нагрузка/генерация)"
 _G_CASCADE = "Каскад и статусы"
 _G_PSEUDO = "Псевдо-измерения"
 _G_EST = "Оценка состояния"
 _G_IPM = "IPM"
-_G_POST = "Пост-обработка (Линия C)"
+_G_POST = "Пост-обработка"
 
 
 @dataclass
 class PipelineConfig:
-    """Все ручки пайплайна. Дефолты = валидированный production (canon)."""
+    """All pipeline knobs. The defaults are the validated production configuration."""
 
-    # --- XML-препроцессинг ---
+    # --- Input preprocessing ---
     normalize_breakers: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Нормализация X короткозамыкателей",
         help="volt-aware X_pu для R=X=0 ветвей (убирает β-выбросы dV_max на LV).",
     )
     apply_voltage_nominal: bool = _toggle(
         False,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Vnom (номинальное напряжение)",
         help="Заполнить voltage_nominal=0 узлов из готового плана Vnom. Обычно vn уже "
         "задан на входе; default OFF.",
     )
     apply_topology: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Топология (ON_LINE статусы)",
         help="Применить готовый план ON_LINE-статусов → status узлов/ветвей/ген/реакторов.",
     )
     apply_rpn: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="РПН (№ отпаек)",
         help="Применить готовый план № отпаек → динамический tap_ratio/phase_shift.",
     )
     apply_reactors: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Реакторы → шунт узла",
         help="apply_reactors_to_node_shunt (ШР в shunt_b). Физически необходим "
         "для длинных ВЛ 500/750 кВ.",
     )
     apply_voltage_range_filter: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Фильтр V вне диапазона",
         help="downweight V вне voltage_critical/max+10%.",
     )
     voltage_filter_min_nominal_kv: float = _param(
         110.0,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Мин. класс V-фильтра, кВ",
         control="number",
         min=0.0,
@@ -204,7 +204,7 @@ class PipelineConfig:
     )
     voltage_filter_deactivate_nonphysical: bool = _toggle(
         False,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Деактивировать нефизичные V",
         help="apply_voltage_range_filter: V<=0, V<Vnom·lower и V>Vnom·upper (физически "
         "невозможные как напряжение) деактивируются (status=False), а не downweight. "
@@ -212,7 +212,7 @@ class PipelineConfig:
     )
     voltage_filter_nonphysical_lower_factor: float = _param(
         0.5,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Нижний физ-предел V, ×Vnom",
         control="number",
         min=0.0,
@@ -223,7 +223,7 @@ class PipelineConfig:
     )
     voltage_filter_nonphysical_upper_factor: float = _param(
         1.5,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Верхний физ-предел V, ×Vnom",
         control="number",
         min=1.1,
@@ -234,13 +234,13 @@ class PipelineConfig:
     )
     aggregate_generators: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Агрегировать генераторы к узлу",
         help="aggregate_generators_to_node: multi-gen → узловая генерация.",
     )
     release_load_only_injections: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Снять неполные инжекции ген-узлов",
         help=(
             "release_load_only_injections: a node injection built from the load "
@@ -250,7 +250,7 @@ class PipelineConfig:
     )
     relax_generation_min_to_injection: bool = _toggle(
         False,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Снять Pmin, противоречащий инжекции",
         help=(
             "relax_generation_min_to_injection: when the P injection reading of a "
@@ -260,7 +260,7 @@ class PipelineConfig:
     )
     widen_generation_only_injections: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Учесть ящик нагрузки в инжекции из генерации",
         help=(
             "widen_generation_only_injections: a node injection built from the "
@@ -272,13 +272,13 @@ class PipelineConfig:
     )
     apply_gen_v_calibration: bool = _toggle(
         True,
-        group=_G_XML,
+        group=_G_INPUT,
         label="Калибровка σ² V ген-узлов",
         help="apply_voltage_meas_calibration_for_gen_nodes.",
     )
     gen_v_calibration_mode: str = _param(
         "absolute",
-        group=_G_XML,
+        group=_G_INPUT,
         label="Режим калибровки σ² V ген-узлов",
         control="select",
         choices=["absolute", "tighten"],
@@ -290,7 +290,7 @@ class PipelineConfig:
     )
     flow_sigma_floor_kv_frac: float | None = _param(
         None,
-        group=_G_XML,
+        group=_G_INPUT,
         label="σ-floor flow-мер (доля шкалы)",
         control="number",
         min=0.0,
@@ -315,14 +315,16 @@ class PipelineConfig:
         True,
         group=_G_CASCADE,
         label="Выбор slack (refine_slack_to_one)",
-        help="Родная семантика эталонных SE (не legacy-НБУ, тот deprecated).",
+        help="Keep exactly one slack node, the balancing node chosen by the input "
+        "(the legacy multi-slack mode is deprecated).",
     )
     refine_node_types: bool = _toggle(True, group=_G_CASCADE, label="Типы узлов из генераторов")
     disable_orphan_branches: bool = _toggle(
         True,
         group=_G_CASCADE,
-        label="Гасить orphan-ветви (×2, H46)",
-        help="disable_orphan_branches до и после disconnected_components (каскад H46).",
+        label="Гасить orphan-ветви (×2)",
+        help="disable_orphan_branches before and after disconnected_components (a branch "
+        "left dangling by a node disabled in the second pass is switched off too).",
     )
     disable_disconnected: bool = _toggle(
         True, group=_G_CASCADE, label="Гасить отсоединённые компоненты"
@@ -378,7 +380,9 @@ class PipelineConfig:
         control="number",
         min=0.0,
         max=0.5,
-        help="Гейт жёсткого V-якоря: на flat-XML (vm=vn) → no-op. См. cex3_pseudov.",
+        help="Gate of the hard V anchor: a node is anchored only when its input "
+        "operating point deviates from Vnom by more than this share; on a flat "
+        "input (vm = vn) the anchor is a no-op.",
     )
 
     # --- Оценка состояния ---
@@ -479,16 +483,17 @@ class PipelineConfig:
         help="default 0.01 p.u.².",
     )
 
-    # --- Пост-обработка (Линия C) ---
+    # --- Post-processing ---
     bad_data: bool = _toggle(
         False,
         group=_G_POST,
         label="Bad-data re-pass (двухпроходный)",
-        help="Классификация real-мер по остаткам решённого SE (flip знак-флипов, "
-        "reject битых нулей/монстров, демпф Qinj) + повторный warm-solve. "
-        "Парный иммунитет согласованных branch-пар и guard покрытия (node, домен) "
-        "защищают честные меры. Конфигурация валидирована на 4 ОДУ. Default OFF "
-        "(меняет решение и время; включается потребителем).",
+        help="Classify real measurements by the residuals of the solved estimate "
+        "(flip sign errors, reject broken zeros and outliers, damp Qinj), then "
+        "warm re-solve. Pair immunity of consistent branch pairs and the (node, "
+        "domain) coverage guard protect honest measurements. Validated on four "
+        "large production models. Default OFF (changes the solution and the run "
+        "time; enabled by the caller).",
     )
     bad_data_threshold: float = _param(
         10.0,
@@ -538,12 +543,13 @@ class PipelineConfig:
         False,
         group=_G_POST,
         label="V-refine (ужесточение согласованных V)",
-        help="Двухпроходный: ужесточить σ (× factor) real V-мер, согласованных "
-        "с решением первого прохода (|z−h|/σ < rn), + warm re-solve. Лечит "
-        "глобальный bias занижения V (оценка провисает ниже собственных V-мер). "
-        "Конфликтные V-меры (битый замер кромки) НЕ трогаются. Значения/статусы "
-        "не меняются — только дисперсии, грубую ошибку внести не может. "
-        "Валидирован на 4 ОДУ. Default OFF (включается потребителем).",
+        help="Two-pass: tighten σ (× factor) of real V measurements consistent "
+        "with the first-pass solution (|z−h|/σ < rn), then warm re-solve. Fixes a "
+        "global downward V bias (the estimate sags below its own V measurements). "
+        "Conflicting V measurements (a bad boundary reading) are left alone. Values "
+        "and statuses are unchanged, only variances, so it cannot inject a gross "
+        "error. Validated on four large production models. Default OFF (enabled "
+        "by the caller).",
     )
     v_refine_rn: float = _param(
         3.0,
@@ -564,19 +570,21 @@ class PipelineConfig:
         min=0.05,
         max=1.0,
         depends={"v_refine": True},
-        help="variance := variance · factor² (σ × factor). 0.7 — оптимум 4 ОДУ; "
-        "0.5 точнее для bias, но ломает class-max региона с битой V-кромкой.",
+        help="variance := variance · factor² (σ × factor). 0.7 is the best value "
+        "across the validation models; 0.5 removes more bias but worsens the "
+        "per-class maximum error on a model with a bad boundary V measurement.",
     )
     v_mirror: bool = _toggle(
         False,
         group=_G_POST,
         label="V-mirror (значение pseudo-V слепых кластеров)",
-        help="Двухпроходный: pseudo-V-плейсхолдеры (value=Vnom) слепых кластеров "
-        "без real-TM переставить в median pu границы ТОГО ЖЕ класса × Vnom (лишь "
-        "узлы систематически ниже границы — lift-гейт), + warm re-solve. Лечит "
-        "провисание слепых хвостов к номиналу (OC держит их на уровне границы). "
-        "Меняется только значение приора, σ не трогается. Валидирован на 4 ОДУ "
-        "(Восток p50 −13%/p95 −16%). Default OFF (включается потребителем).",
+        help="Two-pass: move the pseudo-V placeholders (value=Vnom) of blind "
+        "clusters without real telemetry to the median pu of their boundary of the "
+        "SAME voltage class × Vnom (only nodes systematically below the boundary, "
+        "see the lift gate), then warm re-solve. Fixes blind tails sagging to "
+        "nominal while physically they stay at the boundary level. Only the prior "
+        "value changes, σ is kept. Validated on four large production models "
+        "(best case p50 −13 %, p95 −16 %). Default OFF (enabled by the caller).",
     )
     v_mirror_max_pu_dev: float = _param(
         0.25,
@@ -597,43 +605,47 @@ class PipelineConfig:
         min=0.0,
         max=0.5,
         depends={"v_mirror": True},
-        help="Трогаем узел, только если его решение ниже границы своего класса "
-        "более чем на min_lift (в pu). Узлы уже-на-уровне не двигаем — иначе их "
-        "подъём пушит наблюдаемую сеть вверх (реальный-vm регион регрессирует).",
+        help="A node is moved only when its solution is below the boundary of its "
+        "class by more than min_lift (pu). Nodes already at the level stay put: "
+        "lifting them pushes the observed network up (a model whose input carries "
+        "a real operating point regresses).",
     )
     v_mirror_cross_at: bool = _toggle(
         False,
         group=_G_POST,
         label="V-mirror через АТ (cross-class)",
-        help="Когда у слепого кластера НЕТ границы того же класса, но есть граница "
-        "через active trafo (branch_type=1, tap>0) — взять median(pu решённой "
-        "trafo-границы)·Vnom (pu-инвариант к идеальному tap). lift/max_pu_dev-гейты "
-        "сохраняются. Default OFF: pu-инвариант через tap≈2 даёт 2-4% остаточную "
-        "ошибку, Юг-регрессия не исключена. Включать после A/B 4 ОДУ.",
+        help="When a blind cluster has NO boundary of its own class but has one "
+        "across an active transformer (branch_type=1, tap>0), use median(pu of the "
+        "solved transformer boundary)·Vnom (pu is invariant to an ideal tap). The "
+        "lift/max_pu_dev gates still apply. Default OFF: the pu invariant across "
+        "tap≈2 leaves a 2-4 % residual error and some models may regress; enable "
+        "only after an A/B comparison on the target models.",
     )
     refine_merge: bool = _toggle(
         False,
         group=_G_POST,
         label="Слить v_refine/v_mirror/chain в один re-solve (research)",
-        help="Перф-режим: классификации v_refine, v_mirror и v_mirror_chain "
-        "выполняются последовательно по ОДНОМУ решению (после bad_data), их "
-        "планы применяются к мерам, затем ОДИН warm re-solve вместо трёх. "
-        "−2 полных solve (Юг ≈ −25% wall). Семантика меняется: v_mirror/chain "
-        "классифицируются по решению ДО v_refine-ужесточения (не бит-в-бит) — "
-        "включать только после A/B качества. Уважает индивидуальные тогглы "
-        "(выключенная стадия не участвует). Default OFF.",
+        help="Performance mode: the v_refine, v_mirror and v_mirror_chain "
+        "classifications run in turn on ONE solution (after bad_data), their plans "
+        "are applied to the measurements, then ONE warm re-solve replaces three. "
+        "Saves two full solves (up to −25 % wall time). The semantics change: "
+        "v_mirror/chain classify the solution BEFORE the v_refine tightening (not "
+        "bit-identical), so enable it only after an A/B quality check. The "
+        "individual toggles are respected (a disabled stage does not take part). "
+        "Default OFF.",
     )
     v_mirror_chain: bool = _toggle(
         False,
         group=_G_POST,
         label="Chain-mirror pseudo-V глубоких цепочек (research)",
-        help="Двухпроходный: pseudo-V-плейсхолдеры (value=Vnom) узлов на глубине "
-        "d≥1 от ближайшей живой real-V-меры (multi-source BFS по активным ветвям "
-        "того же класса; + через АТ ≥110 кВ при v_mirror_cross_at) переставить в "
-        "(1+(pu_src−1)·decay^(d−1))·Vnom + warm re-solve. Дополняет v_mirror: тот "
-        "покрывает лишь полностью слепые кластеры, а узлы, наблюдаемые только "
-        "перетоками, проседают к номиналу (Восток 36%/Юг 48% узлов на d≥2). "
-        "Гейты v_mirror (max_pu_dev, min_lift) сохраняются. Default OFF.",
+        help="Two-pass: move the pseudo-V placeholders (value=Vnom) of nodes at "
+        "depth d≥1 from the nearest live real V measurement (multi-source BFS over "
+        "active branches of the same class, plus autotransformers ≥110 kV with "
+        "v_mirror_cross_at) to (1+(pu_src−1)·decay^(d−1))·Vnom, then warm "
+        "re-solve. Complements v_mirror, which covers fully blind clusters only, "
+        "while nodes observed through flows alone sag to nominal (36-48 % of such "
+        "nodes sit at d≥2). The v_mirror gates (max_pu_dev, min_lift) still apply. "
+        "Default OFF.",
     )
     v_mirror_chain_decay: float = _param(
         0.85,
@@ -643,12 +655,12 @@ class PipelineConfig:
         min=0.0,
         max=1.0,
         depends={"v_mirror_chain": True},
-        help="pu_target = 1 + (pu_src−1)·decay^(d−1): d=1 — полный pu источника "
-        "(как граница v_mirror), глубже — затухание к Vnom. 0.85 — оптимум A/B "
-        "4 ОДУ 2026-07-06 (универсально ненегативен); 1.0 (без затухания) — "
-        "перелёт: глубокие узлы, которые эталонная OC сама держит у номинала, "
-        "задираются на +3…7 кВ (СЗ p95 +2.2%). Затухание ≈ физическое падение "
-        "V вдоль неизмеренных цепочек — НЕ экстраполяция.",
+        help="pu_target = 1 + (pu_src−1)·decay^(d−1): d=1 takes the full source pu "
+        "(like a v_mirror boundary), deeper nodes decay towards Vnom. 0.85 is the "
+        "best A/B value (2026-07-06) and degrades none of the validation models; "
+        "1.0 (no decay) overshoots: deep nodes whose voltage physically stays near "
+        "nominal are lifted by +3…7 kV (p95 +2.2 %). The decay approximates the "
+        "physical voltage drop along unmeasured chains; it is not an extrapolation.",
     )
     v_mirror_chain_max_depth: int = _param(
         12,
@@ -658,22 +670,24 @@ class PipelineConfig:
         min=1,
         max=30,
         depends={"v_mirror_chain": True},
-        help="Дальше фронт не распространяем: при decay=0.85 вклад на d=12 уже "
-        "~17% лифта; цепочки Юга доходят до d18, но там честнее номинал.",
+        help="The front stops here: with decay=0.85 the contribution at d=12 is "
+        "already ~17 % of the lift; chains up to d=18 occur, but that far the "
+        "nominal value is the more honest prior.",
     )
     shunt_sanity: bool = _toggle(
         False,
         group=_G_POST,
         label="Shunt-sanity try-off/flip (research)",
-        help="Оркестрируется НА УРОВНЕ contract.run (не шаг пайплайна): после "
-        "базового прогона у активных шунтов на узлах с V-невязкой "
-        "|z−h| > v_frac·Vnom пробуются off/flip ПОЛНЫМ re-run пайплайна на "
-        "копии входа; вариант принимается ТОЛЬКО при падении Σrn² > gate_drop. "
-        "Ловит поведенчески-дефектные записи реакторов (статически неотличимы "
-        "от честных). Дорого: (1+2·кандидаты) полных прогонов. ⚠️ Research: "
-        "редактирует сеть по статистике мер — на живой ТМ может мерцать между "
-        "слайсами; для прод-фикса предпочтителен offline-аудит данных. "
-        "Валидация 4 ОДУ 2026-07-06: Юг dVmax −40.7%, остальные бит-в-бит.",
+        help="Orchestrated BY contract.run (not a pipeline step): after the base "
+        "run, active shunts on nodes with a V mismatch |z−h| > v_frac·Vnom are "
+        "tried off and flipped with a FULL pipeline re-run on a copy of the input; "
+        "a variant is accepted ONLY when Σrn² drops by more than gate_drop. Catches "
+        "reactor records that are defective in behaviour (statically "
+        "indistinguishable from honest ones). Expensive: (1 + 2·candidates) full "
+        "runs. Research: it edits the network from measurement statistics, so on "
+        "live telemetry it may flicker between snapshots; for a production fix an "
+        "offline data audit is preferable. Validation (2026-07-06, four large "
+        "models): dVmax −40.7 % on one model, the others bit-identical.",
     )
     shunt_sanity_v_frac: float = _param(
         0.012,
@@ -735,10 +749,11 @@ class PipelineConfig:
         False,
         group=_G_POST,
         label="Reconcile уважает границы",
-        help="Слив остатка клипуется к load/gen_*_min/max (транзит → 0): "
-        "не фабриковать нефизичные отрицательные нагрузки из остатка мягкого "
-        "баланса (паритет с эталонными SE: их режимы не нарушают pn_min). "
-        "Незакрытая часть — в stats sum_unclosed_p_mw. Default OFF (прежнее поведение).",
+        help="The residual split is clipped to load/gen_*_min/max (transit → 0), so "
+        "the soft balance residual does not fabricate non-physical negative loads "
+        "(a consistent operating point never violates the load minimum pn_min). "
+        "The unclosed part goes to stats sum_unclosed_p_mw. Default OFF (previous "
+        "behaviour).",
     )
 
 
@@ -935,13 +950,13 @@ def _s_refine_node_types(ctx: _Ctx) -> dict:
 
 
 def _s_disable_orphan_branches(ctx: _Ctx) -> dict:
-    # H46: повтор после disconnected_components ниже выполняется тем же шагом-парой.
+    # The repeat after disconnected_components is done by the paired step below.
     return dict(disable_orphan_branches(ctx.model) or {})
 
 
 def _s_disable_disconnected(ctx: _Ctx) -> dict:
     stats = dict(disable_disconnected_components(ctx.model) or {})
-    # H46: пере-отключить ветви, инцидентные только что выключенным узлам.
+    # Switch off again the branches incident to the nodes just disabled.
     if ctx.cfg.disable_orphan_branches:
         recheck = dict(disable_orphan_branches(ctx.model) or {})
         stats["orphan_recheck_disabled"] = recheck.get("disabled", 0)
@@ -1007,8 +1022,8 @@ def _s_mirror_voltage(ctx: _Ctx) -> dict:
 
 
 def _s_materialize(ctx: _Ctx) -> dict:
-    # Применяем готовый наблюдаемый узловой режим (вычислен вне ядра;
-    # см. cex3_materialize_invert_sign_fix).
+    # Apply the observed nodal operating point computed outside the core (the
+    # producer of the input resolves it, including the sign convention).
     if ctx.derived is None or ctx.derived.materialize_obs is None:
         return {"skipped": "нет плана материализации (нужны наблюдаемые инжекции)"}
     apply_materialize_resolved(ctx.model, ctx.derived.materialize_obs)
@@ -1214,7 +1229,8 @@ def _s_anti_overshoot(ctx: _Ctx) -> dict:
 
     def _resolve() -> SEResult:
         # Warm re-solve with extra iteration headroom (80 truncates → phantom
-        # non-convergence). WLS tol=1e-4, IPM tol=1e-3 — as in stage_c_after_oc.
+        # non-convergence). WLS tol=1e-4, IPM tol=1e-3: the tolerances the
+        # refinement was validated with.
         return _warm_resolve(
             ctx,
             max_iterations=150,
@@ -1238,7 +1254,7 @@ STEPS: list[Step] = [
     Step(
         "normalize_breakers",
         "Нормализация короткозамыкателей",
-        _G_XML,
+        _G_INPUT,
         "volt-aware X_pu для R=X=0 ветвей.",
         _s_normalize_breakers,
         toggle="normalize_breakers",
@@ -1246,8 +1262,8 @@ STEPS: list[Step] = [
     ),
     Step(
         "voltage_nominal",
-        "Vnom из XML",
-        _G_XML,
+        "Vnom from the input plan",
+        _G_INPUT,
         "Заполнить voltage_nominal=0 узлов из плана Vnom.",
         _s_voltage_nominal,
         toggle="apply_voltage_nominal",
@@ -1257,7 +1273,7 @@ STEPS: list[Step] = [
     Step(
         "topology",
         "Топология из ON_LINE",
-        _G_XML,
+        _G_INPUT,
         "Применить план ON_LINE-статусов → status.",
         _s_topology,
         toggle="apply_topology",
@@ -1267,7 +1283,7 @@ STEPS: list[Step] = [
     Step(
         "rpn",
         "РПН из TM",
-        _G_XML,
+        _G_INPUT,
         "Применить план № отпаек → динамический tap_ratio.",
         _s_rpn,
         toggle="apply_rpn",
@@ -1281,23 +1297,24 @@ STEPS: list[Step] = [
     Step(
         "reactors",
         "Реакторы → шунт",
-        _G_XML,
+        _G_INPUT,
         "apply_reactors_to_node_shunt.",
         _s_reactors,
         toggle="apply_reactors",
         network=True,
     ),
-    # ИНВАРИАНТ ПОРЯДКА: telemetry строго ПОСЛЕ rpn — применение z-вектора
-    # читает branch.susceptance, который H30-шунт-факторизация РПН меняет.
+    # ORDER INVARIANT: telemetry strictly AFTER rpn. Applying the z-vector
+    # reads branch.susceptance, which the tap-dependent shunt scaling of the
+    # tap-changer step modifies.
     Step(
         "telemetry",
         "Телеметрия (z-вектор)",
-        _G_XML,
+        _G_INPUT,
         "Применить z-вектор → measurements.",
         _s_telemetry,
         needs_derived=True,
     ),
-    # --- хвост stage_a: slack + типы + каскад статусов ---
+    # --- network preparation tail: slack + node types + status cascade ---
     Step(
         "refine_slack",
         "Выбор slack",
@@ -1327,9 +1344,9 @@ STEPS: list[Step] = [
     ),
     Step(
         "disable_disconnected",
-        "Гасить отсоединённые компоненты (+H46)",
+        "Гасить отсоединённые компоненты",
         _G_CASCADE,
-        "disable_disconnected_components + повтор orphan-branches (H46).",
+        "disable_disconnected_components + a repeated orphan-branch pass.",
         _s_disable_disconnected,
         toggle="disable_disconnected",
         network=True,
@@ -1356,7 +1373,7 @@ STEPS: list[Step] = [
     Step(
         "voltage_range_filter",
         "Фильтр V вне диапазона",
-        _G_XML,
+        _G_INPUT,
         "apply_voltage_range_filter: downweight V вне диапазона.",
         _s_voltage_range_filter,
         toggle="apply_voltage_range_filter",
@@ -1365,7 +1382,7 @@ STEPS: list[Step] = [
         "refine_node_types_2",
         "Типы узлов (повтор, идемпотентно)",
         _G_CASCADE,
-        "refine_node_types_from_generators — повтор в stage_b (безопасно).",
+        "refine_node_types_from_generators, repeated after the measurement steps (safe).",
         _s_refine_node_types,
         toggle="refine_node_types",
     ),
@@ -1377,7 +1394,7 @@ STEPS: list[Step] = [
     Step(
         "aggregate_generators",
         "Агрегировать генераторы к узлу",
-        _G_XML,
+        _G_INPUT,
         "aggregate_generators_to_node.",
         _s_aggregate_generators,
         toggle="aggregate_generators",
@@ -1385,7 +1402,7 @@ STEPS: list[Step] = [
     Step(
         "release_load_only_injections",
         "Снять неполные инжекции ген-узлов",
-        _G_XML,
+        _G_INPUT,
         "release_load_only_injections: PN without PG (QN without QG) on a node "
         "with generation is not a net injection.",
         _s_release_load_only_injections,
@@ -1395,7 +1412,7 @@ STEPS: list[Step] = [
     Step(
         "relax_generation_min_to_injection",
         "Снять Pmin, противоречащий инжекции",
-        _G_XML,
+        _G_INPUT,
         "relax_generation_min_to_injection: a minimum generation above what the "
         "node P injection reading allows is lowered to the reading.",
         _s_relax_generation_min_to_injection,
@@ -1405,7 +1422,7 @@ STEPS: list[Step] = [
     Step(
         "widen_generation_only_injections",
         "Учесть ящик нагрузки в инжекции из генерации",
-        _G_XML,
+        _G_INPUT,
         "widen_generation_only_injections: PG without PN (QG without QN) on a node "
         "with a load box constrains PG - load, load within the box.",
         _s_widen_generation_only_injections,
@@ -1415,7 +1432,7 @@ STEPS: list[Step] = [
     Step(
         "gen_v_calibration",
         "Калибровка σ² V ген-узлов",
-        _G_XML,
+        _G_INPUT,
         "apply_voltage_meas_calibration_for_gen_nodes.",
         _s_gen_v_calibration,
         toggle="apply_gen_v_calibration",
@@ -1438,7 +1455,7 @@ STEPS: list[Step] = [
     ),
     Step(
         "materialize",
-        "Материализация режима из XML",
+        "Observed operating point materialization",
         _G_MODE,
         "Применить наблюдаемый режим node.pn/qn/pg/qg.",
         _s_materialize,
@@ -1456,7 +1473,7 @@ STEPS: list[Step] = [
     Step(
         "flow_sigma_floor",
         "σ-floor flow-мер от шкалы канала",
-        _G_XML,
+        _G_INPUT,
         "apply_flow_sigma_floor: variance real branch-flow мер ≥ (frac·√3·Vn·1кА)².",
         _s_flow_sigma_floor,
     ),
@@ -1474,7 +1491,7 @@ STEPS: list[Step] = [
     # кластеров по уровню (теплейшей) границы; anti-overshoot полирует итог.
     Step(
         "bad_data_repass",
-        "Bad-data re-pass (Линия C)",
+        "Bad-data re-pass",
         _G_POST,
         "classify_bad_data по остаткам solve + warm re-solve на правленых мерах.",
         _s_bad_data_repass,
@@ -1482,7 +1499,7 @@ STEPS: list[Step] = [
     ),
     Step(
         "v_refine",
-        "V-refine ужесточение (Линия C)",
+        "V-refine ужесточение",
         _G_POST,
         "classify_v_refine согласованных V по остаткам + warm re-solve на ужесточённых σ.",
         _s_v_refine,
@@ -1490,7 +1507,7 @@ STEPS: list[Step] = [
     ),
     Step(
         "v_mirror",
-        "V-mirror значение слепых pseudo-V (Линия C)",
+        "V-mirror значение слепых pseudo-V",
         _G_POST,
         "classify_v_mirror: pseudo-V слепых кластеров → median pu границы × Vnom + warm re-solve.",
         _s_v_mirror,
@@ -1498,7 +1515,7 @@ STEPS: list[Step] = [
     ),
     Step(
         "v_mirror_chain",
-        "Chain-mirror pseudo-V глубоких цепочек (Линия C)",
+        "Chain-mirror pseudo-V глубоких цепочек",
         _G_POST,
         "classify_chain_mirror: pseudo-V флэт-плейсхолдеров на d≥1 от real-V → "
         "pu источника с затуханием decay^(d−1) + warm re-solve.",
@@ -1507,7 +1524,7 @@ STEPS: list[Step] = [
     ),
     Step(
         "refine_merged",
-        "Слитый refine-re-solve (Линия C, перф)",
+        "Слитый refine-re-solve (перф)",
         _G_POST,
         "refine_merge: планы v_refine+v_mirror+chain по одному решению, один warm re-solve.",
         _s_refine_merged,
@@ -1515,7 +1532,7 @@ STEPS: list[Step] = [
     ),
     Step(
         "anti_overshoot",
-        "Anti-overshoot уточнение (Линия C)",
+        "Anti-overshoot уточнение",
         _G_POST,
         "refine_anti_overshoot со само-валидацией (revert).",
         _s_anti_overshoot,
@@ -1596,7 +1613,7 @@ def _execute_step(step: Step, ctx: _Ctx, on_event: Callable[[dict], None] | None
     if step.needs_derived and ctx.derived is None:
         _emit(
             on_event,
-            {"type": "step_skipped", "name": step.name, "reason": "нет XML-деривации"},
+            {"type": "step_skipped", "name": step.name, "reason": "no derived inputs"},
         )
         return
     _emit(on_event, {"type": "step_start", "name": step.name})
@@ -1646,9 +1663,9 @@ def _build_working(model: Any) -> Any:
 def _seed_warm_start(working: Any, init_state: Any) -> int:
     """Засеять V/δ рабочей копии из прошлого ``SEResult`` — явный тёплый старт.
 
-    Input read-only ⇒ ``run`` каждый раз клонирует Input (V/δ = плоские из XML),
-    поэтому межпрогонный warm-start нельзя получить чтением перетёртого
-    ``voltage_magnitude`` (как раньше). Вместо этого вызывающий передаёт прошлый
+    The input is read-only, so ``run`` clones it on every call (V/δ as supplied)
+    and a warm start across runs cannot come from reading an overwritten
+    ``voltage_magnitude`` (as it used to). Вместо этого вызывающий передаёт прошлый
     результат как ``init_state``; его V/δ (kV/рад, keyed по id) пишутся в узлы
     рабочей копии ДО препроцессинга. Шаг ``estimate`` с ``init="results"`` их
     подхватит (препроцессинг V/δ не трогает). Возвращает число засеянных узлов.
@@ -1843,7 +1860,7 @@ def manifest(config: PipelineConfig | type[PipelineConfig] | None = None) -> dic
                       default_enabled, needs_derived}, ...],   # порядок исполнения
           "params": [{name, type, default, control, group, label, help,
                       min?, max?, choices?, depends?}, ...],
-          "groups": ["XML-препроцессинг", "Режим...", ...],   # порядок секций
+          "groups": ["Препроцессинг входа", "Режим...", ...],   # section order
         }
 
     UI строит форму, итерируя ``params`` (контролы) и ``steps`` (toggle-список),

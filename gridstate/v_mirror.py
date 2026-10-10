@@ -1,37 +1,39 @@
-"""V-mirror: значение pseudo-V слепых кластеров по уровню измеренной границы.
+"""V-mirror: the value of blind-cluster pseudo-V from the measured boundary level.
 
-Кластер активных узлов без единой real-TM (одноветвевые отпайки 110/35 кВ,
-средние точки без замеров) наблюдается только через свой pseudo-V-приор.
-Загрузчик на flat-входе ставит его в номинал (``value = Vnom``, σ 5 %), и
-оценка проседает к номиналу — тогда как эталонная OC держит слепой кластер
-на уровне соседней ИЗМЕРЕННОЙ границы (часто 1.05–1.12 Vnom). Корень bias
-слепых хвостов — не вес приора, а его ЗНАЧЕНИЕ-плейсхолдер.
+A cluster of active nodes without a single real measurement (single-branch 110/35 kV
+taps, midpoints without readings) is observed only through its pseudo-V prior. On a
+flat input the loader sets that prior to nominal (``value = Vnom``, σ 5 %) and the
+estimate sags to nominal, while physically a blind cluster sits at the level of its
+neighbouring MEASURED boundary (often 1.05–1.12 Vnom). The root of the blind-tail
+bias is not the prior weight but its placeholder VALUE.
 
-Механизм (двухпроходный): по решению первого прохода взять медианный pu
-(``V/Vnom``) измеренных узлов на границе слепого кластера и переставить
-pseudo-V кластера в ``pu · Vnom``; затем warm re-solve. Меняем ТОЛЬКО
-значение pseudo-приора, дисперсию не трогаем (ужесточение слепого узла —
-отвергнутый рычаг H4: при σ→tight оценка дрейфует).
+Mechanism (two-pass): from the first-pass solution take the median pu (``V/Vnom``)
+of the measured nodes on the boundary of the blind cluster and move the cluster's
+pseudo-V to ``pu · Vnom``; then warm re-solve. ONLY the pseudo-prior value changes,
+the variance is kept (tightening a blind node was tried and rejected: with σ → tight
+the estimate drifts).
 
-Два физических гейта (без них рычаг — седло формата XML: flat-вход любит
-агрессивный перенос, реальный-vm толкает наблюдаемую сеть вверх):
+Two physical gates (without them the lever is a saddle between input kinds: a flat
+input likes an aggressive transfer, an input with a real operating point gets the
+observed network pushed up):
 
-1. **Тот же класс напряжения**: pu берём только с границы того же ``Vnom``.
-   Через трансформатор (АТ 220/110) pu не сохраняется — там tap и падение в
-   обмотке, перенос pu соседнего класса даёт перелёт.
-2. **Lift-гейт** (``pu_граница − pu_узел > min_lift``): трогаем лишь узлы,
-   чьё решение СИСТЕМАТИЧЕСКИ ниже своей границы. Узлы уже-на-уровне
-   (vm случайно ≈ Vnom при реальной рабочей точке) не двигаем — иначе их
-   подъём через Q-балансы пушит наблюдаемую сеть вверх.
+1. **Same voltage class**: pu is taken only from a boundary of the same ``Vnom``.
+   Across a transformer (a 220/110 autotransformer) pu is not preserved because of
+   the tap and the winding drop; transferring the pu of a neighbouring class
+   overshoots.
+2. **Lift gate** (``pu_boundary − pu_node > min_lift``): only nodes whose solution
+   is SYSTEMATICALLY below their boundary are moved. Nodes already at the level
+   (vm ≈ Vnom by chance at a real operating point) stay put, otherwise lifting
+   them pushes the observed network up through the Q balances.
 
-Гейт ``|pu−1| ≤ max_pu_dev`` дополнительно отбрасывает мусорную границу.
-Трогаем лишь приоры-плейсхолдеры (``|value − Vnom| < 1e-6 · Vnom``): узлы с
-осмысленной рабочей точкой или PV-уставкой загрузчик уже заякорил.
+The ``|pu−1| ≤ max_pu_dev`` gate also discards a garbage boundary. Only placeholder
+priors (``|value − Vnom| < 1e-6 · Vnom``) are touched: the loader has already
+anchored nodes with a meaningful operating point or a PV setpoint.
 
-Конфигурация (max_pu_dev=0.25, min_lift=0.01) валидирована на 4 ОДУ:
-Восток p50 −13 % / p95 −16 %, Юг −2.4 % / −7 %, СЗ −3 % / −11 %, СрВолга
-−1 %; mean-bias тает везде, class-max нигде не регрессирует > шума.
-Значения/статусы real-мер не трогаются.
+The configuration (max_pu_dev=0.25, min_lift=0.01) is validated on four large
+production models: p50 / p95 improve by 13 % / 16 %, 2.4 % / 7 %, 3 % / 11 % and
+1 %; the mean bias shrinks everywhere and the per-class maximum nowhere regresses
+beyond noise. Values and statuses of real measurements are not touched.
 """
 
 from __future__ import annotations

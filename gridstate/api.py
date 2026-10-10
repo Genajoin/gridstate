@@ -159,10 +159,10 @@ def estimate(
     kkt = KKTSolver(kkt_solver)
 
     if algorithm == "ipm":
-        # IPM-режим: расширяем layout/state/measurements box-vars и
-        # узловыми balance-уравнениями. ipm_kwargs пробрасываются
-        # в build_ipm_setup (prior_sigma2_*, balance_weight_factor,
-        # bound_relax и т.д.) — для A/B-калибровок через canon.
+        # IPM mode: extend layout/state/measurements with box variables and
+        # nodal balance equations. ipm_kwargs are passed on to build_ipm_setup
+        # (prior_sigma2_*, balance_weight_factor, bound_relax, ...) for A/B
+        # calibration runs.
         ipm_res = _run_ipm(
             model,
             network_pu,

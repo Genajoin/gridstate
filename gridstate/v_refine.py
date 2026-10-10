@@ -1,22 +1,23 @@
-"""V-refine: двухпроходное ужесточение согласованных real V-измерений.
+"""V-refine: two-pass tightening of consistent real V measurements.
 
-После первого solve остатки ``z − h`` (``h`` = ``estimated_si``) на
-real V-измерениях показывают, где оценка систематически провисает ниже
-СОБСТВЕННЫХ замеров напряжения. Корень — недовзвешенная V-мера: загрузчик
-ставит плоскую σ_V (несколько кВ), отчего на нормальных уравнениях потоки
-перевешивают V и тянут регион вниз монотонно с классом (на 500 кВ
-p50(z−h) до +3.4 кВ, >90 % остатков положительны).
+After the first solve the residuals ``z − h`` (``h`` = ``estimated_si``) of real V
+measurements show where the estimate systematically sags below its OWN voltage
+readings. The root is an underweighted V measurement: the loader sets a flat σ_V
+(several kV), so in the normal equations the flows outweigh V and pull the network
+down monotonically with the voltage class (at 500 kV p50(z−h) reaches +3.4 kV, more
+than 90 % of the residuals are positive).
 
-Механизм: ужесточить (variance × factor², factor<1) ТОЛЬКО те V-меры,
-что согласованы с решением первого прохода (``|z−h|/σ < rn_threshold``),
-и пере-решить (warm, ``init="results"``). Конфликтные V-меры НЕ трогаем:
-большой остаток на V-мере — кандидат в грубую ошибку (битый замер кромки
-вроде Курской АЭС z=760 кВ при истинных 693), её ужесточение лишь
-закрепило бы испорченное решение.
+Mechanism: tighten (variance × factor², factor<1) ONLY the V measurements consistent
+with the first-pass solution (``|z−h|/σ < rn_threshold``) and re-solve (warm,
+``init="results"``). Conflicting V measurements are NOT touched: a large residual on
+a V measurement marks a gross-error candidate (a bad boundary reading such as
+z=760 kV against a true 693 kV), and tightening it would only lock in a corrupted
+solution.
 
-Конфигурация (rn_threshold=3, factor=0.7) валидирована универсально на
-4 ОДУ-моделях: Восток p50 −37 % / p95 −23 %, СЗ p95 −15 %, глобальный
-bias mean тает на всех; class-max нигде не регрессирует > 5 %.
+The configuration (rn_threshold=3, factor=0.7) is validated with one set of options
+on four large production models: best cases p50 −37 % / p95 −23 % and p95 −15 %; the
+global mean bias shrinks on all of them and the per-class maximum nowhere regresses
+by more than 5 %.
 
 В отличие от bad-data re-pass (``gridstate.bad_data_repass``) этот шаг НЕ
 меняет значения и статусы мер — только дисперсии согласованных V, поэтому

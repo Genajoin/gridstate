@@ -82,8 +82,9 @@ def from_pandapower(
             z-вектор из решения PF).
 
     Returns:
-        :class:`SEInput` с ``derived=None`` (модель уже несёт узлы/ветви/режим/
-        измерения; XML/формат-зависимые шаги пайплайна пропускаются).
+        :class:`SEInput` with ``derived=None`` (the model already carries nodes,
+        branches, the operating point and measurements; the pipeline steps that
+        need derived inputs are skipped).
 
     Raises:
         ImportError: если pandapower не установлен (см. extra ``[test-models]``).

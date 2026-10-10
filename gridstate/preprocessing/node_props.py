@@ -7,7 +7,7 @@
 Используется ``add_pseudo_measurements`` для:
 
 * классификации узла как **transit** vs **load/gen** (порог жёсткости ZIB);
-* привязки V-прайора PV-узла к ``vzd`` (семантика эталонных SE).
+* anchoring the V prior of a PV node to its voltage setpoint ``vzd``.
 """
 
 from __future__ import annotations

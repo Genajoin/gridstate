@@ -39,11 +39,10 @@ def variance_power(
     """σ² в МВт²: ``sigma_frac`` от |value|, минимум 0.5 МВт + base floor.
 
     Для P-измерений default ``sigma_frac=0.02`` (2 % от |value|).
-    Для Q-измерений на branch-flow в региональных моделях иногда
-    оправданно брать большее значение (0.05–0.07) — поток Q сильно
-    зависит от V и δ, и тугая σ_Q вынуждает SE прогибать V региона
-    под битую/несамосогласованную Q-телеметрию (см.
-    ``docs/audit/audit_se_boundary_nodes.md``).
+    For Q branch-flow measurements on large models a larger value
+    (0.05–0.07) is sometimes justified: the Q flow depends strongly on V and
+    δ, and a tight σ_Q forces the estimate to bend the voltage of a whole
+    area to fit broken or inconsistent Q telemetry.
     """
     sigma = max(sigma_frac * abs(value_mva), 0.5)
     return float(sigma * sigma + base)
@@ -70,8 +69,9 @@ def variance_branch_q(
 
     где ``charging_mvar = |B_si|·Vn²`` (полная зарядная, см.
     :func:`gridstate.telemetry.loss_filter.compute_expected_q_imbalance_mvar`).
-    Зеркалит инлайн-логику ``apply_telemetry`` (``gridstate.telemetry.apply_resolved``)
-    и используется в Цех-2/3-мосте ``build_measurements_from_ti``.
+    Mirrors the inline logic of ``apply_telemetry``
+    (``gridstate.telemetry.apply_resolved``) for callers that build measurement
+    variances themselves.
 
     Args:
         value_mvar: измеренный Q-поток ветви, МВАр.

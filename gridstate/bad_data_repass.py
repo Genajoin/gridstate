@@ -6,13 +6,13 @@
 формирует план правок (flip / reject / damp), пайплайн применяет его к
 рабочей модели и пере-решает (warm, ``init="results"``).
 
-Конфигурация валидирована универсально на 4 ОДУ-моделях (без региональных
-опций): T=10 на σ_det=min(σ,30), парный иммунитет согласованных branch-пар
-(анти-circular защита: у плохого решения наибольшие остатки могут иметь
-ЧЕСТНЫЕ меры — якоря, которые нельзя отбраковывать), относительный
-flip-критерий |z+h| < γ·|z−h|, guard покрытия (node, P/Q-домен) и
-демпфирование Q-инжекций вместо reject (слепой кромочный узел без Qinj
-садится Q-балансом на мусорный pseudo-приор).
+The configuration is validated on four large production models with one set of
+options (no per-model tuning): T=10 on σ_det=min(σ,30), pair immunity of
+consistent branch pairs (an anti-circular guard: in a bad solution the largest
+residuals may belong to HONEST measurements, anchors that must not be rejected),
+the relative flip criterion |z+h| < γ·|z−h|, the (node, P/Q domain) coverage
+guard and damping of Q injections instead of rejecting them (a blind boundary
+node without Qinj settles on a garbage pseudo-prior through the Q balance).
 
 Детекционная σ_det ловит конфликты, спрятанные гигантской σ≈α·|z| больших
 потоков; ВЕСА солвера не меняются (cap весов валит точность).

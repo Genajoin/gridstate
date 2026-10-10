@@ -254,10 +254,10 @@ def _build_pseudo_rows(
                 and nid not in real_v_neighbor
                 and abs(v_prior_value - vn) >= config.unobservable_v_min_vm_deviation * vn
             ):
-                # Ненаблюдаемый узел без real-V (и без real-V-соседа по гейту),
-                # у которого прайор — нетривиальная рабочая точка before_OC (не
-                # номинал-плейсхолдер): эталонная SE держит V на vm. Жёсткий якорь
-                # вместо 5% — иначе loose σ даёт дрейф.
+                # An unobservable node without real V (and without a real-V
+                # neighbour, per the gate) whose prior is a non-trivial operating
+                # point supplied with the input (not a nominal placeholder): keep V
+                # at vm with a hard anchor instead of 5 %, a loose σ lets it drift.
                 sigma = (config.unobservable_v_sigma_frac * vn) ** 2
                 n_unobs_v += 1
             else:
@@ -454,26 +454,26 @@ def add_pseudo_measurements(
             observability.
         unobservable_v_sigma_frac: если задан — для **ненаблюдаемых** узлов
             без real-V якорим pseudo-V жёстко: ``σ = (frac·Vnom)²`` вместо
-            обычных 5%. Мотивация: эталонная SE держит ненаблюдаемый
-            узел на рабочей точке before_OC (``voltage_magnitude`` ≈ его
-            after_OC V), а наш loose 5%-прайор позволяет солверу дрейфовать
-            (top_dV доминанта на региональных моделях: terminal-хвосты уходят
-            на 10-22 % от эталонной SE). Жёсткий якорь к vm-прайору
-            воспроизводит якорение эталонной SE.
+            обычных 5%. Rationale: an unobservable node has no information
+            beyond the operating point supplied with the input
+            (``voltage_magnitude``), and a loose 5 % prior lets the solver drift
+            (the dominant top-dV contribution on large models: terminal tails
+            drift by 10-22 %). A hard anchor to the vm prior keeps the node at
+            that operating point.
             ``None`` (default) — поведение не меняется (5%).
         unobservable_v_exclude_real_v_neighbor: при tighten НЕ якорить узел,
             у которого есть сосед по active-ветви с **real**-V-замером —
-            такой узел наблюдаем через линию (эталонная SE ведёт его V от
-            соседа, не держит на vm). Default True.
+            such a node is observable through the line (its V follows the
+            neighbour instead of being held at vm). Default True.
         unobservable_v_min_vm_deviation: минимальное относительное отклонение
             прайора от номинала ``|v_prior - Vnom|/Vnom`` для tighten. Default
             0.0 (без ограничения). Мотивация: когда ``vm`` ≈ ``Vnom`` (или
-            ``vm=0`` → fallback к Vnom), прайор — плейсхолдер-номинал, а не
-            реальная рабочая точка before_OC; эталонная SE на таких узлах
-            могла увести V далеко от номинала (на региональных моделях ~½ узлов
-            prior>2% от эталонной SE) →
-            жёсткий якорь к номиналу регрессирует медиану. Порог >0 якорит
-            только узлы с нетривиальным before_OC V.
+            ``vm=0`` → fallback к Vnom), the prior is a nominal placeholder,
+            not a real operating point, and the true V on such nodes may be
+            far from nominal (on large models about half of these nodes
+            deviate by more than 2 %), so a hard anchor to nominal worsens the
+            median. A threshold > 0 anchors only nodes with a non-trivial
+            input V.
         unmeasured_gen_p_nodes / unmeasured_gen_q_nodes: nodes whose load-only
             injection measurement was released (see
             :mod:`gridstate.telemetry.load_only_injection`). Their generation is

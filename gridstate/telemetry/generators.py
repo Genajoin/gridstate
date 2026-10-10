@@ -50,9 +50,9 @@ def apply_generator_status_from_node(model: Any) -> dict[str, int]:
     возможно несколько ген. с разным статусом (один в работе, другой
     в резерве), это нормально.
 
-    Закрывает инвариант эталонных SE ``(node off ⇒ gen off)``, который наш
-    каскад на узлы (``disable_isolated_nodes`` и т.д.) не передавал
-    автоматически на генераторы.
+    Enforces the physical invariant ``(node off ⇒ gen off)``, which the node
+    cascade (``disable_isolated_nodes`` etc.) did not propagate to the
+    generators by itself.
 
     Должна вызываться **после** всех каскад-функций на узлы.
 

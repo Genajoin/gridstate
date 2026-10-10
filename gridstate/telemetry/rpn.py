@@ -20,11 +20,14 @@ if TYPE_CHECKING:
 def _apply_tap_steps_on_arrays(
     branches_arr: np.ndarray, tap_steps_arr: np.ndarray
 ) -> dict[str, int | float]:
-    """Применить контракт ``tap_steps`` к ветвям (tap/phase + H30-шунт). Мутирует ``branches_arr``.
+    """Apply the ``tap_steps`` contract to branches (tap/phase + shunt rescaling).
+
+    Mutates ``branches_arr``.
 
     Выбор отпайки сделан вне ядра — ``tap_steps`` несёт целевые ``tap_ratio``/
     ``phase_shift`` + ``shunt_factor`` (=(tap_new/tap_old)², 1.0=без пересчёта).
-    Ядро лишь применяет: пишет tap/phase и H30-факторит шунт (поля ``!=0.0``).
+    The kernel only applies them: it writes tap/phase and rescales the branch
+    shunt (fields ``!=0.0``).
     Это формат-агностичная физика трансформатора.
     """
     by_id = id_to_pos_map(branches_arr["id"])
@@ -38,7 +41,7 @@ def _apply_tap_steps_on_arrays(
         stats["applied"] += 1
 
         factor = float(ts["shunt_factor"])
-        if factor != 1.0:  # 1.0 — sentinel «без H30» (адаптер); умножение было бы no-op
+        if factor != 1.0:  # 1.0: no rescaling requested; the product would be a no-op
             recalc_done = False
             for field in (
                 "conductance",
@@ -60,10 +63,10 @@ def _apply_tap_steps_on_arrays(
 def apply_rpn_resolved(model: Working) -> dict[str, int | float]:
     """Применить выбранные отпайки (таблица ``tap_steps``) к ветвям модели.
 
-    Выбор отпайки сделан выше по pipeline; ядро :func:`_apply_tap_steps_on_arrays`
-    пишет tap/phase + H30-факторит шунт. Зовётся шагом ``run()`` до
-    ``apply_telemetry`` (tap влияет на variance/Y-bus). Пустая ``tap_steps`` →
-    no-op.
+    The tap position is chosen upstream; the kernel :func:`_apply_tap_steps_on_arrays`
+    writes tap/phase and rescales the branch shunt. The ``run()`` step calls it
+    before ``apply_telemetry`` (the tap affects variances and the Y-bus). An empty
+    ``tap_steps`` is a no-op.
     """
     tap_steps_coll = getattr(model, "tap_steps", None)
     tap_steps_arr = tap_steps_coll.to_numpy() if tap_steps_coll is not None else None

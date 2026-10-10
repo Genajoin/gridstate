@@ -8,15 +8,17 @@
 Механизм (двухпроходное семейство, см. ``pipeline._refine_two_pass``, но с
 пер-кандидатными trial-прогонами):
 
-1. Кандидаты: активные шунты на узлах, где node-V-мера расходится с решением
-   ``|z − h| > v_frac · Vnom`` (внутренний сигнал; эталон не нужен).
+1. Candidates: active shunts on nodes whose node V measurement disagrees with the
+   solution, ``|z − h| > v_frac · Vnom`` (an internal signal; no outside solution
+   is needed).
 2. Для каждого кандидата: снапшот → правка (``off``: status=False;
    ``flip``: −B) → warm re-solve → ΔΣrn² по живым real-мерам.
 3. Гейт: вариант принимается, только если ``ΔΣrn² < −gate_drop`` (существенно
    лучшее согласие с собственными мерами); иначе полный откат снапшота.
 
-Гейт селективен в обе стороны (валидация 4 ОДУ 2026-07-06: Юг — 1 принят,
-dVmax −40.7%; 7 ложных кандидатов трёх регионов отвергнуты). ⚠️ Research-флаг:
+The gate is selective both ways (validation 2026-07-06 on four large models:
+one candidate accepted, dVmax −40.7 %; 7 false candidates on three other
+models rejected). ⚠️ Research-флаг:
 шаг РЕДАКТИРУЕТ сеть по статистике мер — на живой ТМ решение может мерцать
 между слайсами; для прод-фикса предпочтителен offline-аудит источника данных.
 """

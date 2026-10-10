@@ -1,8 +1,8 @@
 """Сериализация ``SEInput`` (контракт + ``DerivedInputs``) в ``.npz`` — граница входа.
 
-**Цель.** Единственная граница входа gridstate — **файл данных** (``.npz``),
-который готовит внешний инструмент-источник и который gridstate читает **без
-внешних зависимостей и без XML**.
+**Purpose.** The only input boundary of gridstate is a **data file** (``.npz``)
+prepared by the producer of the input and read by gridstate **without external
+dependencies and without knowing the source format**.
 
 Сериализуется ровно то, что нужно ядру для прогона ``run(SEInput)``:
 
@@ -167,7 +167,7 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
 
 
 def load_se_input_npz(path: str | Path) -> SEInput:
-    """Прочитать ``.npz`` (см. :func:`save_se_input`) в ``SEInput`` — БЕЗ внешних зависимостей и XML.
+    """Read an ``.npz`` (see :func:`save_se_input`) into ``SEInput``; no external dependencies.
 
     Рабочий слой собирается через :meth:`gridstate.working.Working.from_arrays`.
     Возвращаемый ``SEInput`` готов к ``run(se_input)``: ``derived`` —

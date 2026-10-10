@@ -20,10 +20,10 @@
 (V_wye=V_HV через power flow) и без (V_wye плавал свободно, теперь —
 к real V).
 
-**Декомпозиция:** функция расщеплена на
-``_mirror_voltage_on_arrays``-**ядро над контрактными numpy-массивами**
-(читает ТОЛЬКО контрактные колонки nodes/branches/measurements,
-XML не трогает) + тонкий адаптер. Паттерн **append**: ядро не мутирует
+**Decomposition:** the function is split into the
+``_mirror_voltage_on_arrays`` **kernel over contract numpy arrays** (it reads
+ONLY the contract columns of nodes/branches/measurements) and a thin adapter.
+Паттерн **append**: ядро не мутирует
 существующие строки, а ВОЗВРАЩАЕТ список новых measurement-строк
 (``list[dict]``), а адаптер добавляет их через ``model.measurements.add()``
 построчно. Логика последовательная (порядок обхода ветвей, within-pass

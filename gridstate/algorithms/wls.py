@@ -26,10 +26,10 @@ Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
     3. Proactive LM activation: если шаг at_boundary AND ``ρ < 0.25``,
        активируем λ ≥ ``lam_init`` на следующей итерации — сигнал что
        модель плохо описывает шаг у границы TR.
-    4. Δ_max = max_step. Эксперимент показал, что разрешение TR расти
-       выше начального max_step ускоряет уменьшение J, но ухудшает
-       accuracy относительно эталона на real-TM
-       (J-минимум ≠ эталонный state из-за inconsistent measurements).
+    4. Δ_max = max_step. Letting the TR grow beyond the initial max_step
+       speeds up the decrease of J but worsens accuracy on real telemetry:
+       with inconsistent measurements the minimum of J lies away from the
+       true state.
 
 Останов: ``max|ΔE| ≤ tolerance`` либо превышение ``max_iterations``.
 
@@ -309,9 +309,9 @@ def solve_wls(
 
     # Trust-region параметры. Стартовый радиус = max_step (0.35) — это
     # «безопасный» шаг в pu для Power Flow (~20° в δ или ~35% Unom в V).
-    # Верхний предел тоже max_step: эксперимент показал, что на real-TM
-    # с inconsistent measurements минимум `J` лежит в стороне от
-    # эталонного state, и ускоренное движение к нему ухудшает |dV|.
+    # The upper limit is max_step as well: on real telemetry with inconsistent
+    # measurements the minimum of `J` lies away from the true state, and a
+    # faster move towards it worsens |dV|.
     # Адаптируем Δ только вниз (при reject), чтобы корректно «тормозить»
     # на нелинейных участках.
     tr_radius = float(max_step)

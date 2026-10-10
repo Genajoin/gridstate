@@ -191,9 +191,9 @@ def write_node_estimates(
 
     Заполняет ``load_p_estimated``, ``load_q_estimated``,
     ``generation_p_estimated``, ``generation_q_estimated`` для узлов из
-    ``node_ids``. Семантика — фактические значения при текущем V
-    (аналог ``pnr/qnr/pgr/qgr`` в эталонном отчёте); преобразование к
-    номинальным (если PF потребует) выполняется отдельно через
+    ``node_ids``. The semantics are the actual values at the current V
+    (the voltage-dependent load and generation of the solved state); a
+    conversion to nominal values (if PF needs it) is done separately through
     ``load_model_id`` + ``load_characteristics``.
 
     ``None`` для любого из массивов значений → соответствующее поле не
@@ -454,8 +454,8 @@ def reconcile_node_balance(
 
     * ``exist_gen=1, exist_load=0`` → в генерацию (``gen += r``);
     * иначе (load-узлы, смешанные, транзиты) → в нагрузку
-      (``load −= r``; на транзите появляется псевдонагрузка ``−inj`` —
-      аналог материализации нагрузок по районам в эталонной SE).
+      (``load −= r``; a transit node gets a pseudo-load ``−inj``, the usual
+      way to materialise an area's load on its nodes).
 
     По умолчанию (``respect_bounds=False``) — без клипов к границам:
     точность согласования важнее, после пасса ``gen_est − load_est ==
@@ -464,10 +464,10 @@ def reconcile_node_balance(
 
     ``respect_bounds=True`` — целевое значение клипуется к физическим
     границам узла (``load_*_min/max`` через :func:`resolve_bounds`;
-    незаданные пары не клипуются). Мотив — паритет с эталонными SE:
-    их выходные режимы не нарушают ``pn_min`` (отрицательные нагрузки
-    легальны по границам), тогда как безусловный слив остатка r
-    мягкого баланса фабрикует нефизичные отрицательные нагрузки на узлах
+    незаданные пары не клипуются). Rationale: a consistent operating point
+    never violates ``pn_min`` (negative loads are legal only within the
+    limits), while an unconditional split of the soft balance residual r
+    fabricates non-physical negative loads on nodes
     с ``lo=0`` (box-var IPM в минус уйти не может — минус создаёт именно
     reconcile). Цена: на клипнутых узлах ``gen−load ≠ inj_calc`` —
     незакрытый остаток копится в ``sum_unclosed_p_mw`` (диагностика).
@@ -567,15 +567,15 @@ def reconcile_node_balance(
 
 
 def apply_load_characteristic(model: Working) -> dict[str, int]:
-    """Пересчитать ``load_*_estimated`` через статические характеристики
-    нагрузки (СХН) P(V) / Q(V) после H29-split.
+    """Recompute ``load_*_estimated`` through the static load characteristics
+    P(V) / Q(V) after the gen/load split.
 
-    После WLS-pass ``write_node_estimates_from_inj`` записал
-    ``load_p_estimated`` / ``load_q_estimated`` как «фактические» значения
-    при текущем V. Для узлов с привязкой к модели СХН
-    (``node.load_model_id >= 0``) более физичная оценка — масштабировать
-    **номинальную** нагрузку (``node.load_p`` / ``node.load_q``, та что
-    в исходной модели/XML — при ``V_pu = 1.0``) полиномом по V:
+    After the WLS pass ``write_node_estimates_from_inj`` has written
+    ``load_p_estimated`` / ``load_q_estimated`` as the actual values at the
+    current V. For nodes bound to a load characteristic
+    (``node.load_model_id >= 0``) a more physical estimate scales the
+    **nominal** load (``node.load_p`` / ``node.load_q``, the value supplied with
+    the input, at ``V_pu = 1.0``) by a polynomial in V:
 
     .. code-block:: text
 
@@ -716,7 +716,8 @@ def refine_anti_overshoot(
     физически-консистентной (``V_from/tap``), а не к произвольному потолку.
 
     САМО-ВАЛИДАЦИЯ: уточнение принимается ТОЛЬКО если ``max(V/Vnom)`` снизился
-    (runtime-критерий, без эталона). Иначе V/δ **откатываются** к базовому решению.
+    (a runtime criterion, no outside solution needed). Otherwise V/δ are
+    **rolled back** to the base solution.
     Гарантирует отсутствие регрессии: где overshoot реален и устраним — выигрыш;
     где уточнение дестабилизирует — откат к базе (no-op). Универсально-безопасно.
 

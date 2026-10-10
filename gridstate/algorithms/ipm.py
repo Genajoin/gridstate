@@ -1,8 +1,9 @@
 """Primal log-barrier Interior-Point Method для box-constrained WLS.
 
-Эталонная SE делает WLS как IPM: переменные оптимизации помимо
-``(δ, V)`` включают ``Pgen, Qgen, Pnag, Qnag`` — нагрузка/генерация в
-узле, оцениваемые WLS из TI с **box-constraints** через log-barrier.
+State estimation with operating limits is posed as WLS solved by IPM: besides
+``(δ, V)`` the optimisation variables include ``Pgen, Qgen, Pnag, Qnag``, the
+nodal generation and load, estimated from telemetry under **box
+constraints** enforced by a log barrier.
 
 Этот модуль реализует **generic** IPM-solver: он работает с произвольным
 набором переменных и box-bounds, не зная про доменную модель сети. Связку с
