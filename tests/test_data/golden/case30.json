@@ -4,11 +4,11 @@
   "scalars": {
    "success": true,
    "iterations": 3,
-   "objective_value": 200.79702487667572,
+   "objective_value": 200.89288069830994,
    "algorithm": "wls",
    "convergence_status": "converged",
    "chi2": {
-    "value": 200.79702487667566,
+    "value": 200.89288069830997,
     "dof": 195,
     "threshold": 228.57993801830452,
     "passes": true
@@ -265,7 +265,7 @@
      "algorithm": "wls",
      "success": true,
      "iterations": 3,
-     "objective_value": 200.79702487667572
+     "objective_value": 200.89288069830994
     }
    },
    {
@@ -319,11 +319,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 98.83261888482977,
+   "objective_value": 98.89757769061222,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 197.0014196446608,
+    "value": 197.1322691143768,
     "dof": 195,
     "threshold": 228.57993801830452,
     "passes": true
@@ -581,7 +581,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 80.51056053261406
+     "objective_value": 80.55109002013953
     }
    },
    {
@@ -666,11 +666,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 98.83261888482977,
+   "objective_value": 98.89757769061222,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 197.0014196446608,
+    "value": 197.1322691143768,
     "dof": 195,
     "threshold": 228.57993801830452,
     "passes": true
@@ -928,7 +928,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 80.51056053261406
+     "objective_value": 80.55109002013953
     }
    },
    {
@@ -1006,11 +1006,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 98.83261888482977,
+   "objective_value": 98.89757769061222,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 197.0014196446608,
+    "value": 197.1322691143768,
     "dof": 195,
     "threshold": 228.57993801830452,
     "passes": true
@@ -1268,7 +1268,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 80.51056053261406
+     "objective_value": 80.55109002013953
     }
    },
    {
@@ -1363,11 +1363,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 98.83261888482977,
+   "objective_value": 98.89757769061222,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 197.0014196446608,
+    "value": 197.1322691143768,
     "dof": 195,
     "threshold": 228.57993801830452,
     "passes": true
@@ -1625,7 +1625,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 80.51056053261406
+     "objective_value": 80.55109002013953
     }
    },
    {
@@ -1719,11 +1719,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 98.83261874295512,
+   "objective_value": 98.89757754869683,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 197.00141958760827,
+    "value": 197.13226905014648,
     "dof": 195,
     "threshold": 228.57993801830452,
     "passes": true
@@ -1985,7 +1985,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 80.51055794042546
+     "objective_value": 80.55108745720148
     }
    },
    {

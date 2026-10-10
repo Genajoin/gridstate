@@ -1,14 +1,14 @@
 {
  "format": 1,
  "environment": {
-  "gridstate": "1.13.0",
-  "git_sha": "94836025534a2fc8fbd4e0d9dc7df60158b5f10a",
+  "gridstate": "1.14.0.dev19",
+  "git_sha": "b5ddba2acd1030f1a52af4b8e65434cc7c28c37b",
   "git_dirty": false,
   "python": "3.12.7",
   "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.39",
   "machine": "x86_64",
   "numpy": "2.5.3",
-  "scipy": "1.18.1",
+  "scipy": "1.16.3",
   "cvxopt": "1.3.3",
   "kkt_backend": "cholmod",
   "omp_num_threads": null,
@@ -33,6 +33,7 @@
     "relax_generation_min_to_injection": false,
     "widen_generation_only_injections": true,
     "apply_gen_v_calibration": true,
+    "gen_v_calibration_mode": "absolute",
     "flow_sigma_floor_kv_frac": null,
     "materialize": true,
     "refine_slack": true,
@@ -101,6 +102,7 @@
     "relax_generation_min_to_injection": true,
     "widen_generation_only_injections": true,
     "apply_gen_v_calibration": true,
+    "gen_v_calibration_mode": "absolute",
     "flow_sigma_floor_kv_frac": 0.01,
     "materialize": true,
     "refine_slack": true,
@@ -169,6 +171,7 @@
     "relax_generation_min_to_injection": true,
     "widen_generation_only_injections": true,
     "apply_gen_v_calibration": true,
+    "gen_v_calibration_mode": "absolute",
     "flow_sigma_floor_kv_frac": 0.01,
     "materialize": true,
     "refine_slack": true,
@@ -237,6 +240,7 @@
     "relax_generation_min_to_injection": true,
     "widen_generation_only_injections": true,
     "apply_gen_v_calibration": true,
+    "gen_v_calibration_mode": "absolute",
     "flow_sigma_floor_kv_frac": 0.01,
     "materialize": true,
     "refine_slack": true,
@@ -305,6 +309,7 @@
     "relax_generation_min_to_injection": true,
     "widen_generation_only_injections": true,
     "apply_gen_v_calibration": true,
+    "gen_v_calibration_mode": "absolute",
     "flow_sigma_floor_kv_frac": 0.01,
     "materialize": true,
     "refine_slack": true,
@@ -373,6 +378,7 @@
     "relax_generation_min_to_injection": true,
     "widen_generation_only_injections": true,
     "apply_gen_v_calibration": true,
+    "gen_v_calibration_mode": "absolute",
     "flow_sigma_floor_kv_frac": 0.01,
     "materialize": true,
     "refine_slack": true,
@@ -438,6 +444,7 @@
     "relax_generation_min_to_injection": false,
     "widen_generation_only_injections": true,
     "apply_gen_v_calibration": true,
+    "gen_v_calibration_mode": "absolute",
     "flow_sigma_floor_kv_frac": null,
     "materialize": true,
     "refine_slack": true,
@@ -496,7 +503,7 @@
     "case": "case14",
     "scenario": "as_is"
    },
-   "fingerprint": "5062cc8595f97cd1c57e8cfcba61b0b81a8567f6eb0be6f427eae0aa7bcbea06",
+   "fingerprint": "14598709837f95bcb76f26b139e981ca6311c8f62c11e942bc7bc233620473b6",
    "configs": [
     "default",
     "ipm_full",
@@ -512,7 +519,7 @@
     "case": "case14",
     "scenario": "degraded"
    },
-   "fingerprint": "0f30607e9033d37e0795ea066b97e7f40e82ff5db29251053dd0e139343a365a",
+   "fingerprint": "557f9702e593082d301172fa3eea1542783e8450a4a4392f6cf96149c5f9262d",
    "configs": [
     "default",
     "ipm_full",
@@ -528,7 +535,7 @@
     "case": "case30",
     "scenario": "as_is"
    },
-   "fingerprint": "3c3579aed127ba9c5a882146da8e9d5b4f6e5ff45e5e8545bef71c9f6692e72a",
+   "fingerprint": "ff2c8240fd41f7d5ee90a59994c3fc7a953f3adbb3ac4bbe3105bee0f2e19295",
    "configs": [
     "default",
     "ipm_full",
@@ -544,7 +551,7 @@
     "case": "case30",
     "scenario": "degraded"
    },
-   "fingerprint": "0673d20a742dae8cee0623cec03fdc856ece9b0d66a8a746f002d2848491b3b4",
+   "fingerprint": "4591277a2353148f1554f0b7e2a8b3a071cc70186fc66fc6c5181dfc32be9c41",
    "configs": [
     "default",
     "ipm_full",
@@ -560,7 +567,7 @@
     "case": "case118",
     "scenario": "as_is"
    },
-   "fingerprint": "d1a1b61698afdabb0c82e816f8f03237fd2aa860d542d7c742492e8183e7627d",
+   "fingerprint": "d4c8fb84b5aaaab4fc98f65e2a81735c6480fc18699a9dcd9cd53b63240d4806",
    "configs": [
     "default",
     "ipm_full",
@@ -576,7 +583,7 @@
     "case": "case118",
     "scenario": "degraded"
    },
-   "fingerprint": "b9188e995764a8b06858040972e76f71b1414c4897f2573f051db46dd13c91e3",
+   "fingerprint": "4c0b2c2e4c9672086bf06bc64c8cc046dc6d6da8cdc240434545b2158148ef0e",
    "configs": [
     "default",
     "ipm_full",

@@ -4,14 +4,14 @@
   "scalars": {
    "success": true,
    "iterations": 3,
-   "objective_value": 149.36582739746223,
+   "objective_value": 94.33639500133559,
    "algorithm": "wls",
    "convergence_status": "converged",
    "chi2": {
-    "value": 149.36582739746223,
+    "value": 94.33639500133556,
     "dof": 95,
     "threshold": 118.75161175336736,
-    "passes": false
+    "passes": true
    }
   },
   "events": [
@@ -265,7 +265,7 @@
      "algorithm": "wls",
      "success": true,
      "iterations": 3,
-     "objective_value": 149.36582739746223
+     "objective_value": 94.33639500133559
     }
    },
    {
@@ -298,8 +298,8 @@
     "stats": {
      "tightened": 0,
      "accepted": false,
-     "max_ratio_before": 1.0923,
-     "max_ratio_after": 1.0923
+     "max_ratio_before": 1.0925,
+     "max_ratio_after": 1.0925
     }
    },
    {
@@ -319,14 +319,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 68.32117608174593,
+   "objective_value": 44.99764078204862,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 150.8671267223934,
+    "value": 93.57135789668254,
     "dof": 95,
     "threshold": 118.75161175336736,
-    "passes": false
+    "passes": true
    }
   },
   "events": [
@@ -584,7 +584,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 63.426022061244126
+     "objective_value": 40.64973056004053
     }
    },
    {
@@ -669,14 +669,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 68.32117608174593,
+   "objective_value": 44.99764078204862,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 150.8671267223934,
+    "value": 93.57135789668254,
     "dof": 95,
     "threshold": 118.75161175336736,
-    "passes": false
+    "passes": true
    }
   },
   "events": [
@@ -934,7 +934,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 63.426022061244126
+     "objective_value": 40.64973056004053
     }
    },
    {
@@ -1012,14 +1012,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 68.32117608174593,
+   "objective_value": 44.99764078204862,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 150.8671267223934,
+    "value": 93.57135789668254,
     "dof": 95,
     "threshold": 118.75161175336736,
-    "passes": false
+    "passes": true
    }
   },
   "events": [
@@ -1277,7 +1277,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 63.426022061244126
+     "objective_value": 40.64973056004053
     }
    },
    {
@@ -1351,8 +1351,8 @@
     "stats": {
      "tightened": 0,
      "accepted": false,
-     "max_ratio_before": 1.0932,
-     "max_ratio_after": 1.0932
+     "max_ratio_before": 1.0937,
+     "max_ratio_after": 1.0937
     }
    },
    {
@@ -1372,14 +1372,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 68.32117608174593,
+   "objective_value": 44.99764078204862,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 150.8671267223934,
+    "value": 93.57135789668254,
     "dof": 95,
     "threshold": 118.75161175336736,
-    "passes": false
+    "passes": true
    }
   },
   "events": [
@@ -1637,7 +1637,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 63.426022061244126
+     "objective_value": 40.64973056004053
     }
    },
    {
@@ -1731,14 +1731,14 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 68.32079988756904,
+   "objective_value": 44.99746149658869,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 150.8674423717033,
+    "value": 93.57162683853372,
     "dof": 95,
     "threshold": 118.75161175336736,
-    "passes": false
+    "passes": true
    }
   },
   "events": [
@@ -2000,7 +2000,7 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 63.39984502788257
+     "objective_value": 40.6413927060757
     }
    },
    {
