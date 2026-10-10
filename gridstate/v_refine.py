@@ -19,9 +19,9 @@ on four large production models: best cases p50 −37 % / p95 −23 % and p95 �
 global mean bias shrinks on all of them and the per-class maximum nowhere regresses
 by more than 5 %.
 
-В отличие от bad-data re-pass (``gridstate.bad_data_repass``) этот шаг НЕ
-меняет значения и статусы мер — только дисперсии согласованных V, поэтому
-не может внести грубую ошибку, лишь перераспределяет доверие.
+Unlike the bad-data re-pass (``gridstate.bad_data_repass``), this step does NOT
+change measurement values or statuses, only the variances of consistent V
+measurements, so it cannot introduce a gross error and merely redistributes trust.
 """
 
 from __future__ import annotations
@@ -46,11 +46,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class VRefinePlan:
-    """План ужесточения V-мер по итогам классификации residuals."""
+    """Plan for tightening V measurements, based on the residual classification."""
 
     tighten_ids: frozenset[int]  # variance := variance · factor²
-    n_consistent: int  # согласованных V-мер (rn < threshold) — они и ужесточаются
-    n_conflicting: int  # конфликтных V-мер (rn ≥ threshold) — оставлены как есть
+    n_consistent: int  # consistent V measurements (rn < threshold); these get tightened
+    n_conflicting: int  # conflicting V measurements (rn >= threshold); left as is
 
     @property
     def empty(self) -> bool:
@@ -58,15 +58,15 @@ class VRefinePlan:
 
 
 def classify_v_refine(measurements: np.ndarray, *, rn_threshold: float) -> VRefinePlan:
-    """Отобрать согласованные real V-меры для ужесточения.
+    """Select consistent real V measurements for tightening.
 
     Args:
-        measurements: structured-массив measurements рабочей модели ПОСЛЕ
-            solve (``estimated_si`` заполнены write_measurement_estimates).
-        rn_threshold: порог согласованности ``|z−h|/σ < rn_threshold``.
+        measurements: structured measurements array of the working model AFTER
+            the solve (``estimated_si`` filled by write_measurement_estimates).
+        rn_threshold: consistency threshold ``|z−h|/σ < rn_threshold``.
 
     Returns:
-        :class:`VRefinePlan` (может быть ``empty`` — тогда re-solve не нужен).
+        :class:`VRefinePlan` (may be ``empty``; then no re-solve is needed).
     """
     # Any object type: V readings are not restricted to NODE objects here.
     sel = meas_mask(measurements, kinds=KIND_VOLTAGE, pseudo=False, finite_estimate=True)
@@ -87,10 +87,10 @@ def classify_v_refine(measurements: np.ndarray, *, rn_threshold: float) -> VRefi
 
 
 def apply_v_refine_plan(model: Working, plan: VRefinePlan, *, factor: float) -> dict:
-    """Применить план к ``model.measurements`` (рабочая копия пайплайна).
+    """Apply the plan to ``model.measurements`` (the pipeline's working copy).
 
-    tighten → ``variance := variance · factor²`` (σ × factor). Веса солвер
-    строит из variance (см. ``z_vector.build_z_and_r``).
+    tighten -> ``variance := variance · factor²`` (σ × factor). The solver
+    builds weights from variance (see ``z_vector.build_z_and_r``).
     """
     if not plan.tighten_ids:
         return {"tightened": 0, "conflicting": plan.n_conflicting}

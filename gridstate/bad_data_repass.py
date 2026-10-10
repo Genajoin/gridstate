@@ -1,10 +1,10 @@
-"""Двухпроходный bad-data механизм на residuals решённого SE.
+"""Two-pass bad-data mechanism on the residuals of a solved SE.
 
-После первого solve остатки ``z − h`` (``h`` = ``estimated_si``) дают
-надёжную диагностику грубых ошибок телеметрии: знак-флипы, «битые нули»
-(z=0 при большом h), одиночные монстры-инжекции. Классификация ниже
-формирует план правок (flip / reject / damp), пайплайн применяет его к
-рабочей модели и пере-решает (warm, ``init="results"``).
+After the first solve the residuals ``z − h`` (``h`` = ``estimated_si``) give a
+reliable diagnosis of gross telemetry errors: sign flips, "broken zeros"
+(z=0 at large h), isolated monster injections. The classification below
+builds a correction plan (flip / reject / damp), and the pipeline applies it to the
+working model and re-solves (warm, ``init="results"``).
 
 The configuration is validated on four large production models with one set of
 options (no per-model tuning): T=10 on σ_det=min(σ,30), pair immunity of
@@ -14,8 +14,8 @@ the relative flip criterion |z+h| < γ·|z−h|, the (node, P/Q domain) coverage
 guard and damping of Q injections instead of rejecting them (a blind boundary
 node without Qinj settles on a garbage pseudo-prior through the Q balance).
 
-Детекционная σ_det ловит конфликты, спрятанные гигантской σ≈α·|z| больших
-потоков; ВЕСА солвера не меняются (cap весов валит точность).
+The detection σ_det catches conflicts hidden by the giant σ≈α·|z| of large
+flows; the solver WEIGHTS are not changed (capping weights ruins accuracy).
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Виды real-мер, участвующие в детекции (V не участвует: V-меры не несут
-# знак-флипов, а их reject рушит наблюдаемость напряжения).
+# Kinds of real measurements taking part in detection (V does not: V measurements carry
+# no sign flips, and rejecting them destroys voltage observability).
 DETECTABLE_KINDS = (
     KIND_POWER_P,
     KIND_POWER_Q,
@@ -55,19 +55,19 @@ DETECTABLE_KINDS = (
     KIND_POWER_INJECTION_Q,
 )
 
-# Парный иммунитет: tol согласованности |z_b + z_e| относительно max|z|
-# (P-потоки точнее Q — у Q пары расходятся зарядкой/потерями ветви).
+# Pair immunity: consistency tolerance |z_b + z_e| relative to max|z|
+# (P flows are more precise than Q; Q pairs diverge by branch charging/losses).
 PAIR_TOL_P = 0.08
 PAIR_TOL_Q = 0.30
-# Ниже этого |z| (МВт/МВАр) пара не считается свидетельством (нулевые пары
-# иммунитета не получают: z=0 ничего не доказывает).
+# Below this |z| (MW/MVAr) a pair is not evidence (zero pairs
+# get no immunity: z=0 proves nothing).
 PAIR_Z_MIN = 5.0
-# Floor согласованности пары: 5·max(σ_det) сторон.
+# Pair consistency floor: 5·max(σ_det) of the two sides.
 PAIR_SIGMA_MULT = 5.0
 
-# Доменное покрытие узла: V сознательно НЕ считается — V-мера не спасает
-# P/Q-наблюдаемость (после снятия inj узел садится на pseudo-приоры,
-# на кромке сети — мусорные).
+# Domain coverage of a node: V is deliberately NOT counted, since a V measurement does not save
+# P/Q observability (after an injection is removed the node settles on pseudo-priors,
+# which are garbage at the network edge).
 _FLOW_KINDS = (KIND_POWER_P, KIND_POWER_Q, KIND_CURRENT)
 _DOMAIN = {
     KIND_POWER_P: "P",
@@ -80,14 +80,14 @@ _DOMAIN = {
 
 @dataclass(frozen=True)
 class BadDataPlan:
-    """План правок мер по итогам классификации residuals."""
+    """Plan of measurement corrections, based on the residual classification."""
 
-    flip_ids: frozenset[int]  # value := −value (знак-флип канала)
+    flip_ids: frozenset[int]  # value := −value (channel sign flip)
     reject_ids: frozenset[int]  # status := False
-    damp_ids: frozenset[int]  # variance := variance · k² (демпф Qinj)
-    n_candidates: int  # кандидатов всего (rn_det > T)
-    n_immune: int  # из них спасено парным иммунитетом
-    n_restored: int  # возвращено guard'ом покрытия
+    damp_ids: frozenset[int]  # variance := variance · k² (Qinj damping)
+    n_candidates: int  # total candidates (rn_det > T)
+    n_immune: int  # of which saved by pair immunity
+    n_restored: int  # restored by the coverage guard
 
     @property
     def empty(self) -> bool:
@@ -95,7 +95,7 @@ class BadDataPlan:
 
 
 def _real_detectable(m: np.ndarray) -> np.ndarray:
-    """Маска real-мер, пригодных для детекции (активна, не pseudo, есть h)."""
+    """Mask of real measurements usable for detection (active, not pseudo, h present)."""
     return meas_mask(m, kinds=DETECTABLE_KINDS, pseudo=False, finite_estimate=True)
 
 
@@ -107,18 +107,18 @@ def classify_bad_data(
     sigma_cap: float,
     flip_ratio: float,
 ) -> BadDataPlan:
-    """Классифицировать real-меры по остаткам решённого SE.
+    """Classify real measurements by the residuals of a solved SE.
 
     Args:
-        measurements: structured-массив measurements рабочей модели ПОСЛЕ
-            solve (``estimated_si`` заполнены write_measurement_estimates).
-        branches: structured-массив branches (нужен guard'у покрытия).
-        threshold: T — порог кандидата ``|z−h|/σ_det > T``.
-        sigma_cap: cap детекционной σ (МВт/МВАр); ≤0 или inf — без капа.
-        flip_ratio: γ — флипуем, если ``|z+h| < γ·|z−h|`` (и |z|>0).
+        measurements: structured measurements array of the working model AFTER
+            the solve (``estimated_si`` filled by write_measurement_estimates).
+        branches: structured branches array (needed by the coverage guard).
+        threshold: T, the candidate threshold ``|z−h|/σ_det > T``.
+        sigma_cap: cap of the detection σ (MW/MVAr); <=0 or inf means no cap.
+        flip_ratio: γ, flip if ``|z+h| < γ·|z−h|`` (and |z|>0).
 
     Returns:
-        :class:`BadDataPlan` (может быть ``empty`` — тогда re-solve не нужен).
+        :class:`BadDataPlan` (may be ``empty``; then no re-solve is needed).
     """
     sel = _real_detectable(measurements)
     z = measurements["value"][sel]
@@ -134,8 +134,8 @@ def classify_bad_data(
     rn_det = np.abs(z - h) / np.maximum(sig_det, 1e-9)
     cand = rn_det > threshold
 
-    # Парный иммунитет: branch-пара нач/кон с согласованными z — честный
-    # поток (возможно, жертва плохого решения), не трогаем.
+    # Pair immunity: a from/to branch pair with consistent z is an honest
+    # flow (possibly a victim of a bad solution); leave it alone.
     immune = np.zeros(len(z), dtype=bool)
     for k, tol in ((KIND_POWER_P, PAIR_TOL_P), (KIND_POWER_Q, PAIR_TOL_Q)):
         km = np.where(kinds == k)[0]
@@ -163,9 +163,9 @@ def classify_bad_data(
     flip_ids = {int(i) for i in ids[flip_mask]}
     rej_ids = {int(i) for i in ids[rej_mask]}
 
-    # --- Guard покрытия (node, домен): reject разрешён, только если каждый
-    # затронутый узел сохраняет хотя бы одну real-меру своего P/Q-домена
-    # (inj на узле либо flow стороной узла).
+    # --- Coverage guard (node, domain): reject is allowed only if every
+    # affected node keeps at least one real measurement of its P/Q domain
+    # (an injection at the node or a flow on the node's side).
     b2n = branch_endpoints_map(branches)
     cover: dict[tuple[int, str], set[int]] = collections.defaultdict(set)
     for j in np.where(sel)[0]:
@@ -190,8 +190,8 @@ def classify_bad_data(
         if ms and ms.issubset(rej_ids):
             restored |= ms
 
-    # --- Qinj никогда не reject — только демпф σ·k (узел без Qinj садится
-    # Q-балансом на pseudo-приор; формальное flow-покрытие не спасает).
+    # --- Qinj is never rejected, only damped by σ·k (a node without Qinj settles
+    # on a pseudo-prior through the Q balance; formal flow coverage does not save it).
     qinj_sel = sel & (measurements["measurement_type"] == KIND_POWER_INJECTION_Q)
     qinj_ids = {int(i) for i in measurements["id"][qinj_sel]}
     damp_ids = rej_ids & qinj_ids
@@ -208,11 +208,11 @@ def classify_bad_data(
 
 
 def apply_bad_data_plan(model: Working, plan: BadDataPlan, *, damp_factor: float) -> dict:
-    """Применить план к ``model.measurements`` (рабочая копия пайплайна).
+    """Apply the plan to ``model.measurements`` (the pipeline's working copy).
 
     flip → ``value := −value``; reject → ``status := False``;
     damp → ``variance := variance · damp_factor²`` (σ × damp_factor).
-    Веса солвер строит из variance (см. ``z_vector.build_z_and_r``).
+    The solver builds weights from variance (see ``z_vector.build_z_and_r``).
     """
     m = table_copy(model.measurements)
     if plan.flip_ids:

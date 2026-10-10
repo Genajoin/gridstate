@@ -1,26 +1,29 @@
-"""Shunt-sanity: try-off/flip подозрительных шунтов с гейтом ΔΣrn² (research).
+"""Shunt-sanity: try-off/flip of suspicious shunts, gated by ΔΣrn² (research).
 
-Дефектные записи шунтирующих элементов (инвертированный знак B, ошибочный
-статус) статически неотличимы от честных: тип/знак/статус в источнике данных
-согласованы, а дефект проявляется только поведенчески — решённое V узла
-систематически расходится с его V-мерой, и сеть «предпочитает» другой элемент.
+Defective shunt records (inverted sign of B, wrong status) are statically
+indistinguishable from honest ones: type/sign/status in the source data are
+consistent, and the defect shows up only behaviourally — the solved node V
+systematically disagrees with its V measurement, and the network "prefers"
+a different element.
 
-Механизм (двухпроходное семейство, см. ``pipeline._refine_two_pass``, но с
-пер-кандидатными trial-прогонами):
+Mechanism (a two-pass family, see ``pipeline._refine_two_pass``, but with
+per-candidate trial runs):
 
 1. Candidates: active shunts on nodes whose node V measurement disagrees with the
    solution, ``|z − h| > v_frac · Vnom`` (an internal signal; no outside solution
    is needed).
-2. Для каждого кандидата: снапшот → правка (``off``: status=False;
-   ``flip``: −B) → warm re-solve → ΔΣrn² по живым real-мерам.
-3. Гейт: вариант принимается, только если ``ΔΣrn² < −gate_drop`` (существенно
-   лучшее согласие с собственными мерами); иначе полный откат снапшота.
+2. For each candidate: snapshot → edit (``off``: status=False;
+   ``flip``: −B) → warm re-solve → ΔΣrn² over the live real measurements.
+3. Gate: a variant is accepted only if ``ΔΣrn² < −gate_drop`` (substantially
+   better agreement with its own measurements); otherwise the snapshot is
+   fully rolled back.
 
-The gate is selective both ways (validation 2026-07-06 on four large models:
+The gate is selective both ways (validation on four large models:
 one candidate accepted, dVmax −40.7 %; 7 false candidates on three other
-models rejected). ⚠️ Research-флаг:
-шаг РЕДАКТИРУЕТ сеть по статистике мер — на живой ТМ решение может мерцать
-между слайсами; для прод-фикса предпочтителен offline-аудит источника данных.
+models rejected). ⚠️ Research flag:
+the step EDITS the network based on measurement statistics — on live
+telemetry the solution may flicker between slices; for a production fix an
+offline audit of the data source is preferable.
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ShuntSanityPlan:
-    """Кандидаты-узлы (у каждого есть активный шунт и большая V-невязка)."""
+    """Candidate nodes (each has an active shunt and a large V residual)."""
 
     candidates: tuple[int, ...]
 
@@ -57,7 +60,7 @@ class ShuntSanityPlan:
 
 
 def sum_rn2(measurements: np.ndarray) -> float:
-    """Σ((z−h)²/σ²) по живым real-мерам — скаляр согласия решения с мерами."""
+    """Σ((z−h)²/σ²) over the live real measurements — a scalar of solution/measurement agreement."""
     sel = meas_mask(measurements, pseudo=False, finite_estimate=True)
     z = measurements["value"][sel]
     h = measurements["estimated_si"][sel]
@@ -73,13 +76,13 @@ def classify_shunt_candidates(
     v_frac: float,
     max_candidates: int,
 ) -> ShuntSanityPlan:
-    """Узлы активных шунтов, где node-V-мера расходится с решением.
+    """Nodes with active shunts where the node V measurement disagrees with the solution.
 
-    Кандидат: активный шунт (``shunts.status``) на активном узле, у которого
-    есть real node-V-мера в правдоподобном диапазоне (0.5–1.5 Vnom) с
-    ``|z − h| > v_frac · Vnom`` (h = решённое ``voltage_magnitude`` узла).
-    Возвращает не более ``max_candidates`` узлов (по убыванию невязки) —
-    каждый кандидат стоит до двух warm re-solve.
+    Candidate: an active shunt (``shunts.status``) on a node that has a real
+    node V measurement in a plausible range (0.5–1.5 Vnom) with
+    ``|z − h| > v_frac · Vnom`` (h = the node's solved ``voltage_magnitude``).
+    Returns at most ``max_candidates`` nodes (by descending residual) —
+    each candidate costs up to two warm re-solves.
     """
     vn = id_value_map(nodes, "voltage_nominal")
     vh = id_value_map(nodes, "voltage_magnitude")
@@ -106,7 +109,7 @@ def classify_shunt_candidates(
 
 
 def edit_shunt(model: Working, node_id: int, mode: str) -> int:
-    """Применить правку ко ВСЕМ шунтам узла: ``off`` | ``flip``. → число строк."""
+    """Apply an edit to ALL shunts of the node: ``off`` | ``flip``. Returns the number of rows."""
     coll = model.shunts
     arr = coll.to_numpy()
     sel = arr["node_id"] == node_id
@@ -117,7 +120,7 @@ def edit_shunt(model: Working, node_id: int, mode: str) -> int:
         arr["status"][sel] = False
     elif mode == "flip":
         arr["susceptance"][sel] = -arr["susceptance"][sel]
-    else:  # pragma: no cover — защищено вызывающим кодом
-        raise ValueError(f"неизвестный режим правки шунта: {mode!r}")
+    else:  # pragma: no cover — guarded by the caller
+        raise ValueError(f"unknown shunt edit mode: {mode!r}")
     coll.update_from_array(arr)
     return n

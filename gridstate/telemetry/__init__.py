@@ -1,10 +1,10 @@
-"""Prep-слой телеметрии: применение готовых числовых планов к контрактным таблицам.
+"""Telemetry prep layer: apply ready numeric plans to the contract tables.
 
-Адаптеры применения (``apply_*_resolved``) поверх контрактных ядер (``_apply_*_on_arrays``):
-телеметрия/z-вектор, ON_LINE-топология, РПН/ПБВ, материализация узлового режима, Vnom.
-Плюс независимые prep-шаги: агрегация генераторов, реакторы→шунт, нормализация
-короткозамыкателей, фильтры качества/V/Q-потерь. Все они работают над
-числовыми массивами ``SE_INPUT`` (без формат-слоя источника).
+Application adapters (``apply_*_resolved``) over the contract cores (``_apply_*_on_arrays``):
+telemetry/z-vector, ON_LINE topology, tap changers, nodal-regime materialization, Vnom.
+Plus independent prep steps: generator aggregation, reactors→shunt, normalization of
+short-circuit links, quality / V / Q-loss filters. All of them operate on the
+numeric ``SE_INPUT`` arrays (without the source format layer).
 """
 
 from gridstate.telemetry.apply_resolved import (

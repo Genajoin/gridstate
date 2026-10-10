@@ -1,10 +1,10 @@
-"""Шунты/реактансы: реакторы→node.shunt_b, нормализация X короткозамыкателей.
+"""Shunts/reactances: reactors -> node.shunt_b, normalization of breaker-branch X.
 
-**Декомпозиция:** каждая функция расщеплена на ``_*_on_arrays``-**ядро над
-контрактными numpy-массивами** (мутирует переданные массивы in-place, возвращает
-stats) + тонкий адаптер (``to_numpy().copy()`` → ядро → ``update_from_array``).
-Ранний возврат при пустых reactors/branches оставлен в адаптере — без ``to_numpy``
-при отсутствии данных.
+**Decomposition:** each function is split into an ``_*_on_arrays`` **core over
+contract numpy arrays** (mutates the passed arrays in place, returns stats) plus a
+thin adapter (``to_numpy().copy()`` -> core -> ``update_from_array``). The early
+return for empty reactors/branches stays in the adapter, so ``to_numpy`` is not
+called when there is no data.
 """
 
 from __future__ import annotations
@@ -20,23 +20,24 @@ if TYPE_CHECKING:
     from gridstate.working import Working
 
 
-# Некоторые входные форматы подменяют ветви-«короткозамыкатели» с R=X=0
-# на R=0, X=1.0 Ом. Значение фиксировано в Омах → в p.u. зависит от класса
-# напряжения узла. Константа должна совпадать с sentinel-X входного формата —
-# имя публичное: производитель данных сверяет свою конвенцию кросс-тестом.
+# Some input formats replace "breaker" (short-circuit) branches having R=X=0
+# with R=0, X=1.0 Ohm. The value is fixed in Ohms, so in p.u. it depends on the
+# node's voltage class. The constant must match the input format's sentinel X;
+# the name is public: the data producer checks its convention with a cross-test.
 BREAKER_X_SENTINEL_OHM = 1.0
 
 
 def apply_reactors_to_node_shunt(model: Working) -> dict[str, int | float]:
-    """Сложить B/G активных шунтов в ``shunt_b/g`` их узлов.
+    """Add the B/G of active shunts to ``shunt_b/g`` of their nodes.
 
-    Шунтирующие элементы (реакторы/БК) задаются таблицей ``shunts`` (B/G в См,
-    со знаком и ON_LINE-статусом, применёнными во внешнем источнике данных). Без
-    этого Y-bus игнорирует шунтовую компенсацию, и расчётный Q узла её не учитывает.
+    Shunt elements (reactors/capacitor banks) are given by the ``shunts`` table
+    (B/G in siemens, with sign and ON_LINE status already applied by the external
+    data source). Without this the Y-bus ignores shunt compensation and the
+    computed node Q does not account for it.
 
-    Перебирает активные строки ``shunts`` (``status=True``) и для каждой, чей узел
-    тоже активен, суммирует её ``B/G`` в ``shunt_b/g`` узла. Применять **после**
-    применения ON_LINE-топологии.
+    Iterates over the active ``shunts`` rows (``status=True``) and, for each one
+    whose node is also active, adds its ``B/G`` to the node's ``shunt_b/g``. Apply
+    **after** the ON_LINE topology has been applied.
 
     Returns:
         ``{"applied": N, "sum_b_added_S": float, "sum_g_added_S": float}``.
@@ -52,12 +53,12 @@ def apply_reactors_to_node_shunt(model: Working) -> dict[str, int | float]:
 
 
 def _aggregate_shunts_on_arrays(nodes_arr: Any, shunts_arr: Any) -> dict[str, int | float]:
-    """Сложить B/G активных шунтов (таблица ``shunts``) в ``node.shunt_b/g``.
+    """Add the B/G of active shunts (``shunts`` table) to ``node.shunt_b/g``.
 
-    ``shunts`` уже в См с применённым знаком и ON_LINE-статусом. Фильтрует по
-    ``shunts.status`` И активности узла, суммирует в порядке строк. Мутирует
-    ``nodes_arr``. Ранний возврат при пустых ``shunts`` — в адаптере
-    :func:`apply_reactors_to_node_shunt` (без ``to_numpy`` при отсутствии данных).
+    ``shunts`` is already in siemens with sign and ON_LINE status applied. Filters
+    by ``shunts.status`` AND node activity, sums in row order. Mutates
+    ``nodes_arr``. The early return for empty ``shunts`` lives in the adapter
+    :func:`apply_reactors_to_node_shunt` (no ``to_numpy`` when there is no data).
     """
     by_id = id_to_pos_map(nodes_arr["id"])
     node_status: dict[int, bool] = id_value_map(nodes_arr, "status", bool)
@@ -86,28 +87,29 @@ def _aggregate_shunts_on_arrays(nodes_arr: Any, shunts_arr: Any) -> dict[str, in
 
 
 def normalize_breaker_reactance(model: Working, *, eps_pu: float = 1e-3) -> dict[str, int | float]:
-    """Привести X ветвей-«короткозамыкателей» к volt-aware значению ``X_pu=eps_pu``.
+    """Bring the X of "breaker" branches to a volt-aware value ``X_pu=eps_pu``.
 
-    Входной формат подменяет ветви с ``R=X=0`` (секции, выключатели, блок-связи) на
-    ``R=0, X=1.0 Ом`` — ФИКСИРОВАННО в Омах, без учёта класса напряжения. После
-    ``model_to_pu`` это даёт ``X_pu = 1.0 / (Vn²/S_base)``: на 500 кВ
-    ``X_pu≈4e-5`` (норма), но на блочной шине 10.5 кВ ``X_pu≈0.9`` — инъекция
-    P/Q генератора роняет V до ~0.79, и валидный V-замер ложно отбраковывается
-    солвером (``|r/σ|≈6``). Поэтому β-выбросы ``dV_max`` возникают именно на
-    LV-классах 6-16 кВ (блочные ген-шины после ``aggregate_generators_to_node``).
+    The input format replaces branches with ``R=X=0`` (bus sections, breakers,
+    block ties) by ``R=0, X=1.0 Ohm`` -- FIXED in Ohms, regardless of the voltage
+    class. After ``model_to_pu`` this gives ``X_pu = 1.0 / (Vn²/S_base)``: at
+    500 kV ``X_pu≈4e-5`` (fine), but on a 10.5 kV generator-block bus
+    ``X_pu≈0.9`` -- the generator P/Q injection drags V down to ~0.79 and a valid
+    V measurement is falsely rejected by the solver (``|r/σ|≈6``). Hence the
+    β outliers of ``dV_max`` occur precisely on the 6-16 kV LV classes (generator
+    block buses after ``aggregate_generators_to_node``).
 
-    Фикс (``x=1e-3 p.u.``, НЕ ``1.0 Ом``):
-    для каждой такой ветви ``X = eps_pu·(Vn²/S_base)`` → ``X_pu=eps_pu`` на любом
-    классе. ``Vn`` берётся из узла ``from`` (или ``to``). ``R=0`` сохраняется.
-    Ветви без определённого ``Vn>0`` не трогаются.
+    The fix (``x=1e-3 p.u.``, NOT ``1.0 Ohm``):
+    for each such branch ``X = eps_pu·(Vn²/S_base)`` -> ``X_pu=eps_pu`` on any
+    class. ``Vn`` is taken from the ``from`` node (or ``to``). ``R=0`` is kept.
+    Branches without a defined ``Vn>0`` are left untouched.
 
-    Применять **сразу после** загрузки модели, до применения телеметрии.
-    Снижает ложную отбраковку V-замеров на LV-классах; на моделях без
-    сентинельных ветвей — точный no-op.
+    Apply **right after** the model is loaded, before telemetry is applied.
+    Reduces false rejection of V measurements on LV classes; on models without
+    sentinel branches it is an exact no-op.
 
     Args:
-        model: рабочая модель (Working).
-        eps_pu: целевой ``X_pu`` (default ``1e-3``).
+        model: the working model (Working).
+        eps_pu: target ``X_pu`` (default ``1e-3``).
 
     Returns:
         ``{"normalized": N, "eps_pu": eps_pu}``.
@@ -127,12 +129,12 @@ def normalize_breaker_reactance(model: Working, *, eps_pu: float = 1e-3) -> dict
 def _normalize_breaker_reactance_on_arrays(
     branches_arr: Any, nodes_arr: Any, *, eps_pu: float = 1e-3
 ) -> int:
-    """Привести X сентинел-ветвей (R=0, X=1.0 Ом) к ``X_pu=eps_pu`` (мутирует ``branches_arr``).
+    """Bring the X of sentinel branches (R=0, X=1.0 Ohm) to ``X_pu=eps_pu`` (mutates ``branches_arr``).
 
-    Читает ``branch.{resistance,reactance,from_node,to_node}`` и
-    ``node.{id,voltage_nominal}``; пишет ``branch.reactance``. ``Vn`` берётся из
-    узла ``from`` (фолбэк ``to``); ветви без ``Vn>0`` не трогаются. Возвращает
-    число нормализованных ветвей.
+    Reads ``branch.{resistance,reactance,from_node,to_node}`` and
+    ``node.{id,voltage_nominal}``; writes ``branch.reactance``. ``Vn`` is taken
+    from the ``from`` node (falling back to ``to``); branches without ``Vn>0`` are
+    left untouched. Returns the number of normalized branches.
     """
     vn_by_id: dict[int, float] = id_value_map(nodes_arr, "voltage_nominal")
 
@@ -140,14 +142,14 @@ def _normalize_breaker_reactance_on_arrays(
     for i in range(len(branches_arr)):
         r = float(branches_arr[i]["resistance"])
         x = float(branches_arr[i]["reactance"])
-        # Сентинел загрузчика: R ровно 0 и X ровно 1.0 Ом. Реальные ветви
-        # всегда имеют R>0, поэтому совпадение уникально идентифицирует
-        # подставленный «короткозамыкатель».
-        # Идемпотентность: после нормализации X = eps_pu·(Vn²/S_base) ≠ 1.0
-        # на всех классах, КРОМЕ совпадения Vn²=S_base/eps_pu (при default
-        # 1e-3 и S_base=100 это Vn≈316 кВ — нет в реальных классах). Даже
-        # на этой точке повторный матч пересчитывает X в то же значение
-        # (value-idempotent), завышая лишь счётчик "normalized".
+        # Loader sentinel: R exactly 0 and X exactly 1.0 Ohm. Real branches
+        # always have R>0, so a match uniquely identifies the substituted
+        # "breaker" branch.
+        # Idempotence: after normalization X = eps_pu·(Vn²/S_base) ≠ 1.0
+        # on all classes EXCEPT the coincidence Vn²=S_base/eps_pu (with the
+        # default 1e-3 and S_base=100 that is Vn≈316 kV -- not a real class).
+        # Even at that point a repeated match recomputes X to the same value
+        # (value-idempotent), only inflating the "normalized" counter.
         if abs(r) > 1e-12 or abs(x - BREAKER_X_SENTINEL_OHM) > 1e-9:
             continue
         vn = vn_by_id.get(int(branches_arr[i]["from_node"]), 0.0)

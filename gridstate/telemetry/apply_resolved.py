@@ -1,11 +1,12 @@
-"""Применение предвычисленных числовых планов телеметрии/материализации к режиму.
+"""Application of precomputed numeric telemetry/materialization plans to the regime.
 
-Контрактные ядра z-вектора (``_apply_telemetry_on_arrays``) и материализации режима
-(``_materialize_area_on_arrays``) + тонкие адаптеры применения готовых числовых планов
-(``apply_telemetry_resolved`` / ``apply_materialize_resolved``). Планы вычислены вне
-ядра производителем данных; здесь — только применение к массивам ``SE_INPUT`` (без
-формат-слоя источника). Kind-карты замеров (``_KIND_MAP`` / ``_NODE_INJ_MAP`` /
-``_INJ_MT``) — в ``gridstate.telemetry._specs``.
+Contract cores of the z-vector (``_apply_telemetry_on_arrays``) and of regime
+materialization (``_materialize_area_on_arrays``) plus thin adapters that apply
+ready-made numeric plans (``apply_telemetry_resolved`` /
+``apply_materialize_resolved``). The plans are computed outside the core by the
+data producer; this module only applies them to ``SE_INPUT`` arrays (no source
+format layer). The measurement kind maps (``_KIND_MAP`` / ``_NODE_INJ_MAP`` /
+``_INJ_MT``) live in ``gridstate.telemetry._specs``.
 """
 
 from __future__ import annotations
@@ -89,13 +90,13 @@ def apply_telemetry_resolved(
     q_loss_filter_action: str = "downweight",
     q_loss_filter_downweight_factor: float = 100.0,
 ) -> dict[str, int]:
-    """Применить готовый ``resolved`` z-вектор к ``measurements``.
+    """Apply a ready ``resolved`` z-vector to ``measurements``.
 
     A pure application (no source format, snapshot or formulas): snapshot of
     ``measurements``/``nodes``/``branches`` → kernel
     :func:`_apply_telemetry_on_arrays` → write-back + ``.add()`` of NODE
-    injections. Зовётся шагом ``run()`` на своей позиции (после ``apply_topology``/
-    ``apply_rpn``: ядро читает branch ``status``/``susceptance``).
+    injections. Called by the ``run()`` step at its own position (after
+    ``apply_topology``/``apply_rpn``: the core reads branch ``status``/``susceptance``).
     """
     config = TelemetryApplyConfig(
         questionable_sigma2_multiplier=questionable_sigma2_multiplier,
@@ -126,7 +127,7 @@ def apply_telemetry_resolved(
     )
 
     table_replace(model.measurements, meas_arr)
-    # Пакетная вставка за одну конкатенацию (per-row .add() = O(n²)).
+    # Batch insert in a single concatenation (per-row .add() = O(n²)).
     model.measurements.add_many(new_rows)
 
     return stats
@@ -137,11 +138,11 @@ def _detect_sign_inconsistent_branches(
     resolved: dict[tuple[int, str], tuple[float | None, int, str, int]],
     threshold_mw: float | None,
 ) -> set[int]:
-    """Pre-pass: распознать ветви с sign-inconsistent P-измерениями
-    (PBEG и PEND оба входят в линию, т.е. одного знака после
-    учёта invert) — это указывает на битую привязку меры к не той
-    ветви или на устаревшую телеметрию. Сами branch-meas таких ветвей
-    не активируем.
+    """Pre-pass: detect branches with sign-inconsistent P measurements
+    (PBEG and PEND both flowing into the line, i.e. of the same sign after
+    accounting for invert) -- this indicates a measurement bound to the wrong
+    branch or stale telemetry. The branch measurements of such branches are
+    not activated.
     """
     inconsistent_branches: set[int] = set()
     if threshold_mw is None:
@@ -155,11 +156,11 @@ def _detect_sign_inconsistent_branches(
         v_end = resolved[(obj_id, "PEND")][0]
         if v_beg is None or v_end is None:
             continue
-        # PBEG/PEND-значения приходят с уже применённым знаком (инверсия
-        # закодирована во входном числовом плане адаптером). На физически
-        # согласованной ВЛ выполняется ``v_beg ≈ -v_end + потери``, т.е. они
-        # **противоположных знаков**. Если |v_beg + v_end| превосходит порог —
-        # это либо знак-аномалия, либо неправильная привязка.
+        # PBEG/PEND values arrive with the sign already applied (the inversion
+        # is encoded in the input numeric plan by the adapter). On a physically
+        # consistent line ``v_beg ≈ -v_end + losses`` holds, i.e. they have
+        # **opposite signs**. If |v_beg + v_end| exceeds the threshold, it is
+        # either a sign anomaly or a wrong binding.
         if abs(v_beg + v_end) >= threshold_mw:
             inconsistent_branches.add(int(obj_id))
     return inconsistent_branches
@@ -185,8 +186,8 @@ def _detect_q_inconsistent_branches(
     Returns ``(q_inconsistent_branches, q_inconsistent_hv_branches)``: branches
     to drop and branches to downweight (by ``q_loss_filter_action``).
     """
-    q_inconsistent_branches: set[int] = set()  # ветви для drop
-    q_inconsistent_hv_branches: set[int] = set()  # ветви для downweight
+    q_inconsistent_branches: set[int] = set()  # branches to drop
+    q_inconsistent_hv_branches: set[int] = set()  # branches to downweight
 
     if not config.q_loss_filter_enabled:
         return q_inconsistent_branches, q_inconsistent_hv_branches
@@ -203,7 +204,7 @@ def _detect_q_inconsistent_branches(
         vn = branch_vn.get(int(obj_id), 0.0)
         if vn <= 0:
             continue
-        # Достанем P_typical из PBEG/PEND для оценки X-loss.
+        # Take P_typical from PBEG/PEND to estimate the X-loss.
         p_typical = 0.0
         for p_kind in ("PBEG", "PEND"):
             if (obj_id, p_kind) not in resolved:
@@ -245,16 +246,16 @@ def _measurement_variance(
     V uses the node nominal voltage; branch Q is charging-aware; branch P
     scales with magnitude.
     """
-    # variance: V — по vn узла, P/Q — по магнитуде
+    # variance: V -- by the node vn, P/Q -- by magnitude
     value = float(meas_arr[idx]["value"])
     if mt == _MT_V:  # NODE V
         obj_node = int(meas_arr[idx]["object_id"])
         vn = vn_by_node.get(obj_node, 220.0)
         return variance_voltage(value, vn)
     if mt == _MT_Q:  # BRANCH Q
-        # Charging-aware σ_Q (единый источник — variance_branch_q): на
-        # длинных HV/EHV-ВЛ с большой B legitimate Q ≈ V²·B; static σ_frac
-        # недооценивает шум. σ_min = α·|B|·Vn² (default α=0.10), so Q readings
+        # Charging-aware σ_Q (single source: variance_branch_q): on
+        # long HV/EHV lines with a large B the legitimate Q ≈ V²·B; a static
+        # σ_frac underestimates the noise. σ_min = α·|B|·Vn² (default α=0.10), so Q readings
         # of 750 kV lines get σ ≈ 50–100 Mvar. A parameter sweep confirmed
         # α=0.10 as the best value on four large production models.
         vn_q = branch_vn.get(int(obj_id), 0.0) if ot == _OT_BRANCH else 0.0
@@ -291,9 +292,9 @@ def _apply_measurement_loop(
     (counters) and ``inj_acc`` (accumulated NODE injections) in place.
     """
     for obj_id, kind in arg_keys:
-        # NODE injection (PG/PN/QG/QN) или GENERATOR (PG_G<n>, QG_G<n>) →
-        # накапливать для последующего .add(). PG_G* и QG_G* считаются как
-        # положительный вклад P_gen/Q_gen к узлу (как и обычное PG/QG).
+        # NODE injection (PG/PN/QG/QN) or GENERATOR (PG_G<n>, QG_G<n>) ->
+        # accumulate for the later .add(). PG_G* and QG_G* count as a
+        # positive contribution of P_gen/Q_gen to the node (like a plain PG/QG).
         kind_base = kind.split("_G", 1)[0] if kind.startswith(("PG_G", "QG_G")) else kind
         if kind_base in _NODE_INJ_MAP:
             value, n_res, guid_first, q = resolved[(obj_id, kind)]
@@ -314,8 +315,8 @@ def _apply_measurement_loop(
         if kind not in _KIND_MAP:
             stats["skipped_kind_unsupported"] += 1
             continue
-        # Branch с sign-inconsistent P-meas — все 4 измерения этого
-        # LINE-OBJ_ID не активируем (данные битые).
+        # A branch with sign-inconsistent P-meas: none of the 4 measurements of
+        # this LINE-OBJ_ID are activated (the data is broken).
         if kind in ("PBEG", "PEND", "QBEG", "QEND") and obj_id in inconsistent_branches:
             stats.setdefault("skipped_sign_inconsistent", 0)
             stats["skipped_sign_inconsistent"] += 1
@@ -324,7 +325,7 @@ def _apply_measurement_loop(
             if idx_f is not None:
                 meas_arr[idx_f]["filter_flag"] = int(FilterFlag.P_SIGN_INCONSISTENCY)
             continue
-        # Q-inconsistent ветви — только Q-меры пропускаем, P оставляем.
+        # Q-inconsistent branches: skip only the Q measurements, keep P.
         if kind in ("QBEG", "QEND") and obj_id in q_inconsistent_branches:
             stats.setdefault("skipped_q_inconsistent", 0)
             stats["skipped_q_inconsistent"] += 1
@@ -333,12 +334,12 @@ def _apply_measurement_loop(
             if idx_f is not None:
                 meas_arr[idx_f]["filter_flag"] = int(FilterFlag.Q_INCONSISTENCY)
             continue
-        # Q-inconsistent на HV-ВЛ с action=downweight: НЕ дропаем; маркер
-        # для увеличения σ² ×factor применим после активации значения.
-        # (логика — сразу под расчётом val/var)
+        # Q-inconsistent on an HV line with action=downweight: do NOT drop; the
+        # marker for the σ² ×factor increase is applied after the value is
+        # activated (logic right below the val/var computation).
         ot, mt, side, sign = _KIND_MAP[kind]
-        # Не активируем меру на отключённой ветви — иначе WLS получит
-        # residual P/Q≠0 на ветви, чью Y-bus занулил.
+        # Do not activate a measurement on a disconnected branch -- otherwise
+        # WLS gets a P/Q residual ≠0 on a branch the Y-bus has zeroed.
         if ot == _OT_BRANCH and not branch_status_by_id.get(int(obj_id), False):
             stats.setdefault("skipped_branch_off", 0)
             stats["skipped_branch_off"] += 1
@@ -360,8 +361,8 @@ def _apply_measurement_loop(
             meas_arr[idx]["filter_flag"] = int(FilterFlag.BAD_QUALITY)
             continue
         val = value * sign
-        # V-measurement < 50% Vnom — sentinel «датчик не работает» / отключённое
-        # оборудование. Принимать его как жёсткий якорь нельзя: SE будет тянуть
+        # V-measurement < 50% Vnom is a "sensor not working" / disconnected
+        # equipment sentinel. It must not be accepted as a hard anchor: SE would pull
         # V→0 at the node and around it (a non-physical minimum of J). It is not
         # activated; add_pseudo_measurements adds pseudo-V=Vnom instead.
         if mt == _MT_V and ot == _OT_NODE:
@@ -373,7 +374,7 @@ def _apply_measurement_loop(
                 continue
         if meas_arr[idx]["status"]:
             meas_arr[idx]["value"] = float(meas_arr[idx]["value"]) + val
-            # Worst-case аккумуляция quality при многократном попадании.
+            # Worst-case accumulation of quality on repeated hits.
             meas_arr[idx]["quality"] = max(int(meas_arr[idx]["quality"]), q)
         else:
             meas_arr[idx]["value"] = val
@@ -393,27 +394,28 @@ def _apply_measurement_loop(
         )
         if int(meas_arr[idx]["quality"]) == QUALITY_QUESTIONABLE:
             var *= config.questionable_sigma2_multiplier
-        # Точечный масштаб σ² V-меры узла из плана производителя данных
-        # ({node_id: factor}; factor<1 усиливает доверие к мере — «якорный»
-        # датчик, factor>1 ослабляет). Только узловые V (mt=2, ot=0).
+        # Per-measurement σ² scale of a node V measurement from the data
+        # producer's plan ({node_id: factor}; factor<1 increases trust in the
+        # measurement -- an "anchor" sensor, factor>1 reduces it). Node V only
+        # (mt=2, ot=0).
         if mt == _MT_V and ot == _OT_NODE and config.v_sigma2_scale_by_node:
             scale = config.v_sigma2_scale_by_node.get(int(meas_arr[idx]["object_id"]))
             if scale is not None:
                 var *= float(scale)
                 stats.setdefault("v_sigma2_scaled", 0)
                 stats["v_sigma2_scaled"] += 1
-        # Аналогичный план для потоковых мер ветвей: {(branch_id, kind): factor},
-        # kind ∈ PBEG/PEND/QBEG/QEND. factor>1 ослабляет доверие (мера-кандидат
-        # в дефектные по данным производителя), factor<1 усиливает.
+        # A similar plan for branch flow measurements: {(branch_id, kind): factor},
+        # kind ∈ PBEG/PEND/QBEG/QEND. factor>1 reduces trust (a measurement that is
+        # a defect candidate per the producer's data), factor<1 increases it.
         if ot == _OT_BRANCH and config.flow_sigma2_scale_by_branch:
             scale = config.flow_sigma2_scale_by_branch.get((int(obj_id), kind))
             if scale is not None:
                 var *= float(scale)
                 stats.setdefault("flow_sigma2_scaled", 0)
                 stats["flow_sigma2_scaled"] += 1
-        # Q-inconsistent ветвь (physical filter, action="downweight") —
+        # Q-inconsistent branch (physical filter, action="downweight"):
         # downweight σ² × factor (a loose anchor: the reading stays with a low weight).
-        # Применяется после расчёта default σ.
+        # Applied after the default σ is computed.
         if kind in ("QBEG", "QEND") and obj_id in q_inconsistent_hv_branches:
             var *= config.q_loss_filter_downweight_factor
             meas_arr[idx]["filter_flag"] = int(FilterFlag.Q_INCONSISTENCY)  # q_inconsistency mark
@@ -431,11 +433,11 @@ def _build_node_injection_rows(
     config: TelemetryApplyConfig,
     stats: dict[str, int],
 ) -> list[dict]:
-    """Собрать NODE injections для последующего .add() адаптером.
+    """Build NODE injections for the later .add() by the adapter.
 
     The variance is :func:`gridstate.telemetry.noise.variance_injection` (sigma
-    5 % of the net value, see there), scaled for a QUESTIONABLE aggregate. id
-    назначаются здесь (бит-идентично прежнему .add()).
+    5 % of the net value, see there), scaled for a QUESTIONABLE aggregate. The ids
+    are assigned here (bit-identical to the former .add()).
     """
     new_rows: list[dict] = []
     ids = IdAllocator.after_max(meas_arr["id"], name="apply_telemetry")
@@ -479,36 +481,35 @@ def _apply_telemetry_on_arrays(
     total_args: int,
     config: TelemetryApplyConfig,
 ) -> tuple[dict[str, int], list[dict]]:
-    """ЯДРО: применение телеметрии над контрактными numpy-массивами.
+    """CORE: telemetry application over contract numpy arrays.
 
-    Чистая работа над ``SE_INPUT.measurements`` (``meas_arr``, мутируется
-    in-place) / ``SE_INPUT.nodes`` (``nodes_arr``) / ``SE_INPUT.branches``
-    (``branches_arr``). БЕЗ внешних зависимостей, БЕЗ формул источника: все числовые
-    значения мер уже посчитаны адаптером и переданы в ``resolved`` —
-    ``{(obj_id, kind): (value|None, n_resolved, guid_first, quality)}``.
-    Порядок итерации задаётся ``arg_keys`` (= ``list(args.keys())``).
+    Pure work on ``SE_INPUT.measurements`` (``meas_arr``, mutated in place) /
+    ``SE_INPUT.nodes`` (``nodes_arr``) / ``SE_INPUT.branches``
+    (``branches_arr``). NO external dependencies, NO source formulas: all numeric
+    measurement values were already computed by the adapter and passed in
+    ``resolved`` -- ``{(obj_id, kind): (value|None, n_resolved, guid_first, quality)}``.
+    The iteration order is given by ``arg_keys`` (= ``list(args.keys())``).
 
-    Возвращает ``(stats, new_rows)``: ``new_rows`` — список dict-ов для
-    последующего ``model.measurements.add()`` (NODE-инжекции PG/PN/QG/QN);
-    их ``id`` назначаются здесь, чтобы быть бит-идентичными прежнему
-    in-loop ``.add()``-блоку.
+    Returns ``(stats, new_rows)``: ``new_rows`` is a list of dicts for the
+    later ``model.measurements.add()`` (NODE injections PG/PN/QG/QN); their
+    ``id`` values are assigned here so as to be bit-identical to the former
+    in-loop ``.add()`` block.
 
-    Tuning приходит через ``config`` (:class:`TelemetryApplyConfig`).
+    Tuning arrives via ``config`` (:class:`TelemetryApplyConfig`).
     """
     # Index measurements: (ot, mt, side, oid) → row idx in numpy array
     meas_idx = build_measurement_index(meas_arr)
 
-    # node_id → voltage_nominal для расчёта sigma_V.
+    # node_id -> voltage_nominal for the sigma_V computation.
     vn_by_node: dict[int, float] = id_value_map(nodes_arr, "voltage_nominal")
-    # branch_id → status. Меру нельзя ставить на отключённую ветвь:
-    # WLS получит residual P/Q≠0 на ветви где Y-bus её зануляет —
-    # iter будет компенсировать через V/δ соседних узлов и портит
-    # решение. Проверяется при активации branch-meas (ot=1).
+    # branch_id -> status. A measurement must not be placed on a disconnected
+    # branch: WLS would get a P/Q residual ≠0 on a branch the Y-bus zeroes out,
+    # and the iteration would compensate through V/δ of neighbouring nodes and
+    # spoil the solution. Checked when activating a branch measurement (ot=1).
     branch_status_by_id: dict[int, bool] = id_value_map(branches_arr, "status", bool)
 
-    # Сначала отключим ВСЕ measurements (на входе они приходят со status=True
-    # по умолчанию). После apply сделаем status=True только для тех, что
-    # покрыты snapshot-ом.
+    # First disable ALL measurements (on input they arrive with status=True by
+    # default). After apply, only those covered by the snapshot get status=True.
     meas_arr["status"] = False
 
     stats = {
@@ -524,13 +525,13 @@ def _apply_telemetry_on_arrays(
         "node_inj_added": 0,
     }
 
-    # Аккумулятор для NODE injections:
+    # Accumulator for NODE injections:
     #   (obj_id, "P"|"Q") → list of (signed_val, guid, quality).
     # Net P_inj = sum(values), quality = max(qualities) (worst-case).
     inj_acc: dict[tuple[int, str], list[tuple[float, str, int]]] = {}
 
-    # Per-branch nominal voltage / susceptance / reactance: питают Q-physics
-    # pre-pass и charging-aware σ_Q. Vn берётся из узла начала ветви.
+    # Per-branch nominal voltage / susceptance / reactance: feed the Q-physics
+    # pre-pass and the charging-aware σ_Q. Vn is taken from the branch's from-node.
     branch_vn = branch_nominal_kv(vn_by_node, branches_arr, policy="from")
     branch_b: dict[int, float] = id_value_map(branches_arr, "susceptance")
     branch_x: dict[int, float] = id_value_map(branches_arr, "reactance")
@@ -583,29 +584,31 @@ def _materialize_area_on_arrays(
     global_k_fallback: float,
     fill: bool = True,
 ) -> dict[str, float]:
-    """ЯДРО: материализация одного поля узла над ``SE_INPUT``-массивом.
+    """CORE: materialization of one node field over a ``SE_INPUT`` array.
 
-    Контрактная float-математика: читает ``status``/``id``/``area_id``/
-    ``<max_col>``/``<min_col>``/``<exist_col>`` из ``nodes_arr`` (структурный
-    ``SE_INPUT.nodes.input_dtype()``) и мутирует ``nodes_arr[<set_col>]`` in place.
-    Наблюдаемый режим резолвится вне ядра — сюда приходит уже готовый числовой
-    ``obs`` (``{node_id → value}``), как ``resolved_taps`` в apply_rpn.
+    Contract float math: reads ``status``/``id``/``area_id``/
+    ``<max_col>``/``<min_col>``/``<exist_col>`` from ``nodes_arr`` (the structured
+    ``SE_INPUT.nodes.input_dtype()``) and mutates ``nodes_arr[<set_col>]`` in place.
+    The observed regime is resolved outside the core -- a ready numeric ``obs``
+    (``{node_id -> value}``) arrives here, like ``resolved_taps`` in apply_rpn.
 
-    * **наблюдаемые** (``nid in obs``) → ``nodes_arr[set_col][i] = obs[nid]`` вербатим;
-    * **ненаблюдаемые** с ``<exist_col>`` → (если ``fill``) ``clamp(k_area·<max_col>)``,
-      где ``k_area = median(obs/<max_col>)`` по наблюдаемым несентинельным узлам
-      района (``area_id``); fallback ``global_k_fallback``.
+    * **observed** (``nid in obs``) -> ``nodes_arr[set_col][i] = obs[nid]`` verbatim;
+    * **unobserved** with ``<exist_col>`` -> (if ``fill``) ``clamp(k_area·<max_col>)``,
+      where ``k_area = median(obs/<max_col>)`` over the observed non-sentinel nodes
+      of the area (``area_id``); fallback ``global_k_fallback``.
 
-    Sentinel-санация (для k-калибровки и fill): ``0 < max ≤ max_cap`` и
+    Sentinel sanitization (for k calibration and fill): ``0 < max ≤ max_cap`` and
     ``min ≥ skip_neg_min``.
 
-    ``fill=False`` → только вербатим (для генерации: area-разнос ``k·gen_max``
-    бимодален и ненадёжен — генератор либо диспетчеризован, либо нет; A/B даёт
-    на региональной модели WLS dV_max 0.25→0.43). Богатой PG-телеметрии вербатим достаточно.
+    ``fill=False`` -> verbatim only (for generation: the area spread ``k·gen_max``
+    is bimodal and unreliable -- a generator is either dispatched or not; an A/B
+    comparison on a regional model showed WLS dV_max worsening 0.25 -> 0.43).
+    Verbatim is sufficient given rich PG telemetry.
 
     Returns:
-        ``{"n_obs", "n_fill", "sum"}`` (``sum`` округлён до 0.1; узловые значения,
-        питающие солвер, пишутся per-node и от порядка итерации не зависят).
+        ``{"n_obs", "n_fill", "sum"}`` (``sum`` rounded to 0.1; the node values
+        feeding the solver are written per node and do not depend on the
+        iteration order).
     """
     obs_ids = set(obs)
     status = nodes_arr["status"]
@@ -673,18 +676,19 @@ def apply_materialize_resolved(
     global_k_fallback: float = 0.40,
     gen_global_k_fallback: float = 0.80,
 ) -> dict[str, dict[str, float]]:
-    """Применить готовый наблюдаемый узловой режим ``obs`` к узлам модели.
+    """Apply a ready observed node regime ``obs`` to the model nodes.
 
-    Чистое применение (без snapshot/формул): ``obs`` (``{"load_p"/"load_q"/"gen_p"/
-    "gen_q" → {node_id → value}}``, готовый числовой план наблюдаемых инжекций) →
-    контрактные ядра :func:`_materialize_area_on_arrays` → write-back. Зовётся шагом
-    ``run()`` на своей позиции (после ``aggregate_generators``: 4 поля пишутся per-node,
-    generation_* перекрывает агрегацию — порядок сохранён).
+    Pure application (no snapshot/formulas): ``obs`` (``{"load_p"/"load_q"/"gen_p"/
+    "gen_q" -> {node_id -> value}}``, a ready numeric plan of observed injections)
+    -> contract cores :func:`_materialize_area_on_arrays` -> write-back. Called by
+    the ``run()`` step at its own position (after ``aggregate_generators``: the 4
+    fields are written per node, generation_* overrides the aggregation -- the
+    order is preserved).
 
-    Контрактный снимок узлов: 4 поля материализуются на ОДНОМ массиве (``set_col`` у
-    каждого вызова свой — load_p/load_q/generation_p/generation_q; k-калибровка читает
-    только max/min/exist-колонки, которые не мутируются → вызовы независимы), затем
-    единый write-back.
+    Contract node snapshot: the 4 fields are materialized on ONE array (each call
+    has its own ``set_col`` -- load_p/load_q/generation_p/generation_q; the k
+    calibration reads only the max/min/exist columns, which are not mutated, so
+    the calls are independent), followed by a single write-back.
     """
     nodes_arr = model.nodes.to_numpy().copy()
     out: dict[str, dict[str, float]] = {}
@@ -720,7 +724,7 @@ def apply_materialize_resolved(
             exist_col="exist_gen",
             set_col="generation_p",
             max_cap=max_gen,
-            skip_neg_min=-1e18,  # generation_*_min<0 норма, не boundary-sentinel
+            skip_neg_min=-1e18,  # generation_*_min<0 is normal, not a boundary sentinel
             global_k_fallback=gen_global_k_fallback,
             fill=materialize_generation_fill,
         )

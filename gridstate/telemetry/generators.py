@@ -1,12 +1,12 @@
-"""Генераторы: статус от узла (каскад) + агрегация multi-gen в узловую генерацию.
+"""Generators: status cascade from the node + aggregation of multiple generators into node generation.
 
 Split out of the former monolithic telemetry module.
 
-**Декомпозиция:** каждая функция расщеплена на ``_*_on_arrays``-**ядро над
-контрактными numpy-массивами** (мутирует переданные массивы in-place, возвращает
-stats) + тонкая обёртка (``to_numpy().copy()`` → ядро → ``update_from_array``).
-Ядро не зависит от способа записи: обёртка лишь снимает массив, зовёт ядро и
-пишет результат обратно.
+**Decomposition:** each function is split into an ``_*_on_arrays`` **core over
+contract numpy arrays** (mutates the passed arrays in place, returns stats) plus
+a thin wrapper (``to_numpy().copy()`` -> core -> ``update_from_array``). The core
+does not depend on how results are written back: the wrapper only takes the
+array, calls the core and writes the result back.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ from gridstate.utils import id_to_pos_map
 
 
 def _apply_generator_status_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, int]:
-    """Каскад ``node off ⇒ gen off`` на контрактных массивах (мутирует ``gens_arr``).
+    """Cascade ``node off ⇒ gen off`` over contract arrays (mutates ``gens_arr``).
 
-    Читает ``node.{id,status}`` и ``gen.{node_id,status}``; ставит
-    ``gens_arr[i]["status"]=False`` для активных генераторов на off-узлах.
-    Возвращает ``{"applied_off": N, "missing_node": N}``.
+    Reads ``node.{id,status}`` and ``gen.{node_id,status}``; sets
+    ``gens_arr[i]["status"]=False`` for active generators on off nodes.
+    Returns ``{"applied_off": N, "missing_node": N}``.
     """
     node_status = id_value_map(nodes_arr, "status", bool)
 
@@ -41,19 +41,19 @@ def _apply_generator_status_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str
 
 
 def apply_generator_status_from_node(model: Any) -> dict[str, int]:
-    """Каскадное отключение: если узел off → все генераторы на нём off.
+    """Cascade disconnection: if a node is off, all generators on it are off.
 
-    Это **только cascade-off**: при ``node.status=False`` все генераторы
-    с этим ``node_id`` принудительно ставятся ``status=False``. Если
-    узел on — статус генератора **не трогается**: на одном узле
-    возможно несколько ген. с разным статусом (один в работе, другой
-    в резерве), это нормально.
+    This is **cascade-off only**: when ``node.status=False`` all generators
+    with that ``node_id`` are forced to ``status=False``. If the node is on,
+    the generator status is **left untouched**: a single node may carry
+    several generators with different statuses (one in service, another on
+    reserve), which is normal.
 
     Enforces the physical invariant ``(node off ⇒ gen off)``, which the node
     cascade (``disable_isolated_nodes`` etc.) did not propagate to the
     generators by itself.
 
-    Должна вызываться **после** всех каскад-функций на узлы.
+    Must be called **after** all node cascade functions.
 
     Returns:
         ``{"applied_off": N, "missing_node": N}``.
@@ -66,35 +66,36 @@ def apply_generator_status_from_node(model: Any) -> dict[str, int]:
 
 
 def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, int]:
-    """Сумма параметров active-генераторов узла → gen-поля ``nodes_arr`` (мутирует).
+    """Sum of the parameters of a node's active generators -> gen fields of ``nodes_arr`` (mutates).
 
-    Читает ``gen.{node_id,status,power_output,reactive_output,power_min,power_max,
-    reactive_min,reactive_max}`` и ``node.id``; пишет ``node.{generation_p,
+    Reads ``gen.{node_id,status,power_output,reactive_output,power_min,power_max,
+    reactive_min,reactive_max}`` and ``node.id``; writes ``node.{generation_p,
     generation_q,generation_p_min,generation_p_max,generation_q_min,generation_q_max}``
-    и поднимает ``node.exist_gen``.
+    and raises ``node.exist_gen``.
 
-    ``exist_gen`` обязателен: узел с работающей машиной генерацию имеет по
-    определению, а флаг — единственный вентиль box-переменной ``pgen``/``qgen``
-    в IPM (``preprocessing/ipm_setup._collect_box_sections``). Схема вправе
-    объявить генерацию отдельным объектом и не повторять её на узле: вывод
-    блока приходит с нулевым ``exist_gen`` и узким ящиком нагрузки (собственные
-    нужды), а способность машины лежит только записью каталога генераторов.
-    Без подъёма флага узловые границы заполнялись верно, но переменной под них
-    не заводилось, и измеренная выдача упиралась в ящик нагрузки: узел с
-    границей 1080 МВт и выдачей 1070 МВт отдавал в оценку нуль генерации, а
-    остаток инжекции, который разносу некуда деть, копился в
-    ``sum_unclosed_p_mw``. На схеме, где так объявлено большинство станций, это
-    занижало суммарную генерацию режима втрое.
+    ``exist_gen`` is mandatory: a node with a running machine has generation by
+    definition, and the flag is the only gate of the ``pgen``/``qgen`` box
+    variable in the IPM (``preprocessing/ipm_setup._collect_box_sections``). The
+    schema may declare generation as a separate object and not repeat it on the
+    node: a unit's output bus arrives with a zero ``exist_gen`` and a narrow load
+    box (auxiliary consumption), while the machine's capability sits only in the
+    generator catalog record. Without raising the flag the node bounds were
+    filled correctly but no variable was created for them, and the measured
+    output ran into the load box: a node with a 1080 MW bound and 1070 MW output
+    handed zero generation to the estimate, and the injection remainder that the
+    dispatch could not place piled up in ``sum_unclosed_p_mw``. On a grid where
+    most plants are declared that way, this understated the total generation of
+    the regime threefold.
 
-    Лимиты: суммируются только **валидные** пары; если хотя бы один
-    активный генератор узла несёт сентинел (|лимит| ≥ ``SENTINEL_ABS``,
-    «нет данных»), узловая пара помечается сентинелом ±9999 — диапазон
-    узла неизвестен. Раньше сентинелы суммировались как числа: реальный
-    диапазон [-50, 100] + сентинельный [-9999, 9999] давал мусор
-    [-10049, 10099] — узел либо терял box-var в IPM, либо ложно
-    классифицировался BUS-эквивалентом с tight-prior к нулю.
+    Limits: only **valid** pairs are summed; if at least one active generator of
+    the node carries a sentinel (|limit| >= ``SENTINEL_ABS``, "no data"), the
+    node pair is marked with the sentinel ±9999 -- the node range is unknown.
+    Previously sentinels were summed as numbers: a real range [-50, 100] plus a
+    sentinel [-9999, 9999] gave garbage [-10049, 10099] -- the node either lost
+    its box variable in the IPM or was falsely classified as a BUS equivalent
+    with a tight prior toward zero.
 
-    Возвращает ``{"updated_nodes":N,"active_gens":N,"off_gens":N,
+    Returns ``{"updated_nodes":N,"active_gens":N,"off_gens":N,
     "missing_node":N,"sentinel_p_nodes":N,"sentinel_q_nodes":N}``.
     """
     node_pos = id_to_pos_map(nodes_arr["id"])
@@ -110,16 +111,16 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
         "closed_nodes": 0,
     }
 
-    # Сначала обнуляем gen-поля у всех узлов, чтобы повторный вызов
-    # давал стабильный результат (off-генераторы перестают учитываться).
+    # First zero the gen fields on all nodes so that a repeated call gives
+    # a stable result (off generators stop being counted).
     touched: set[int] = set()
     aggregates: dict[int, dict[str, float]] = {}
-    # Узлы, где хотя бы один генератор без валидной P/Q-пары лимитов.
+    # Nodes where at least one generator has no valid P/Q limit pair.
     p_unknown: set[int] = set()
     q_unknown: set[int] = set()
 
-    # Узлы с генераторами в каталоге — чтобы закрыть генерацию тех, у кого
-    # все машины выключены (см. ниже).
+    # Nodes with generators in the catalog -- to close the generation of those
+    # whose machines are all off (see below).
     with_gens: set[int] = set()
     for i in range(len(gens_arr)):
         nid = int(gens_arr[i]["node_id"])
@@ -182,10 +183,11 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
             stats["exist_gen_raised"] += 1
         touched.add(nid)
 
-    # Генерация узла с каталогом генераторов = сумма его машин. Если все они
-    # выключены (формулой состояния или каскадом от узла), генерации у узла
-    # нет: без этого он сохранял ящик и exist_gen из схемы, и оценка выдавала
-    # на нём генерацию машин, которые не работают.
+    # Generation of a node with a generator catalog = the sum of its machines.
+    # If all are off (by a status formula or by the cascade from the node), the
+    # node has no generation: without this it kept the box and exist_gen from the
+    # schema, and the estimate produced generation on it for machines that are
+    # not running.
     for nid in with_gens - set(aggregates):
         i = node_pos[nid]
         for col in (
@@ -208,10 +210,10 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
 
 
 def aggregate_generators_to_node(model: Any) -> dict[str, int]:
-    """Сумма параметров активных генераторов узла → ``model.nodes``.
+    """Sum of the parameters of a node's active generators -> ``model.nodes``.
 
-    Для каждого узла суммирует по **активным** (``status=True``) генераторам
-    с этим ``node_id``:
+    For each node sums over the **active** (``status=True``) generators
+    with that ``node_id``:
 
     * ``power_output``    → ``node.generation_p``;
     * ``reactive_output`` → ``node.generation_q``;
@@ -220,24 +222,24 @@ def aggregate_generators_to_node(model: Any) -> dict[str, int]:
     * ``reactive_min``    → ``node.generation_q_min``;
     * ``reactive_max``    → ``node.generation_q_max``;
 
-    и поднимает ``node.exist_gen`` — узел с активной машиной генерацию имеет,
-    а без флага IPM не заводит под неё box-переменную (см.
-    ``_aggregate_generators_on_arrays``). Флаг только поднимается: узел, чьи
-    машины все сняты, сюда не попадает и сохраняет прежние значения.
+    and raises ``node.exist_gen`` -- a node with an active machine has
+    generation, and without the flag the IPM creates no box variable for it (see
+    ``_aggregate_generators_on_arrays``). The flag is only ever raised: a node
+    whose machines are all off does not get here and keeps its previous values.
 
-    Off-генераторы исключаются из всех сумм (их Q-лимиты не объединяются
-    в Q-диапазон узла). Узлы, у которых генераторов в каталоге нет вовсе,
-    остаются с прежними generation_* (генерация объявлена на самом узле). Сентинельные лимиты (±9999, «нет
-    данных») не суммируются: узел с хотя бы одним таким генератором
-    получает сентинельную пару — «диапазон неизвестен» (см.
+    Off generators are excluded from all sums (their Q limits are not merged into
+    the node's Q range). Nodes that have no generators in the catalog at all keep
+    their previous generation_* values (generation is declared on the node
+    itself). Sentinel limits (±9999, "no data") are not summed: a node with at
+    least one such generator gets a sentinel pair -- "range unknown" (see
     ``_aggregate_generators_on_arrays``).
 
-    Идемпотентна: повторный вызов даёт тот же результат, потому что
-    суммы перезаписываются полностью (не аккумулируются).
+    Idempotent: a repeated call gives the same result, because the sums are
+    overwritten completely (not accumulated).
 
-    Должна вызываться **после** применения ON_LINE-топологии и
-    ``apply_generator_status_from_node`` — когда финальные статусы
-    генераторов уже выставлены.
+    Must be called **after** the ON_LINE topology has been applied and after
+    ``apply_generator_status_from_node`` -- once the final generator statuses are
+    set.
 
     Returns:
         ``{"updated_nodes": N, "active_gens": N, "off_gens": N,

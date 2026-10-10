@@ -1,7 +1,7 @@
-"""ON_LINE-топология: применение ON_LINE-статусов к модели.
+"""ON_LINE topology: apply ON_LINE statuses to the model.
 
-Контрактное ядро ``_apply_topology_on_arrays`` + тонкая обёртка ``apply_topology_resolved``
-(применяет готовый числовой план статусов к ``status`` объектов модели).
+Contract core ``_apply_topology_on_arrays`` plus a thin wrapper ``apply_topology_resolved``
+(applies a ready numeric status plan to the ``status`` of model objects).
 """
 
 from __future__ import annotations
@@ -14,16 +14,16 @@ import numpy as np
 from gridstate.utils import id_to_pos_map
 
 
-# Элемент плана статусов ON_LINE: ``(tag, parent_id, status|None, eval_skip|None)``.
+# ON_LINE status plan item: ``(tag, parent_id, status|None, eval_skip|None)``.
 ResolvedItem = tuple[str, int, bool | None, str | None]
 
 
 def apply_topology_resolved(model: Any, resolved: Sequence[ResolvedItem]) -> dict[str, int]:
-    """Применить готовый ``resolved``-план ON_LINE к ``status`` модели.
+    """Apply a ready ON_LINE ``resolved`` plan to the model ``status``.
 
-    Чистое применение (без формул): снимок контрактных массивов → ядро
-    :func:`_apply_topology_on_arrays` → write-back. ``resolved`` — готовый план
-    статусов ``(tag, parent_id, status|None, eval_skip|None)``.
+    Pure application (no formulas): snapshot of the contract arrays → core
+    :func:`_apply_topology_on_arrays` → write-back. ``resolved`` is a ready status plan
+    ``(tag, parent_id, status|None, eval_skip|None)``.
     """
     arr_nodes = model.nodes.to_numpy().copy()
     arr_branches = model.branches.to_numpy().copy()
@@ -41,12 +41,12 @@ def _apply_topology_on_arrays(
     arr_gens: np.ndarray,
     resolved: Sequence[ResolvedItem],
 ) -> dict[str, int]:
-    """ЯДРО: применение ON_LINE-статусов над контрактными массивами.
+    """CORE: apply ON_LINE statuses over the contract arrays.
 
-    Чистый статус-каскад: получает готовый план ``resolved`` (элемент
-    ``(tag, parent_id, status|None, eval_skip|None)``), матчит ``tag`` → целевой
-    массив (nodes/branches/generators), пишет ``status``-колонку. Мутирует массивы
-    in place. Без внешних зависимостей, без float-арифметики.
+    Pure status cascade: takes a ready ``resolved`` plan (item
+    ``(tag, parent_id, status|None, eval_skip|None)``), matches ``tag`` → target
+    array (nodes/branches/generators), writes the ``status`` column. Mutates the arrays
+    in place. No external dependencies, no float arithmetic.
     """
     by_id_nodes = id_to_pos_map(arr_nodes["id"])
     by_id_branches = id_to_pos_map(arr_branches["id"])
@@ -79,7 +79,7 @@ def _apply_topology_on_arrays(
             stats["skipped_no_object"] += 1
             continue
         if status is None:
-            # Контракт: при ``status is None`` producer всегда задаёт ключ eval_skip.
+            # Contract: when ``status is None`` the producer always sets the eval_skip key.
             assert eval_skip is not None
             stats[eval_skip] += 1
             continue

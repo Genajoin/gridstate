@@ -58,16 +58,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_FLAT_REL_TOL = 1e-6  # |value − Vnom| < tol · Vnom → приор-плейсхолдер
-_CROSS_AT_MIN_VNOM = 110.0  # cross-AT фолбэк только для EHV/HV (≥110 кВ) обе стороны
+_FLAT_REL_TOL = 1e-6  # |value − Vnom| < tol · Vnom -> prior placeholder
+_CROSS_AT_MIN_VNOM = 110.0  # cross-AT fallback only for EHV/HV (>=110 kV) on both sides
 
 
 @dataclass(frozen=True)
 class VMirrorPlan:
-    """План перестановки значений pseudo-V слепых кластеров."""
+    """Plan for reassigning pseudo-V values of blind clusters."""
 
-    new_values: tuple[tuple[int, float], ...]  # (node_id, новое значение pseudo-V)
-    n_clusters: int  # слепых кластеров, прошедших гейт границы
+    new_values: tuple[tuple[int, float], ...]  # (node_id, new pseudo-V value)
+    n_clusters: int  # blind clusters that passed the boundary gate
 
     @property
     def empty(self) -> bool:
@@ -100,7 +100,7 @@ def _flat_pseudo_v(measurements: np.ndarray, vn_map: dict[int, float]) -> dict[i
 
 
 def _measured_nodes(measurements: np.ndarray, branches: np.ndarray) -> set[int]:
-    """Узлы, накрытые real-TM (узловой мерой или стороной branch-меры)."""
+    """Nodes covered by a real TM (a node measurement or the side of a branch measurement)."""
     b2n = branch_endpoints_map(branches)
     sel_real = meas_mask(measurements, pseudo=False)
     measured: set[int] = set()
@@ -125,27 +125,27 @@ def classify_v_mirror(
     min_lift: float,
     cross_at: bool = False,
 ) -> VMirrorPlan:
-    """Отобрать слепые кластеры и вычислить новое значение их pseudo-V.
+    """Select blind clusters and compute the new value of their pseudo-V.
 
     Args:
-        measurements: measurements рабочей модели ПОСЛЕ первого solve.
-        branches: branches (adjacency + покрытие real-TM).
-        nodes: nodes ПОСЛЕ solve — ``voltage_magnitude`` несёт V первого прохода,
-            ``voltage_nominal`` — номинал.
-        max_pu_dev: гейт границы ``|median(pu) − 1| ≤ max_pu_dev``.
-        min_lift: lift-гейт ``pu_граница − pu_узел > min_lift`` (узел трогаем,
-            только если он систематически ниже границы своего класса).
+        measurements: measurements of the working model AFTER the first solve.
+        branches: branches (adjacency + real-TM coverage).
+        nodes: nodes AFTER the solve; ``voltage_magnitude`` carries the first-pass V,
+            ``voltage_nominal`` is the nominal.
+        max_pu_dev: boundary gate ``|median(pu) − 1| ≤ max_pu_dev``.
+        min_lift: lift gate ``pu_boundary − pu_node > min_lift`` (a node is touched
+            only if it sits systematically below the boundary of its class).
 
     Returns:
-        :class:`VMirrorPlan` (может быть ``empty``).
+        :class:`VMirrorPlan` (may be ``empty``).
     """
     vn_map, vse_map, active = _node_maps(nodes)
 
     adj = active_adjacency(branches)
 
-    # Cross-AT (Q2, gated): adjacency только по активным трансформаторам
-    # (branch_type==1, tap>0) — для фолбэка слепых кластеров без границы того
-    # же класса (граница лишь за АТ). pu-инвариант к идеальному tap.
+    # Cross-AT (gated): adjacency over active transformers only
+    # (branch_type==1, tap>0), for the fallback of blind clusters whose boundary
+    # of the same class lies only beyond an AT. pu is invariant to an ideal tap.
     trafo_adj: defaultdict[int, set[int]] = defaultdict(set)
     if cross_at:
         trafo_adj = active_adjacency(
@@ -155,12 +155,12 @@ def classify_v_mirror(
             & (branches["tap_ratio"] > 0),
         )
 
-    # pseudo-V-плейсхолдеры (value == Vnom) по узлам
+    # pseudo-V placeholders (value == Vnom) per node
     psv_flat = _flat_pseudo_v(measurements, vn_map)
 
     unmeas = active - _measured_nodes(measurements, branches)
 
-    # связные компоненты слепых узлов по активным ветвям
+    # connected components of blind nodes over active branches
     seen: set[int] = set()
     new_values: list[tuple[int, float]] = []
     n_clusters = 0
@@ -176,9 +176,9 @@ def classify_v_mirror(
             seen.add(x)
             comp.add(x)
             stack.extend(adj[x] - seen)
-        # граница = измеренные соседи компоненты
+        # boundary = measured neighbors of the component
         boundary = set().union(*(adj[n] for n in comp)) - comp if comp else set()
-        # Cross-AT (Q2): trafo-граница кластера (узлы за активным АТ, другой класс).
+        # Cross-AT: trafo boundary of the cluster (nodes beyond an active AT, another class).
         trafo_boundary = (
             (set().union(*(trafo_adj[n] for n in comp)) - comp) if (cross_at and comp) else set()
         )
@@ -187,17 +187,17 @@ def classify_v_mirror(
             vn = psv_flat.get(n)
             if not vn:
                 continue
-            # Гейт 1: pu только с границы ТОГО ЖЕ класса напряжения.
+            # Gate 1: pu only from the boundary of the SAME voltage class.
             pus = [
                 vse_map[b] / vn_map[b]
                 for b in boundary
                 if abs(vn_map.get(b, 0.0) - vn) < _FLAT_REL_TOL * vn and vse_map.get(b, 0.0) > 0
             ]
             if not pus and cross_at and vn >= _CROSS_AT_MIN_VNOM:
-                # Фолбэк: pu решённой trafo-границы (другой класс), pu-инвариант
-                # к идеальному tap. Только EHV/HV (≥110 кВ) обе стороны — на
-                # gen-step-up (10-35 кВ) pu-инвариант через АТ грубо нарушается
-                # (большая обмоточная просадка). max_pu_dev/lift-гейты сохраняются.
+                # Fallback: pu of the solved trafo boundary (another class), pu is invariant
+                # to an ideal tap. Only EHV/HV (>=110 kV) on both sides: on
+                # gen step-up (10-35 kV) the pu invariance across an AT is grossly violated
+                # (large winding drop). The max_pu_dev/lift gates are kept.
                 pus = [
                     vse_map[b] / vn_map[b]
                     for b in trafo_boundary
@@ -208,7 +208,7 @@ def classify_v_mirror(
             pu = float(np.median(pus))
             if abs(pu - 1.0) > max_pu_dev:
                 continue
-            # Гейт 2: lift — узел систематически ниже своей границы.
+            # Gate 2: lift, the node sits systematically below its boundary.
             pu_node = vse_map.get(n, 0.0) / vn
             if pu - pu_node <= min_lift:
                 continue
@@ -231,31 +231,31 @@ def classify_chain_mirror(
     max_depth: int,
     cross_at: bool = False,
 ) -> VMirrorPlan:
-    """Chain-mirror: pseudo-V флэт-плейсхолдеров в ГЛУБИНЕ сети от real-V.
+    """Chain-mirror: pseudo-V of flat placeholders DEEP in the network, from real V.
 
-    :func:`classify_v_mirror` покрывает только полностью слепые кластеры (без
-    единой real-TM). Узлы, «наблюдаемые» лишь перетоками, в кластер не попадают,
-    но их уровень V не заякорен ничем, кроме флэт-приора ``value = Vnom`` —
-    глубокие цепочки (d≥2 от ближайшей живой real-V-меры) проседают к номиналу.
+    :func:`classify_v_mirror` covers only fully blind clusters (without
+    a single real TM). Nodes "observable" only through flows do not fall into a cluster,
+    but their V level is anchored by nothing except the flat prior ``value = Vnom``,
+    so deep chains (d>=2 from the nearest live real-V measurement) sag toward nominal.
 
-    Механизм: multi-source BFS от узлов с живой real node-V-мерой по активным
-    ветвям ТОГО ЖЕ класса напряжения (гейт 1 v_mirror; при ``cross_at`` — плюс
-    активные трансформаторы с ``tap>0`` при обоих концах ≥110 кВ, pu-инвариант).
-    Узел на глубине ``d`` наследует median pu источников, достигших его первым
-    фронтом, с затуханием к номиналу::
+    Mechanism: multi-source BFS from nodes with a live real node-V measurement over active
+    branches of the SAME voltage class (gate 1 of v_mirror; with ``cross_at``, plus
+    active transformers with ``tap>0`` when both ends are >=110 kV, pu-invariant).
+    A node at depth ``d`` inherits the median pu of the sources that reached it with the first
+    front, with decay toward nominal::
 
         pu_target = 1 + (pu_src − 1) · decay^(d−1)
 
-    (d=1 — полный pu, как граница v_mirror; глубже — консервативное затухание,
-    НЕ экстраполяция). Остальные гейты v_mirror сохраняются: только
-    флэт-плейсхолдеры, ``|pu_src − 1| ≤ max_pu_dev`` (мусорный источник),
-    lift-гейт ``pu_target − pu_узла > min_lift`` (двигаем лишь систематически
-    провисшие узлы). σ приоров не трогается.
+    (d=1 is the full pu, like the v_mirror boundary; deeper is a conservative decay,
+    NOT an extrapolation). The other v_mirror gates are kept: only
+    flat placeholders, ``|pu_src − 1| ≤ max_pu_dev`` (garbage source),
+    lift gate ``pu_target − pu_node > min_lift`` (we move only systematically
+    sagging nodes). The priors' σ is not touched.
     """
     vn_map, vse_map, active = _node_maps(nodes)
 
-    # рёбра распространения pu: тот же класс всегда; через активный АТ ≥110 кВ
-    # обеих сторон — только при cross_at (pu-инвариант к идеальному tap)
+    # pu propagation edges: the same class always; through an active AT >=110 kV
+    # on both sides only with cross_at (pu is invariant to an ideal tap)
     adj: dict[int, set[int]] = defaultdict(set)
     for f, t, st, bt, tap in zip(
         branches["from_node"],
@@ -283,7 +283,7 @@ def classify_chain_mirror(
             adj[fi].add(ti)
             adj[ti].add(fi)
 
-    # источники: живые real node-V-меры с правдоподобным решённым pu
+    # sources: live real node-V measurements with a plausible solved pu
     sel_src = meas_mask(measurements, kinds=KIND_VOLTAGE, obj=OBJ_NODE, pseudo=False)
     level: dict[int, float] = {}
     for j in np.where(sel_src)[0]:
@@ -296,10 +296,10 @@ def classify_chain_mirror(
         if abs(pu - 1.0) <= max_pu_dev:
             level[nid] = pu
 
-    # флэт-плейсхолдеры pseudo-V (кандидаты в цели)
+    # flat pseudo-V placeholders (candidates for targets)
     psv_flat = _flat_pseudo_v(measurements, vn_map)
 
-    # level-synchronous multi-source BFS: узел получает median pu первого фронта
+    # level-synchronous multi-source BFS: a node gets the median pu of the first front
     dist: dict[int, int] = dict.fromkeys(level, 0)
     new_values: list[tuple[int, float]] = []
     max_d = 0
@@ -315,7 +315,7 @@ def classify_chain_mirror(
         for w, pus in contrib.items():
             dist[w] = d
             raw_pu = float(np.median(pus))
-            level[w] = raw_pu  # дальше передаём НЕзатухший уровень источника
+            level[w] = raw_pu  # further on, pass the UNdecayed source level
             if w not in psv_flat or abs(raw_pu - 1.0) > max_pu_dev:
                 continue
             vn = vn_map[w]
@@ -330,7 +330,7 @@ def classify_chain_mirror(
 
 
 def apply_v_mirror_plan(model: Working, plan: VMirrorPlan) -> dict:
-    """Переставить значения pseudo-V мер на узлах плана."""
+    """Reassign pseudo-V measurement values on the plan's nodes."""
     if not plan.new_values:
         return {"clusters": 0, "nodes": 0}
     new_by_node = dict(plan.new_values)
