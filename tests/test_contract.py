@@ -1,12 +1,12 @@
-"""Тесты контракта данных SE (``gridstate.contract``).
+"""Tests of the SE data contract (``gridstate.contract``).
 
-Контракт — только ОБЪЯВЛЕНИЕ схемы; поведение пайплайна не меняется. Тесты
-проверяют:
+The contract is only a schema DECLARATION; pipeline behaviour is unchanged. The tests
+check that:
 
-1. версия контракта корректна и SemVer-логика совместимости работает;
-2. схема само-консистентна (валидные dtype, ключи на месте, нет дублей колонок);
-3. выходной слой контракта совпадает с :mod:`gridstate.result` (drift-guard);
-4. :func:`validate_input` принимает корректный вход и ловит проблемы.
+1. the contract version is correct and the SemVer compatibility logic works;
+2. the schema is self-consistent (valid dtypes, keys present, no duplicate columns);
+3. the output layer of the contract matches :mod:`gridstate.result` (drift guard);
+4. :func:`validate_input` accepts a correct input and catches problems.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from gridstate.result import BRANCH_OUTPUT_FIELDS, MEAS_OUTPUT_FIELDS, NODE_OUTP
 
 
 # ---------------------------------------------------------------------------
-# 1. Версия
+# 1. Version
 # ---------------------------------------------------------------------------
 
 
@@ -51,12 +51,12 @@ def test_version_parse_rejects_malformed(bad):
 
 def test_version_compatibility_rules():
     schema = ContractVersion(1, 3, 0)
-    # тот же major, minor данных ≤ minor схемы → совместимо
+    # same major, data minor <= schema minor -> compatible
     assert ContractVersion(1, 0, 0).is_compatible_with(schema)
     assert ContractVersion(1, 3, 9).is_compatible_with(schema)
-    # minor данных > minor схемы → данные могут нести неизвестные поля
+    # data minor > schema minor -> the data may carry unknown fields
     assert not ContractVersion(1, 4, 0).is_compatible_with(schema)
-    # другой major → несовместимо
+    # different major -> incompatible
     assert not ContractVersion(2, 0, 0).is_compatible_with(schema)
     assert not ContractVersion(0, 9, 0).is_compatible_with(schema)
 
@@ -68,7 +68,7 @@ def test_is_data_compatible_against_current():
 
 
 # ---------------------------------------------------------------------------
-# 2. Само-консистентность схемы
+# 2. Schema self-consistency
 # ---------------------------------------------------------------------------
 
 _ALL_TABLES = [SE_INPUT.nodes, SE_INPUT.branches, SE_INPUT.measurements, SE_INPUT.generators]
@@ -77,51 +77,51 @@ _ALL_TABLES = [SE_INPUT.nodes, SE_INPUT.branches, SE_INPUT.measurements, SE_INPU
 @pytest.mark.parametrize("table", _ALL_TABLES, ids=lambda t: t.name)
 def test_table_no_duplicate_columns(table: TableSchema):
     names = [c.name for c in table.columns]
-    assert len(names) == len(set(names)), f"дубль колонки в {table.name}"
+    assert len(names) == len(set(names)), f"duplicate column in {table.name}"
 
 
 @pytest.mark.parametrize("table", _ALL_TABLES, ids=lambda t: t.name)
 def test_table_keys_present_as_key_role(table: TableSchema):
     for k in table.key:
         col = table.column(k)
-        assert col is not None, f"ключ {k} отсутствует в {table.name}"
+        assert col is not None, f"key {k} is missing in {table.name}"
         assert col.role is Role.KEY
 
 
 @pytest.mark.parametrize("table", _ALL_TABLES, ids=lambda t: t.name)
 def test_table_dtypes_build(table: TableSchema):
-    # И входной, и выходной dtype собираются без ошибок и содержат ключ.
+    # Both the input and the output dtype build without errors and contain the key.
     in_dt = table.input_dtype()
     assert in_dt.names is not None
     for k in table.key:
         assert k in in_dt.names
-    # выходной слой собирается (может быть пуст у generators — без OUTPUT-колонок)
+    # the output layer builds (may be empty for generators - no OUTPUT columns)
     table.output_dtype()
 
 
 def test_input_tables_have_no_output_columns():
-    # Вход — отдельное пространство: ни одной OUTPUT-колонки.
+    # The input is a separate space: no OUTPUT columns at all.
     for table in SE_INPUT.tables():
-        assert table.column_names(Role.OUTPUT) == (), f"{table.name}: OUTPUT-колонка во входе"
+        assert table.column_names(Role.OUTPUT) == (), f"{table.name}: OUTPUT column in the input"
 
 
 def test_output_tables_are_key_plus_output_only():
     for table in SE_OUTPUT.tables():
         for c in table.columns:
             assert c.role in (Role.KEY, Role.OUTPUT), (
-                f"{table.name}.{c.name}: не KEY/OUTPUT в выходе"
+                f"{table.name}.{c.name}: not KEY/OUTPUT in the output"
             )
 
 
 def test_nodes_share_only_vd_across_layers():
-    # Единственные колонки, общие у входа и выхода узлов, — id + V/δ
-    # (во входе начальное приближение/WORKING, на выходе — решение/OUTPUT).
+    # The only columns shared by the node input and output are id + V/delta
+    # (in the input: initial guess/WORKING; in the output: solution/OUTPUT).
     shared = set(SE_INPUT.nodes.column_names()) & set(SE_OUTPUT.nodes.column_names())
     assert shared == {"id", "voltage_magnitude", "voltage_angle"}
 
 
 # ---------------------------------------------------------------------------
-# 4. Выходной слой == gridstate.result (drift-guard)
+# 4. Output layer == gridstate.result (drift guard)
 # ---------------------------------------------------------------------------
 
 
@@ -137,7 +137,7 @@ def test_output_layer_matches_result_module():
 
 
 def _make_min_model():
-    """Минимальная валидная модель (2 узла + ветвь + мера + ген)."""
+    """Minimal valid model (2 nodes + branch + measurement + generator)."""
     from gridstate.working import Working
 
     m = Working.empty()
@@ -158,7 +158,7 @@ def test_validate_input_accepts_full_model():
 
 
 def test_validate_input_flags_missing_table_in_mapping():
-    # Mapping без таблицы branches → missing_table.
+    # Mapping without a branches table -> missing_table.
     nodes = np.zeros(1, dtype=SE_INPUT.nodes.input_dtype())
     report = validate_input({"nodes": nodes})
     assert not report.ok
@@ -167,7 +167,7 @@ def test_validate_input_flags_missing_table_in_mapping():
 
 
 def test_validate_input_flags_missing_required_column():
-    # nodes без voltage_nominal (required INPUT) → missing_column.
+    # nodes without voltage_nominal (required INPUT) -> missing_column.
     full = SE_INPUT.nodes.input_dtype()
     fields_wo_vn = [(n, full.fields[n][0]) for n in full.names if n != "voltage_nominal"]
     nodes = np.zeros(1, dtype=np.dtype(fields_wo_vn))

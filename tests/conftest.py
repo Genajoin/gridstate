@@ -1,4 +1,4 @@
-"""pytest config: маркеры slow / requires_specs + сброс логгера перед тестом."""
+"""pytest config: slow / requires_specs markers + logger reset before each test."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_gridstate_logger():
-    """Сброс уровня logger gridstate до WARNING перед каждым тестом.
+    """Reset the gridstate logger level to WARNING before each test.
 
-    Некоторые прогоны глушат logger через `setLevel(ERROR)` глобально — без
-    сброса caplog-тесты после них не захватывают WARNING.
+    Some runs silence the logger globally via `setLevel(ERROR)`; without
+    the reset, caplog tests that follow do not capture WARNING.
     """
     logging.getLogger("gridstate").setLevel(logging.WARNING)
     logging.getLogger("gridstate.z_vector").setLevel(logging.WARNING)
@@ -22,9 +22,9 @@ def _reset_gridstate_logger():
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "slow: тест медленный (минуты на регион); включается явно или в CI с .specs",
+        "slow: slow test (minutes per large case); enabled explicitly or in CI with .specs",
     )
     config.addinivalue_line(
         "markers",
-        "requires_specs: тест требует .specs/<имя>/ (skip-ается локально, если каталога нет)",
+        "requires_specs: test needs a .specs/<name>/ directory (skipped locally if it is missing)",
     )

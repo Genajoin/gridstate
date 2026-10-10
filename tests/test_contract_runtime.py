@@ -1,8 +1,8 @@
-"""Рантайм контракта: SEInput/SEOutput + фасад run.
+"""Contract runtime: SEInput/SEOutput + the run facade.
 
-Ключевой тест — **бит-в-бит эквивалентность** фасада ``gridstate.contract.run`` и
-прямого ``gridstate.pipeline.run`` на малой модели: дёшево подтверждает, что
-контрактный фасад не смещает числа относительно прямого вызова пайплайна.
+The key test is **bit-for-bit equivalence** of the ``gridstate.contract.run`` facade and
+the direct ``gridstate.pipeline.run`` on a small model: it cheaply confirms that
+the contract facade does not shift the numbers relative to a direct pipeline call.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from gridstate.z_vector import (
 
 
 def _make_model():
-    """Малая синтетическая модель (3 узла, slack=1, плоский режим + ШР на slack)."""
+    """Small synthetic model (3 nodes, slack=1, flat start + shunt reactor at the slack)."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -108,7 +108,7 @@ def _arrays_bit_identical(a: np.ndarray, b: np.ndarray) -> bool:
     if a.dtype != b.dtype or len(a) != len(b):
         return False
     for n in a.dtype.names or ():
-        # equal_nan только для float/complex полей; на строковых isnan падает.
+        # equal_nan only for float/complex fields; isnan fails on string ones.
         nan_aware = a.dtype[n].kind in "fc"
         if not np.array_equal(a[n], b[n], equal_nan=nan_aware):
             return False
@@ -116,7 +116,7 @@ def _arrays_bit_identical(a: np.ndarray, b: np.ndarray) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Контейнеры
+# Containers
 # ---------------------------------------------------------------------------
 
 
@@ -131,7 +131,7 @@ def test_seinput_wraps_model_and_validates():
 def test_seoutput_arrays_match_output_schema():
     out = contract_run(SEInput.from_model(_make_model()), config=PipelineConfig())
     assert isinstance(out, SEOutput)
-    # имена колонок выходных таблиц == выходной слой контракта (id + OUTPUT)
+    # output table column names == output layer of the contract (id + OUTPUT)
     assert out.nodes.dtype.names == SE_OUTPUT.nodes.column_names(Role.KEY, Role.OUTPUT)
     assert out.branches.dtype.names == SE_OUTPUT.branches.column_names(Role.KEY, Role.OUTPUT)
     assert out.measurements.dtype.names == SE_OUTPUT.measurements.column_names(
@@ -149,7 +149,7 @@ def test_seoutput_row_accessors():
 
 
 # ---------------------------------------------------------------------------
-# Бит-в-бит эквивалентность фасада и прямого пайплайна (per-phase гейт)
+# Bit-for-bit equivalence of the facade and the direct pipeline (per-phase gate)
 # ---------------------------------------------------------------------------
 
 
@@ -158,7 +158,7 @@ def test_facade_bit_identical_to_pipeline(algorithm):
     cfg = PipelineConfig(algorithm=algorithm)
     model = _make_model()
 
-    # run() — чистая функция (клонирует Input), поэтому можно вызвать оба на одном m.
+    # run() is a pure function (clones the Input), so both can be called on the same m.
     direct = pipeline_run(model, config=cfg)
     out = contract_run(SEInput.from_model(model), config=cfg)
 
@@ -176,18 +176,18 @@ def test_facade_does_not_mutate_input_model():
     before = model.nodes.to_numpy().copy()
     contract_run(SEInput.from_model(model), config=PipelineConfig())
     after = model.nodes.to_numpy()
-    assert _arrays_bit_identical(before, after), "фасад не должен мутировать входную модель"
+    assert _arrays_bit_identical(before, after), "the facade must not mutate the input model"
 
 
 # ---------------------------------------------------------------------------
-# Тёплый старт через SEOutput
+# Warm start via SEOutput
 # ---------------------------------------------------------------------------
 
 
 def test_warm_start_chain_via_seoutput():
     model = _make_model()
     res_wls = contract_run(SEInput.from_model(model), config=PipelineConfig(algorithm="wls"))
-    # цепочка: ipm с тёплым стартом от прошлого SEOutput — не падает, даёт SEOutput
+    # chain: ipm warm-started from the previous SEOutput does not fail and yields an SEOutput
     res_ipm = contract_run(
         SEInput.from_model(model),
         config=PipelineConfig(algorithm="ipm"),
@@ -199,16 +199,16 @@ def test_warm_start_chain_via_seoutput():
 
 @pytest.mark.parametrize("algorithm", ["wls", "ipm"])
 def test_facade_bit_identical_to_pipeline_with_warm_start(algorithm):
-    # Тёплый старт через фасад (SEOutput) ≡ прямой pipeline_run (SEResult).
+    # Warm start via the facade (SEOutput) == direct pipeline_run (SEResult).
     model = _make_model()
     cfg_wls = PipelineConfig(algorithm="wls")
     cfg_next = PipelineConfig(algorithm=algorithm)
 
-    # Прямой путь: baseline (SEResult) → warm-start
+    # Direct path: baseline (SEResult) -> warm start
     base_direct = pipeline_run(model, config=cfg_wls)
     direct = pipeline_run(model, config=cfg_next, init_state=base_direct)
 
-    # Фасадный путь: baseline (SEOutput) → warm-start
+    # Facade path: baseline (SEOutput) -> warm start
     base_out = contract_run(SEInput.from_model(model), config=cfg_wls)
     facade = contract_run(SEInput.from_model(model), config=cfg_next, init_state=base_out)
 
@@ -222,7 +222,7 @@ def test_facade_bit_identical_to_pipeline_with_warm_start(algorithm):
 
 
 # ---------------------------------------------------------------------------
-# Валидация на входе фасада
+# Validation at the facade input
 # ---------------------------------------------------------------------------
 
 
@@ -247,7 +247,7 @@ def test_facade_validate_false_skips_check():
 
 
 # ---------------------------------------------------------------------------
-# Публичный реэкспорт
+# Public re-export
 # ---------------------------------------------------------------------------
 
 
@@ -259,18 +259,18 @@ def test_toplevel_exports():
 
 
 # ---------------------------------------------------------------------------
-# load_se_input: обёртка модели без формат-слоя источника (derived=None);
-# run(SEInput) применяет готовые планы контрактными ядрами.
+# load_se_input: wraps a model without a source format layer (derived=None);
+# run(SEInput) applies ready-made plans with the contract kernels.
 # ---------------------------------------------------------------------------
 
 
 def test_load_se_input_without_plans_returns_no_derived():
     se_in = load_se_input(_make_model())
-    assert se_in.derived is None  # модель без планов
+    assert se_in.derived is None  # model without plans
 
 
 def test_load_se_input_facade_bit_identical_without_plans():
-    # load_se_input (derived=None) ≡ прямой pipeline_run.
+    # load_se_input (derived=None) == direct pipeline_run.
     model = _make_model()
     cfg = PipelineConfig()
     direct = pipeline_run(model, config=cfg)
