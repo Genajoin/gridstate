@@ -1,11 +1,10 @@
-"""float-ядра measurement-мутаторов над контрактными массивами.
+"""Float kernels of the measurement mutators over contract arrays.
 
-3 функции (`apply_voltage_range_filter`, `apply_voltage_meas_calibration_for_gen_nodes`,
-`deactivate_orphan_measurements`) расщеплены на
-тонкий адаптер (резолв контрактных енумов object/measurement-type → готовые int) + ЯДРО
-`_*_on_arrays`, читающее/мутирующее только контрактные колонки `SE_INPUT.measurements`
-(+ nodes/branches/generators), БЕЗ внешних зависимостей и XML. Здесь — корректность ядер на голых массивах;
-бит-в-бит публичного API — canon transitively + end-to-end дифф OLD-vs-NEW (4 региональные модели).
+``apply_voltage_range_filter``, ``apply_voltage_meas_calibration_for_gen_nodes``
+and ``deactivate_orphan_measurements`` are thin adapters (they resolve the
+object and measurement type enums to ints) around ``_*_on_arrays`` kernels that
+read and mutate only contract columns of ``SE_INPUT.measurements`` (plus
+nodes/branches/generators). These tests check the kernels on bare arrays.
 """
 
 from __future__ import annotations
@@ -337,7 +336,8 @@ def test_vrf_skip_non_v_meas():
 
 
 def test_vrf_lo_fallback_half_nom_rejects_sentinel():
-    # U_KRIT=1.0 на 500-кВ узле — заглушка; lo=V_ном/2=250. V=100 < 250 → out_of_range.
+    # A critical limit of 1.0 on a 500 kV node is a placeholder; lo=V_nom/2=250.
+    # V=100 < 250 → out_of_range.
     nodes = _nodes(
         [{"id": 1, "voltage_nominal": 500.0, "voltage_critical": 1.0, "voltage_max": 525.0}]
     )

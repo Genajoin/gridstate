@@ -1,12 +1,11 @@
-"""Ядра статус-каскада/агрегации/шунтов на контрактных массивах.
+"""Kernels of the generator status cascade, generator aggregation and breakers.
 
-Функции ``apply_generator_status_from_node`` / ``aggregate_generators_to_node``
-(telemetry/generators.py) и ``normalize_breaker_reactance`` (telemetry/shunts.py)
-расщеплены на
-``_*_on_arrays``-ядро (vendor-free, мутирует контрактные numpy-массивы) + адаптер.
-Эти ядра — новая способность: исполняются на голых ``SE_INPUT``-массивах без
-полноценной модели и читают только контрактные колонки. Бит-в-бит модели для
-адаптеров стережёт существующий telemetry-сьют; здесь — корректность ядер.
+``apply_generator_status_from_node`` / ``aggregate_generators_to_node``
+(telemetry/generators.py) and ``normalize_breaker_reactance``
+(telemetry/shunts.py) are adapters around ``_*_on_arrays`` kernels that mutate
+contract numpy arrays. The kernels run on bare ``SE_INPUT`` arrays without a
+full model and read only contract columns; the telemetry suite covers the
+adapters, these tests cover the kernels.
 """
 
 from __future__ import annotations
