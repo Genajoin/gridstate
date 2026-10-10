@@ -170,13 +170,36 @@ class _ArrayCollection:
     # --- внутреннее ---
 
     def _rebuild_index(self) -> None:
-        self._id_index: dict[int, int] = {int(self._arr[i]["id"]): i for i in range(len(self._arr))}
+        # The id index is built lazily on first lookup: bulk rewrites
+        # (``update_from_array``) are far more frequent than id lookups.
+        self._index: dict[int, int] | None = None
+
+    @property
+    def _id_index(self) -> dict[int, int]:
+        """``id → row`` index of the current backing array (built on demand)."""
+        index = self._index
+        if index is None:
+            ids = self._arr["id"].tolist()
+            index = dict(zip(ids, range(len(ids)), strict=True))
+            self._index = index
+        return index
 
     # --- чтение ---
 
-    def to_numpy(self) -> np.ndarray:
-        """Свежая копия backing-массива (каждый вызов отдаёт новый массив)."""
-        return self._arr.copy()
+    def to_numpy(self, *, copy: bool = True) -> np.ndarray:
+        """Backing-массив коллекции.
+
+        By default a fresh copy (every call returns a new array the caller
+        may mutate freely). ``copy=False`` returns a read-only view of the
+        current backing array without copying it: for read-only consumers
+        that finish with it before the collection is mutated (the view sees
+        in-place updates and is detached by ``update_from_array``/``add``).
+        """
+        if copy:
+            return self._arr.copy()
+        view = self._arr.view()
+        view.flags.writeable = False
+        return view
 
     def get_by_id(self, object_id: int) -> _RowProxy | None:
         """Прокси на строку по ``id`` (или ``None``, если нет такого id)."""
@@ -200,15 +223,20 @@ class _ArrayCollection:
 
     # --- запись ---
 
-    def update_from_array(self, array: np.ndarray) -> None:
+    def update_from_array(self, array: np.ndarray, *, copy: bool = True) -> None:
         """Полный rebuild коллекции из массива (dtype-strict, порядок сохранён).
 
         Массив И ЕСТЬ данные коллекции — копируем его и пересобираем индекс.
         ``update_from_array`` использует строгую dtype-проверку.
+
+        ``copy=False`` takes ownership of a writeable ``array`` instead of
+        copying it: the caller hands over a private array (typically a fresh
+        ``to_numpy()`` copy it has just edited) and must not touch it
+        afterwards. A read-only array is still copied.
         """
         if array.dtype != self._dtype:
             raise ValueError("Array dtype must match collection dtype")
-        self._arr = array.copy()
+        self._arr = array.copy() if copy or not array.flags.writeable else array
         self._rebuild_index()
 
     def update(self, object_id: int, data: dict | None = None, /, **kwargs: Any) -> None:
@@ -343,6 +371,45 @@ class _ArrayCollection:
 
     def __repr__(self) -> str:
         return f"_ArrayCollection(count={len(self._arr)})"
+
+
+# ---------------------------------------------------------------------------
+# Copy-free access for internal hot paths. The working layer's own steps
+# operate on ``_ArrayCollection``; any other collection object (a duck-typed
+# model passed to a public helper) keeps the plain ``to_numpy()`` /
+# ``update_from_array()`` protocol with the defensive copy.
+# ---------------------------------------------------------------------------
+
+
+def table_view(collection: Any) -> np.ndarray:
+    """Array of ``collection`` for read-only use.
+
+    A read-only view of a working collection (no copy), otherwise
+    ``to_numpy()``. The caller must be done with it before the collection is
+    mutated.
+    """
+    if isinstance(collection, _ArrayCollection):
+        return collection.to_numpy(copy=False)
+    return np.asarray(collection.to_numpy())
+
+
+def table_copy(collection: Any) -> np.ndarray:
+    """Private writable copy of the array of ``collection`` (copied once)."""
+    if isinstance(collection, _ArrayCollection):
+        return collection.to_numpy()
+    return np.array(collection.to_numpy(), copy=True)
+
+
+def table_replace(collection: Any, array: np.ndarray) -> None:
+    """``update_from_array`` that hands a private array over without a copy.
+
+    ``array`` must be a private copy (see :func:`table_copy`) the caller does
+    not use afterwards.
+    """
+    if isinstance(collection, _ArrayCollection):
+        collection.update_from_array(array, copy=False)
+    else:
+        collection.update_from_array(array)
 
 
 # ---------------------------------------------------------------------------

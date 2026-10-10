@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pytest
 from scipy.sparse import csr_matrix
@@ -379,3 +381,40 @@ class TestConvergenceStatus:
         )
         assert result.status == "error"
         assert not result.success
+
+
+# ---------------------------------------------------------------- residual reuse
+class TestResidualReuse:
+    """The accepted Armijo trial's residual is reused, never recomputed at the same x."""
+
+    def test_no_repeated_evaluation_at_the_same_point(self) -> None:
+        a = np.array([[1.0, 0.5], [0.0, 2.0], [1.0, -1.0]])
+        z = np.array([1.0, 4.0, -0.5])
+        calls: list[np.ndarray] = []
+
+        def residual(x: np.ndarray) -> np.ndarray:
+            calls.append(x.copy())
+            # Mildly nonlinear so Newton takes several inner steps.
+            return z - (a @ x + 0.1 * x[0] ** 3)
+
+        def jac(x: np.ndarray) -> csr_matrix:
+            d = a.copy()
+            d[:, 0] += 0.3 * x[0] ** 2
+            return csr_matrix(d)
+
+        result = solve_ipm(
+            x_init=np.array([0.5, 0.5]),
+            residual_fn=residual,
+            jacobian_fn=jac,
+            r_inv_diag=np.ones(3),
+            box_idx=np.array([1]),
+            box_lo=np.array([0.0]),
+            box_hi=np.array([10.0]),
+        )
+        assert result.success
+        assert result.iterations_inner_total > 1
+        repeated = sum(np.array_equal(p, q) for p, q in itertools.pairwise(calls))
+        assert repeated == 0
+        # The reported objective is evaluated at the returned point.
+        r = residual(result.x)
+        assert result.objective_data == 0.5 * float(r @ r)

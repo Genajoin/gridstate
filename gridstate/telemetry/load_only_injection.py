@@ -42,6 +42,7 @@ from gridstate.bounds import resolve_bounds
 from gridstate.constants import FilterFlag
 from gridstate.telemetry._specs import _INJ_MT, _NODE_INJ_MAP
 from gridstate.telemetry.quality import QUALITY_BAD
+from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
@@ -154,7 +155,7 @@ def release_load_only_injections(
         _INJ_MT["P"]: load_only.get("P", frozenset()) & gen_nodes,
         _INJ_MT["Q"]: load_only.get("Q", frozenset()) & gen_nodes,
     }
-    meas = model.measurements.to_numpy().copy()
+    meas = table_copy(model.measurements)
     base = (
         meas["status"].astype(bool) & ~meas["is_pseudo"].astype(bool) & (meas["object_type"] == 0)
     )
@@ -168,7 +169,7 @@ def release_load_only_injections(
         meas["filter_flag"][sel] = int(FilterFlag.LOAD_ONLY_INJECTION)
         released[mt] = {int(x) for x in meas["object_id"][sel]}
     if any(released.values()):
-        model.measurements.update_from_array(meas)
+        table_replace(model.measurements, meas)
     nodes_p = frozenset(released[_INJ_MT["P"]])
     nodes_q = frozenset(released[_INJ_MT["Q"]])
     return {"released_p": len(nodes_p), "released_q": len(nodes_q)}, {"P": nodes_p, "Q": nodes_q}
@@ -270,7 +271,7 @@ def widen_generation_only_injections(
     counts = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
     released = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
     if box or unknown:
-        meas = model.measurements.to_numpy().copy()
+        meas = table_copy(model.measurements)
         sel = (
             meas["status"].astype(bool)
             & ~meas["is_pseudo"].astype(bool)
@@ -294,7 +295,7 @@ def widen_generation_only_injections(
             meas["weight"][k] = 1.0 / meas["variance"][k]
             counts[mt] += 1
         if any(counts.values()) or any(released.values()):
-            model.measurements.update_from_array(meas)
+            table_replace(model.measurements, meas)
     return {
         "widened_p": counts[_INJ_MT["P"]],
         "widened_q": counts[_INJ_MT["Q"]],

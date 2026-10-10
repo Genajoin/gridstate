@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.working import table_copy, table_replace
 from gridstate.z_vector import KIND_VOLTAGE
 
 
@@ -96,8 +97,8 @@ def apply_v_refine_plan(model: Working, plan: VRefinePlan, *, factor: float) -> 
     """
     if not plan.tighten_ids:
         return {"tightened": 0, "conflicting": plan.n_conflicting}
-    m = model.measurements.to_numpy()
+    m = table_copy(model.measurements)
     sel = np.isin(m["id"], list(plan.tighten_ids))
     m["variance"][sel] *= float(factor) ** 2
-    model.measurements.update_from_array(m)
+    table_replace(model.measurements, m)
     return {"tightened": len(plan.tighten_ids), "conflicting": plan.n_conflicting}

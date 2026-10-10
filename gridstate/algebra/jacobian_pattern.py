@@ -234,10 +234,15 @@ class JacobianPattern:
         self._const_slot = slot[var_rows.size :]
         self._const_vals = np.concatenate(const_vals)
         var_slot = slot[: var_rows.size]
+        # Group the variable entries by (family, part, component). part and
+        # component are 0/1, so the scalar key keeps the lexicographic order of
+        # the triples; the stable sort keeps the entry order inside a group.
+        group_key = src[:, 0] * 4 + src[:, 1] * 2 + src[:, 2]
+        by_group = np.argsort(group_key, kind="stable")
+        bounds = np.flatnonzero(np.diff(group_key[by_group])) + 1
         self._groups: list[tuple[int, int, int, np.ndarray, np.ndarray]] = []
-        for key in np.unique(src[:, :3], axis=0):
-            sel = np.all(src[:, :3] == key, axis=1)
-            family, part, component = (int(x) for x in key)
+        for sel in np.split(by_group, bounds) if by_group.size else []:
+            family, part, component = (int(x) for x in src[sel[0], :3])
             self._groups.append((family, part, component, var_slot[sel], src[sel, 3]))
 
     def evaluate(self, v: np.ndarray, delta: np.ndarray) -> csr_matrix:

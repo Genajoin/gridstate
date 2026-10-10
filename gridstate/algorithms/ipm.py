@@ -265,7 +265,10 @@ def solve_ipm(
     Args:
         x_init: начальное приближение ``x ∈ ℝⁿ``. Если оно вне боксов,
             будет спроецировано в interior с зазором ``box_eps``.
-        residual_fn: ``x → r = z − h(x)`` (длины m, в p.u.).
+        residual_fn: ``x → r = z − h(x)`` (длины m, в p.u.). Must be a pure
+            function of ``x``: the residual of the accepted Armijo trial is
+            reused as ``r`` of the next iteration and as the final residual,
+            without calling ``residual_fn`` again at the same point.
         jacobian_fn: ``x → H = ∂h/∂x`` (m×n, sparse). **Не** ``∂r/∂x`` —
             то же соглашение что в ``solve_wls`` и стандартных учебниках
             SE (Schweppe/Wildes, Abur). Знак учитывается внутри:
@@ -373,6 +376,10 @@ def solve_ipm(
 
     outer_iter = 0
     schedule_done = False
+    # Residual at the current x: the accepted Armijo trial already evaluated
+    # it, so the next iteration (and the final objective) reuse it instead of
+    # calling residual_fn again at the same point.
+    r_at_x: np.ndarray | None = None
     for outer_iter in range(outer_max):
         any_inner_step = False  # Lazy outer: если ни одного шага → break.
         # inner вышел по толерансу (grad/step < inner_tol) — стационарная
@@ -390,7 +397,9 @@ def solve_ipm(
         reweighter.reset_adaptive()
         # Inner Newton сходится к min Φ(·; μ).
         for inner in range(inner_max):
-            r = residual_fn(x)
+            if r_at_x is None:
+                r_at_x = residual_fn(x)
+            r = r_at_x
             # SHGM-IRLS: после warmup-итераций пересчитываем huber-веса по
             # текущему residual. Применяется до построения G/grad, влияет
             # на R_inv. См. ``solve_wls`` для деталей механики.
@@ -474,6 +483,7 @@ def solve_ipm(
             slope = float(grad @ dx)
             accepted = False
             x_trial = x  # default: без шага
+            r_accepted = r
             for _ in range(armijo_max):
                 x_candidate = x + alpha * dx
                 r_trial = residual_fn(x_candidate)
@@ -488,6 +498,7 @@ def solve_ipm(
                 if math.isfinite(phi_trial) and phi_trial <= phi_cur + armijo_c * alpha * slope:
                     accepted = True
                     x_trial = x_candidate
+                    r_accepted = r_trial
                     break
                 alpha *= armijo_backtrack
                 if alpha < 1e-15:
@@ -502,6 +513,7 @@ def solve_ipm(
                 break
 
             x = x_trial
+            r_at_x = r_accepted
             any_inner_step = True
 
         if not has_box:
@@ -525,7 +537,7 @@ def solve_ipm(
         schedule_done = mu <= mu_min
 
     # Финальная невязка/objective
-    r_final = residual_fn(x)
+    r_final = r_at_x if r_at_x is not None else residual_fn(x)
     obj_data = 0.5 * float(r_final @ (R_inv @ r_final))
 
     kkt = grad_inf < max(1e-2, inner_tol * 100)

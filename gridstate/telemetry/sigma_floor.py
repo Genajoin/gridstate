@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gridstate.constants import MeasurementObjectType, MeasurementType
+from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
@@ -54,7 +55,7 @@ def apply_flow_sigma_floor(
         ``{"checked": N, "floored": N}`` — сколько real-flow мер проверено
         и у скольких variance поднята до floor².
     """
-    meas_arr = model.measurements.to_numpy().copy()
+    meas_arr = table_copy(model.measurements)
     nodes_arr = model.nodes.to_numpy()
     branches_arr = model.branches.to_numpy()
     stats = _flow_sigma_floor_on_arrays(
@@ -67,7 +68,7 @@ def apply_flow_sigma_floor(
         kv_frac=float(kv_frac),
         current_ka=float(current_ka),
     )
-    model.measurements.update_from_array(meas_arr)
+    table_replace(model.measurements, meas_arr)
     return stats
 
 

@@ -36,6 +36,7 @@ from scipy.sparse import csr_matrix, diags
 
 from gridstate.constants import MeasurementQuality
 from gridstate.utils import id_to_pos_map
+from gridstate.working import table_view
 
 
 if TYPE_CHECKING:
@@ -136,7 +137,7 @@ def build_z_and_r(
         R: (m × m) sparse — диагональ ``σ² = variance`` (в p.u.²);
         meas_index: метаданные для последующего h(x).
     """
-    arr = measurements.to_numpy()
+    arr = table_view(measurements)
     base_mva = float(network_pu.base_mva)
     ids = arr["id"].astype(np.int64)
     kind = arr["measurement_type"].astype(np.int64)
@@ -198,7 +199,7 @@ def build_z_and_r(
             )
         found = branch_pos >= 0
         b_idx, branch_pos = b_idx[found], branch_pos[found]
-        branches_arr = model.branches.to_numpy()
+        branches_arr = table_view(model.branches)
         rows = branches_arr[_lookup(id_to_pos_map(branches_arr["id"]), obj_id[b_idx])]
         b_side = _branch_sides(arr[b_idx], rows, kind[b_idx], ids[b_idx])
         for i in b_idx[b_side == SIDE_NONE]:

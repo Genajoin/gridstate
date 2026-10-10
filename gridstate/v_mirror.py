@@ -47,6 +47,7 @@ import numpy as np
 
 from gridstate.constants import BranchType
 from gridstate.utils import branch_endpoints_map
+from gridstate.working import table_copy, table_replace
 from gridstate.z_vector import KIND_VOLTAGE, OBJ_BRANCH, OBJ_NODE
 
 
@@ -355,7 +356,7 @@ def apply_v_mirror_plan(model: Working, plan: VMirrorPlan) -> dict:
     if not plan.new_values:
         return {"clusters": 0, "nodes": 0}
     new_by_node = dict(plan.new_values)
-    m = model.measurements.to_numpy()
+    m = table_copy(model.measurements)
     sel = (
         (m["measurement_type"] == KIND_VOLTAGE)
         & (m["object_type"] == OBJ_NODE)
@@ -368,5 +369,5 @@ def apply_v_mirror_plan(model: Working, plan: VMirrorPlan) -> dict:
         if nid in new_by_node:
             m["value"][j] = new_by_node[nid]
             n += 1
-    model.measurements.update_from_array(m)
+    table_replace(model.measurements, m)
     return {"clusters": plan.n_clusters, "nodes": n}

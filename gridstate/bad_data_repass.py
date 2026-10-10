@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gridstate.utils import branch_endpoints_map
+from gridstate.working import table_copy, table_replace
 from gridstate.z_vector import (
     KIND_CURRENT,
     KIND_POWER_INJECTION_P,
@@ -218,7 +219,7 @@ def apply_bad_data_plan(model: Working, plan: BadDataPlan, *, damp_factor: float
     damp → ``variance := variance · damp_factor²`` (σ × damp_factor).
     Веса солвер строит из variance (см. ``z_vector.build_z_and_r``).
     """
-    m = model.measurements.to_numpy()
+    m = table_copy(model.measurements)
     if plan.flip_ids:
         sel = np.isin(m["id"], list(plan.flip_ids))
         m["value"][sel] *= -1.0
@@ -228,7 +229,7 @@ def apply_bad_data_plan(model: Working, plan: BadDataPlan, *, damp_factor: float
     if plan.damp_ids:
         sel = np.isin(m["id"], list(plan.damp_ids))
         m["variance"][sel] *= float(damp_factor) ** 2
-    model.measurements.update_from_array(m)
+    table_replace(model.measurements, m)
     return {
         "flips": len(plan.flip_ids),
         "rejects": len(plan.reject_ids),

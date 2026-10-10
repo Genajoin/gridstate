@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.working import table_copy, table_replace
+
 
 if TYPE_CHECKING:
     from gridstate.working import Working
@@ -33,14 +35,14 @@ def deactivate_orphan_measurements(model: Working) -> dict[str, int]:
         ``{"branch_meas": N, "node_meas": N, "gen_meas": N,
         "orphan_object_id": N}``.
     """
-    meas_arr = model.measurements.to_numpy().copy()
+    meas_arr = table_copy(model.measurements)
     stats = _deactivate_orphan_on_arrays(
         meas_arr,
         model.nodes.to_numpy(),
         model.branches.to_numpy(),
         model.generators.to_numpy(),
     )
-    model.measurements.update_from_array(meas_arr)
+    table_replace(model.measurements, meas_arr)
     return stats
 
 
