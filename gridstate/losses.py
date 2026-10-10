@@ -1,91 +1,82 @@
-"""Расчёт системных потерь активной/реактивной мощности после SE.
+"""System active/reactive power loss report computed from an estimated state.
 
-Модуль *диагностический*, в основной pipeline (``estimate``) не
-подключается. Используется для сверки SE с эталонными отчётами и
-для системных отчётов о потерях.
+The module is *diagnostic*: it is not part of the main pipeline (``estimate``).
+It is used for system loss reports and for cross-checking the estimated state.
 
-Конвенции:
+Conventions:
 
-* В ``Working`` (конвенция входного формата) ``branch.susceptance`` —
-  это **полная** ёмкостная проводимость ветви B (См). В Π-схеме она
-  делится пополам: B/2 в шунт «от» и B/2 в шунт «до». То же для
-  ``branch.conductance`` (активные потери на корону).
-* ``branch.tap_ratio`` хранится как **physical** turn ratio HV:LV (например
-  18.58 для 110/6 кВ через коэффициент трансформации, 2.22 для 500/220).
-  Внутри SE он нормируется к p.u.: ``K_pu = K_phys / (V_base_from /
-  V_base_to)`` (см. ``gridstate/units.py``). Off-nominal-tap (±10%) даёт
-  ``K_pu ∈ [0.9..1.1]``. Для расчёта потерь работаем в p.u.,
-  переиспользуя ``model_to_pu`` + ``build_ybus`` (та же y-bus, что и SE).
-* У трансформатора во входном формате *всё* g+jb обычно вынесено в сторону "от"
-  через ``conductance_from`` / ``susceptance_from`` (``branch_g/b``
-  остаётся нулевым).
-* Узловые шунты — ``node.shunt_g + j·node.shunt_b`` (См). Реакторы (ШР)
-  через ``apply_reactors_to_node_shunt`` уже сложены в ``node.shunt_b``,
-  поэтому отдельно не суммируются.
+* ``branch.susceptance`` in ``Working`` is the **full** line-charging
+  susceptance B (S). In the Pi-model it is split in half: B/2 into the "from"
+  shunt and B/2 into the "to" shunt. The same holds for ``branch.conductance``
+  (corona active losses).
+* ``branch.tap_ratio`` is stored as the **physical** HV:LV turn ratio (e.g.
+  18.58 for 110/6 kV, 2.22 for 500/220). Inside SE it is normalised to p.u.:
+  ``K_pu = K_phys / (V_base_from / V_base_to)`` (see ``gridstate/units.py``).
+  An off-nominal tap (+-10 %) gives ``K_pu`` in ``[0.9..1.1]``. Losses are
+  computed in p.u. by reusing ``model_to_pu`` + ``build_ybus`` (the same Y-bus
+  as SE).
+* For a transformer *all* of g+jb is usually placed on the "from" side via
+  ``conductance_from`` / ``susceptance_from`` (``branch_g/b`` stay zero).
+* Node shunts are ``node.shunt_g + j*node.shunt_b`` (S). Reactors folded into
+  the node shunt by ``apply_reactors_to_node_shunt`` are already part of
+  ``node.shunt_b`` and are not summed separately.
 
-Формулы (на одну ветвь, всё в p.u. после ``model_to_pu``):
+Formulas (per branch, everything in p.u. after ``model_to_pu``):
 
 .. code::
 
-    V_f, V_t — комплексные напряжения узлов (V_pu·exp(jδ));
-    t     = tap_ratio_pu · exp(j·phase_shift);
-    y_ser = |t|²/(r + j·x);   # сопротивление за идеальным трансформатором
+    V_f, V_t - complex node voltages (V_pu * exp(j*delta));
+    t     = tap_ratio_pu * exp(j*phase_shift);
+    y_ser = |t|^2 / (r + j*x);   # impedance behind the ideal transformer
 
-    # Поток на стороне «от»/«до» — те же формулы, что в build_ybus:
-    S_from = V_f · conj(Y_ff · V_f + Y_ft · V_t);
-    S_to   = V_t · conj(Y_tf · V_f + Y_tt · V_t);
+    # Power at the "from"/"to" side - same formulas as in build_ybus:
+    S_from = V_f * conj(Y_ff * V_f + Y_ft * V_t);
+    S_to   = V_t * conj(Y_tf * V_f + Y_tt * V_t);
 
-    # Серийные потери (R+jX часть, без шунта Π-схемы):
-    I_ser = (V_f / t  − V_t) · y_ser;
-    S_series = |I_ser|² · (r + j·x)/|t|²;
+    # Series losses (R + jX part, without the Pi-model shunt):
+    I_ser = (V_f / t - V_t) * y_ser;
+    S_series = |I_ser|^2 * (r + j*x) / |t|^2;
 
-    # Общие потери ветви (включая шунт):
+    # Total branch losses (including the shunts):
     S_loss_total = S_from + S_to;
 
-    # Шунтовая часть — по разности:
-    S_loss_shunt = S_loss_total − S_series;
+    # Shunt part, by difference:
+    S_loss_shunt = S_loss_total - S_series;
 
-  Узловой шунт (p.u.):
+Node shunt (p.u.):
 
 .. code::
 
-    S_shunt_node = |V|² · conj(g_sh + j·b_sh)
+    S_shunt_node = |V|^2 * conj(g_sh + j*b_sh)
 
-Все ``S`` затем умножаются на ``BASE_MVA=100`` для перевода в МВт/МВАр.
+All ``S`` are multiplied by ``BASE_MVA=100`` to get MW / Mvar.
 
-Знак Q:
+Sign convention. The library uses the standard admittance convention
+everywhere: ``Y = g + jb`` with ``b > 0`` for a capacitive element (capacitor
+bank, line charging) and ``b < 0`` for an inductive one (shunt reactor). The
+reported ``S = V * conj(I) = |V|^2 * conj(Y)`` is the power *absorbed* by the
+element, hence:
 
-* в r (active): всегда положительные (рассеяние);
-* в x (series-reactive): положительные на индуктивной серии (x>0);
-* в b (shunt-capacitive ВЛ): в нашей storage ``b < 0`` (конвенция
-  входного формата), и формула ``S = V·conj(I) = |V|²·conj(Y)`` даёт
-  ``Im(S) = -|V|²·b > 0`` — это «потребление» в storage-конвенции, но
-  физически зарядная B ВЛ **выдаёт** Q. Поэтому Q-компоненты ШУНТОВ
-  (узловых и ветвевых) в отчёте **отрицаются** (``_SHUNT_Q_SIGN = -1``),
-  чтобы совпадать по знаку с dq эталонной SE (ёмкостная выдача < 0, индуктивный
-  ШР > 0) и быть физически осмысленными. Series-Q (R/X) НЕ трогается
-  (индуктивное поглощение > 0 в обеих конвенциях). Это правка ТОЛЬКО
-  отчётности — SE/Y-bus используют storage-конвенцию без изменений.
+* P of any element is positive (dissipation, ``g > 0``);
+* series Q is positive for an inductive series branch (``x > 0``);
+* shunt Q, node and branch alike, is ``-|V|^2 * b``: negative for capacitive
+  elements (they *generate* Q, i.e. negative reactive "losses"), positive for
+  reactors (they absorb Q).
 
-Для эталонного отчёта:
+No sign flip is applied anywhere. Consequently ``total_p_loss_mw`` and
+``total_q_loss_mvar`` equal the sum of the complex nodal injections
+``sum_i V_i * conj((Y_bus V)_i)`` of the solved state (Kirchhoff balance).
+Input data that stores susceptance with the opposite sign must be converted by
+the caller before it reaches ``Working``.
 
-* ``area.dp`` ≡ ``dp_line + dp_tran + dp_shunt + dp_xx`` (проверено
-  численно, расхождение порядка 1e-13);
-* ``dp_line/dp_tran`` — активные потери в R соответственно ВЛ и трафо;
-* ``dp_shunt`` — потери в шунтах **узлов** (``node.psh``);
-* ``dp_xx`` — потери холостого хода трансформаторов (паспортные G_xx
-  трафо, рассеяние в стали); в Π-схеме это активная компонента шунта,
-  сидящего на стороне "от" трансформатора.
-* ``dp_nag`` — НЕ потери в нагрузке, а часть генерации района; не
-  входит в баланс потерь.
+Breakdown identities (``SystemLosses`` fields):
 
-Для реактивных компонент аналогично:
-
-* ``dq`` ≡ ``dq_line + dq_tran + dq_shunt + dq_xx``;
-* ``dq_line/dq_tran`` — потребление Q в X серии ВЛ/трафо (положительные);
-* ``dq_shunt`` — Q-потребление/генерация в узловых шунтах
-  (положительное у индуктивных ШР, отрицательное у конденсаторов);
-* ``dq_xx`` — Q-генерация зарядной B ВЛ (отрицательная, выдача в сеть).
+* ``total_p_loss_mw = p_line_series + p_trafo_series + p_branch_shunt
+  + p_node_shunt``;
+* ``total_q_loss_mvar`` is the same sum for Q;
+* ``p_branch_shunt`` / ``q_branch_shunt`` -- Pi-model shunts of all branches
+  (no-load losses and magnetising Q of transformers, line charging);
+* ``p_node_shunt`` / ``q_node_shunt`` -- node shunts (reactors, capacitors).
 """
 
 from __future__ import annotations
@@ -102,15 +93,6 @@ from gridstate.ybus import build_ybus, series_admittance
 
 if TYPE_CHECKING:
     from gridstate.working import Working
-
-
-# Знак Q-шунта в отчёте о потерях. Наша storage-susceptance инвертирована
-# относительно физической (b<0 ёмкостный, b>0 индуктивный — конвенция
-# входного формата), поэтому ``Im(S)=−|V|²·b`` даёт Q-шунт со знаком, обратным
-# dq эталонной SE и физическому смыслу «потерь» (выдача Q ёмкостью = отрицательные
-# потери). Отрицаем, чтобы отчёт совпадал по знаку с эталонной SE и был физически
-# осмыслен. НЕ влияет на SE/Y-bus — только на compute_system_losses.
-_SHUNT_Q_SIGN = -1.0
 
 
 @dataclass
@@ -238,13 +220,9 @@ def compute_system_losses(
     y_sh = network_pu.bus_g_shunt + 1j * network_pu.bus_b_shunt  # p.u.
     s_node_shunt_pu = (v_pu_arr**2) * np.conj(y_sh)
     p_node_shunt = float(s_node_shunt_pu.real.sum()) * BASE_MVA
-    # Q-шунт — в ФИЗИЧЕСКОЙ конвенции потерь (= dq эталонной SE): ёмкостный
-    # шунт (БК) ВЫДАЁТ Q → отрицательные потери; индуктивный (ШР) ПОГЛОЩАЕТ
-    # → положительные. Наша storage susceptance инвертирована (b<0 ёмкостный,
-    # b>0 индуктивный — конвенция входного формата), формула ``Im(S)=−|V|²·b`` даёт
-    # знак, обратный физическому, поэтому отрицаем (``_SHUNT_Q_SIGN``). См.
-    # docstring модуля. SE/Y-bus НЕ затронуты — это только отчётность.
-    q_node_shunt = _SHUNT_Q_SIGN * float(s_node_shunt_pu.imag.sum()) * BASE_MVA
+    # Standard convention (b > 0 capacitive): Im(S) = -|V|^2 * b is negative for a
+    # capacitor (it generates Q) and positive for a reactor (it absorbs Q).
+    q_node_shunt = float(s_node_shunt_pu.imag.sum()) * BASE_MVA
 
     # ---- Ветви (vectorized) ----
     if n_branch == 0:
@@ -300,10 +278,8 @@ def compute_system_losses(
     p_ser_mw = s_series.real * BASE_MVA
     q_ser_mvar = s_series.imag * BASE_MVA
     p_sh_mw = s_shunt.real * BASE_MVA
-    # Q-шунт в физической конвенции потерь (зарядная B ВЛ ВЫДАЁТ Q →
-    # отрицательно, как ``dq_xx`` эталонной SE); отрицаем из-за инвертированной
-    # storage-susceptance (см. docstring + _SHUNT_Q_SIGN).
-    q_sh_mvar = _SHUNT_Q_SIGN * s_shunt.imag * BASE_MVA
+    # Line charging (b > 0) generates Q, so the branch shunt Q is negative.
+    q_sh_mvar = s_shunt.imag * BASE_MVA
 
     p_line_ser = float(p_ser_mw[~is_trafo].sum())
     q_line_ser = float(q_ser_mvar[~is_trafo].sum())
