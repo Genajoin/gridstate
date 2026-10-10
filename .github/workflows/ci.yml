@@ -63,9 +63,12 @@ jobs:
     name: Test (CHOLMOD, Python 3.12)
     runs-on: ubuntu-latest
     # The `test` matrix installs only `.[test]`, so the KKT solver falls back
-    # to scipy there. This job installs the `fast` extra (cvxopt) and runs the
-    # whole suite, including the golden regression, on the CHOLMOD path that
-    # kkt_solver="auto" selects in production installs.
+    # to scipy there (and the Gram matrix is built with scipy, no numba). This
+    # job installs the `fast` (cvxopt) and `numba` extras and runs the whole
+    # suite, including the golden regression, on the CHOLMOD path that
+    # kkt_solver="auto" selects in production installs, with the numba
+    # fixed-pattern Gram assembly; the KKT and golden tests then run once more
+    # with the numba path switched off (CHOLMOD with the scipy Gram matrix).
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,10 +76,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[test,fast]"
-      - name: Require the CHOLMOD backend
+      - run: pip install -e ".[test,fast,numba]"
+      - name: Require the CHOLMOD backend and the numba Gram kernel
         run: |
           python -c "from gridstate.algorithms.kkt_solver import resolve_backend; b = resolve_backend('auto'); print('kkt backend:', b); assert b == 'cholmod', b"
+          python -c "from gridstate.algorithms.kkt_solver import numba_gram_available; assert numba_gram_available(), 'numba Gram kernel unavailable or disagrees with scipy'"
       - name: Run tests (no cvxopt-related skips allowed)
         shell: bash  # explicit shell = -eo pipefail, so a pytest failure is not masked by tee
         run: |
@@ -85,6 +89,10 @@ jobs:
             echo "::error::cvxopt-dependent tests were skipped on the CHOLMOD job"
             exit 1
           fi
+      - name: Run KKT and golden tests with the numba Gram path off
+        env:
+          GRIDSTATE_NUMBA: "0"
+        run: pytest tests/test_kkt_solver.py tests/test_gram_numba.py tests/test_golden.py -q
 
   build:
     name: Build (sdist + wheel)
