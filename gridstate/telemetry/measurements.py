@@ -1,6 +1,6 @@
 """Слияние/деактивация дубль-измерений z-вектора (F-step эталонной OC).
 
-Выделено из telemetry/topology.py (раскол по концернам).
+Split out of the former monolithic telemetry module.
 """
 
 from __future__ import annotations

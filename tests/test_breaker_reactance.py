@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from gridstate.telemetry import normalize_breaker_reactance
-from gridstate.telemetry.topology import _BREAKER_X_SENTINEL_OHM
+from gridstate.telemetry.shunts import BREAKER_X_SENTINEL_OHM
 from gridstate.units import BASE_MVA
 
 
@@ -48,7 +48,7 @@ def _toy_model_with_breakers():
             }
         )
 
-    S = _BREAKER_X_SENTINEL_OHM
+    S = BREAKER_X_SENTINEL_OHM
     _br(100, 1, 2, 0.0, S)  # LV-сентинел → нормализуется
     _br(200, 3, 4, 0.0, S)  # HV-сентинел → нормализуется
     _br(300, 2, 3, 6.05, 30.25)  # реальная ВЛ → НЕ трогаем (R>0)
@@ -90,7 +90,7 @@ def test_normalize_breaker_reactance_synthetic():
     assert float(by_id[300]["reactance"]) == pytest.approx(30.25)
 
     # Сентинел без Vn — оставлен как есть.
-    assert float(by_id[400]["reactance"]) == pytest.approx(_BREAKER_X_SENTINEL_OHM)
+    assert float(by_id[400]["reactance"]) == pytest.approx(BREAKER_X_SENTINEL_OHM)
 
     # R=0 у нормализованных сохранён.
     assert float(by_id[100]["resistance"]) == 0.0

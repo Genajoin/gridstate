@@ -24,8 +24,6 @@ if TYPE_CHECKING:
 # напряжения узла. Константа должна совпадать с sentinel-X входного формата —
 # имя публичное: производитель данных сверяет свою конвенцию кросс-тестом.
 BREAKER_X_SENTINEL_OHM = 1.0
-# Прежнее приватное имя — обратная совместимость импортов (telemetry.topology).
-_BREAKER_X_SENTINEL_OHM = BREAKER_X_SENTINEL_OHM
 
 
 def apply_reactors_to_node_shunt(model: Working) -> dict[str, int | float]:
