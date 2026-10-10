@@ -123,9 +123,7 @@ def test_checked_factor_rejects_malformed_columns() -> None:
     )
     assert good is not None
     # diagonal not first
-    assert (
-        nr._checked_factor(np.array([0, 2, 3]), np.array([1, 0, 1]), np.ones(3), perm) is None
-    )
+    assert nr._checked_factor(np.array([0, 2, 3]), np.array([1, 0, 1]), np.ones(3), perm) is None
     # empty column
     assert nr._checked_factor(np.array([0, 2, 2]), np.array([0, 1]), np.ones(2), perm) is None
 
@@ -204,9 +202,7 @@ def test_missing_kernels_use_solve(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_singular_gain_gives_inf(python_kernels) -> None:
     H = csr_matrix((6, 3))  # no information at all
-    out = nr.compute_normalized_residuals(
-        np.ones(6), H, np.ones(6), method="selected_inversion"
-    )
+    out = nr.compute_normalized_residuals(np.ones(6), H, np.ones(6), method="selected_inversion")
     assert np.isinf(out.rn).all()
     assert np.isnan(out.omega_ratio).all()
 
