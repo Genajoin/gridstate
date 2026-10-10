@@ -9,7 +9,7 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
-## Unreleased
+## v2.0.0 (2026-10-10)
 
 ### Breaking changes
 
