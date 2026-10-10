@@ -191,16 +191,11 @@ def _slack_nodes_to_demote(nodes_arr: Any, branches_arr: Any) -> list[int]:
     return to_demote
 
 
-def _gen_nodes_to_promote(
-    nodes_arr: Any,
-    generators_arr: Any,
-    node_load_props: dict[int, dict] | None = None,
-) -> list[int]:
-    """Узлы c active-генератором (и vzd>0 при наличии props) → план PQ→PV.
+def _gen_nodes_to_promote(nodes_arr: Any, generators_arr: Any) -> list[int]:
+    """Узлы c active-генератором → план PQ→PV.
 
-    Читает ``generator.{status,node_id}`` и ``node.{id,status,node_type}``.
-    С ``node_load_props`` promote только узлы с ``vzd>0`` И ``exist_gen=True``;
-    без props — любой PQ-узел с active-генератором.
+    Читает ``generator.{status,node_id}`` и ``node.{id,status,node_type}``:
+    любой PQ-узел с active-генератором.
     """
     has_active_gen: set[int] = set()
     for r in generators_arr:
@@ -214,12 +209,6 @@ def _gen_nodes_to_promote(
         nid = int(r["id"])
         if nid not in has_active_gen:
             continue
-        if node_load_props is not None:
-            prop = node_load_props.get(nid, {})
-            vzd = float(prop.get("vzd", 0.0))
-            exist_gen = bool(prop.get("exist_gen", False))
-            if not (exist_gen and vzd > 0):
-                continue  # узел c gen, но без vzd → PQ
         # SLACK не понижаем до PV; только PQ → PV.
         if int(r["node_type"]) == _PQ_NODE_TYPE:
             to_promote.append(nid)
@@ -352,25 +341,15 @@ def refine_slack_to_one(model: Any) -> dict[str, int]:
     return {"demoted": len(to_demote)}
 
 
-def refine_node_types_from_generators(
-    model: Any,
-    *,
-    node_load_props: dict[int, dict] | None = None,
-) -> dict[str, int]:
+def refine_node_types_from_generators(model: Any) -> dict[str, int]:
     """Пометить узлы с активными генераторами как PV (``node_type=1``).
 
     Узел, у которого все генераторы выключены, из PV возвращается в PQ —
     иначе тип зависел бы от того, выключены машины во входе или каскадом
     пайплайна после первого прохода.
 
-    Входной формат **не классифицирует PV-узлы** — все кроме SLACK помечены PQ.
-    JSON-loader использует tip входного формата (``tip=2/3/4 → PV``), эквивалент
-    ``exist_gen AND vzd>0``. Эта функция воспроизводит ту же семантику.
-
-    Args:
-        node_load_props: если передано — мап ``{node_id: {"vzd": float,
-            "exist_gen": bool}}``; promote только узлы с ``vzd>0`` И
-            ``exist_gen=True``. Без props — fallback: любой узел c active-генератором → PV.
+    Входной формат **не классифицирует PV-узлы** — все кроме SLACK помечены PQ;
+    PV-узлом становится любой PQ-узел с активным генератором.
 
     Применять **после** ``refine_slack_to_one``.
 
@@ -380,7 +359,7 @@ def refine_node_types_from_generators(
     nodes_arr = model.nodes.to_numpy()
     gens_arr = model.generators.to_numpy()
     to_demote = _gen_nodes_to_demote(nodes_arr, gens_arr)
-    to_promote = _gen_nodes_to_promote(nodes_arr, gens_arr, node_load_props)
+    to_promote = _gen_nodes_to_promote(nodes_arr, gens_arr)
     for nid in to_demote:
         model.nodes.update(nid, {"node_type": _PQ_NODE_TYPE})
     for nid in to_promote:

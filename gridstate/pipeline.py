@@ -468,16 +468,6 @@ class PipelineConfig:
         "balance row with variance median(σ²_data) / factor. The box carries the node's "
         "freedom; a loose balance only hides data conflicts as an imbalance. 0 — off.",
     )
-    ipm_bound_relax: float = _param(
-        0.0,
-        group=_G_IPM,
-        label="Релакс границ box",
-        control="number",
-        min=0.0,
-        max=1.0,
-        depends={"algorithm": "ipm"},
-        help="Расширяет [lo,hi] на долю (hi-lo).",
-    )
     ipm_prior_sigma2_bus_equiv_pu: float = _param(
         0.01,
         group=_G_IPM,
@@ -487,19 +477,6 @@ class PipelineConfig:
         max=10.0,
         depends={"algorithm": "ipm"},
         help="default 0.01 p.u.².",
-    )
-    ipm_transit_balance_sigma2_pu: float = _param(
-        0.0,
-        group=_G_IPM,
-        label="σ² баланса транзита",
-        control="number",
-        min=0.0,
-        max=1.0,
-        depends={"algorithm": "ipm"},
-        help="σ² (p.u.²) balance-строк транзитных узлов (exist_load=0 и exist_gen=0). "
-        "0 = OFF (мягкий баланс как у всех узлов; остаточная инжекция транзита "
-        "материализуется reconcile-пассом в псевдонагрузку). >0 — жёсткий "
-        "zero-injection virtual-measurement, напр. 1e-8 (σ≈0.01 МВт).",
     )
 
     # --- Пост-обработка (Линия C) ---
@@ -807,9 +784,7 @@ def _effective_huber_c(cfg: PipelineConfig) -> float:
 def _ipm_kwargs(cfg: PipelineConfig) -> dict:
     return {
         "balance_weight_factor": cfg.ipm_balance_weight_factor,
-        "bound_relax": cfg.ipm_bound_relax,
         "prior_sigma2_bus_equiv_pu": cfg.ipm_prior_sigma2_bus_equiv_pu,
-        "transit_balance_sigma2_pu": cfg.ipm_transit_balance_sigma2_pu,
         "boxed_balance_weight_factor": cfg.ipm_boxed_balance_weight_factor,
     }
 
