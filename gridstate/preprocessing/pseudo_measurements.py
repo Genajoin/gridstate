@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gridstate._arrays import meas_mask
-from gridstate.bounds import resolve_bounds
+from gridstate.bounds import bounds_unset, declared_box
 from gridstate.constants import NodeType
 from gridstate.measurement_ids import PSEUDO_ID_BASE, IdAllocator
 from gridstate.preprocessing._scan import scan_node_meas_by_kind
@@ -76,8 +76,9 @@ class PseudoMeasConfig:
 
 def _generation_range_variance(row: np.void, lo_col: str, hi_col: str, fallback: float) -> float:
     """Squared half-width of the node generation range; ``fallback`` if unset."""
-    lo, hi = resolve_bounds(float(row[lo_col]), float(row[hi_col]))
-    if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+    box = declared_box(float(row[lo_col]), float(row[hi_col]))
+    if box is not None:
+        lo, hi = box
         return max(fallback, (0.5 * (hi - lo)) ** 2)
     return fallback * 100.0
 
@@ -183,8 +184,8 @@ def _unknown_load_determined_nodes(
             ("load_p_min", "load_p_max", "load_p", flow_p, for_p),
             ("load_q_min", "load_q_max", "load_q", covered_q, for_q),
         ):
-            lo, hi = resolve_bounds(float(r[lo_col]), float(r[hi_col]))
-            if np.isfinite(lo) or np.isfinite(hi) or abs(float(r[val_col])) > 1e-6:
+            unset = bounds_unset(float(r[lo_col]), float(r[hi_col]))
+            if not unset or abs(float(r[val_col])) > 1e-6:
                 continue
             if all(b in covered for b in branches):
                 out.add(nid)

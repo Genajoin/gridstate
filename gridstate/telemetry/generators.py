@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from gridstate._arrays import id_value_map
-from gridstate.bounds import is_sentinel
+from gridstate.bounds import SENTINEL_VALUE, is_sentinel
 from gridstate.utils import id_to_pos_map
 
 
@@ -166,14 +166,14 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
         nodes_arr[i]["generation_p"] = agg["p"]
         nodes_arr[i]["generation_q"] = agg["q"]
         if nid in p_unknown:
-            nodes_arr[i]["generation_p_min"] = -9999.0
-            nodes_arr[i]["generation_p_max"] = 9999.0
+            nodes_arr[i]["generation_p_min"] = -SENTINEL_VALUE
+            nodes_arr[i]["generation_p_max"] = SENTINEL_VALUE
         else:
             nodes_arr[i]["generation_p_min"] = agg["p_min"]
             nodes_arr[i]["generation_p_max"] = agg["p_max"]
         if nid in q_unknown:
-            nodes_arr[i]["generation_q_min"] = -9999.0
-            nodes_arr[i]["generation_q_max"] = 9999.0
+            nodes_arr[i]["generation_q_min"] = -SENTINEL_VALUE
+            nodes_arr[i]["generation_q_max"] = SENTINEL_VALUE
         else:
             nodes_arr[i]["generation_q_min"] = agg["q_min"]
             nodes_arr[i]["generation_q_max"] = agg["q_max"]

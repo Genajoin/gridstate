@@ -139,6 +139,9 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
         raise ValueError("В Working нет slack-узла (node_type=SLACK). SE требует ровно один slack.")
     if slack_positions.size > 1:
         # Если несколько — берём с минимальным balance_priority (т.е. первичный).
+        # NOTE: this rule differs from topology._slack_nodes_to_demote (which
+        # skips balance_priority <= 0 and slacks without an active branch, and
+        # breaks ties by the smaller id; here ties go to the first position).
         priorities = active_nodes["balance_priority"][slack_positions]
         slack_idx = int(slack_positions[int(np.argmin(priorities))])
     else:

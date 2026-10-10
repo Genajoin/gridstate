@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from gridstate.bounds import is_reactive_only_generation, resolve_bounds
+from gridstate.bounds import declared_box, is_reactive_only_generation, resolve_bounds
 from gridstate.state import StateLayout
 from gridstate.units import BASE_MVA
 from gridstate.utils import id_to_pos_map
@@ -290,10 +290,13 @@ def _boxed_balance_masks(
         for axis, sfx in ((0, "p"), (1, "q")):
             pairs = []
             if has_gen and not (sfx == "p" and reactive_only):
-                pairs.append(resolve_bounds(r[f"generation_{sfx}_min"], r[f"generation_{sfx}_max"]))
+                pairs.append((r[f"generation_{sfx}_min"], r[f"generation_{sfx}_max"]))
             if has_load:
-                pairs.append(resolve_bounds(r[f"load_{sfx}_min"], r[f"load_{sfx}_max"]))
-            boxed[axis, k] = all(np.isfinite(lo) and np.isfinite(hi) for lo, hi in pairs)
+                pairs.append((r[f"load_{sfx}_min"], r[f"load_{sfx}_max"]))
+            # Both sides set; a point box counts (no hi > lo requirement here).
+            boxed[axis, k] = all(
+                declared_box(lo, hi, allow_point=True) is not None for lo, hi in pairs
+            )
     return boxed[0], boxed[1]
 
 

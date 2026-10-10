@@ -7,7 +7,14 @@ import math
 
 import numpy as np
 
-from gridstate.bounds import SENTINEL_VALUE, is_sentinel, resolve_bounds
+from gridstate.bounds import (
+    SENTINEL_VALUE,
+    bounds_unset,
+    declared_box,
+    is_reactive_only_generation,
+    is_sentinel,
+    resolve_bounds,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -379,3 +386,37 @@ def test_ipm_compensator_gets_no_active_power_box():
     assert setup.layout.qgen_node_pos.size == 1
     assert setup.box_lo[0] == -0.63
     assert setup.box_hi[0] == 0.0
+
+
+_PAIRS = [
+    (0.0, 0.0),
+    (-SENTINEL_VALUE, SENTINEL_VALUE),
+    (-SENTINEL_VALUE, 100.0),
+    (10.0, 10.0),
+    (10.0, 5.0),
+    (-50.0, 120.0),
+    (float("-inf"), 5.0),
+    (5.0, float("inf")),
+    (float("inf"), float("inf")),
+    (float("nan"), 5.0),
+    (float("nan"), float("nan")),
+]
+
+
+def test_declared_box_matches_inline_checks():
+    for lo_raw, hi_raw in _PAIRS:
+        lo, hi = resolve_bounds(lo_raw, hi_raw)
+        strict = bool(np.isfinite(lo) and np.isfinite(hi) and hi > lo)
+        finite = bool(np.isfinite(lo) and np.isfinite(hi))
+        assert (declared_box(lo_raw, hi_raw) is not None) is strict
+        assert (declared_box(lo_raw, hi_raw, allow_point=True) is not None) is finite
+        if strict:
+            assert declared_box(lo_raw, hi_raw) == (lo, hi)
+        assert bounds_unset(lo_raw, hi_raw) is (not (np.isfinite(lo) or np.isfinite(hi)))
+
+
+def test_reactive_only_generation_matches_former_rule():
+    for q_min, q_max in _PAIRS:
+        q_lo, q_hi = resolve_bounds(q_min, q_max)
+        former = q_lo != float("-inf") and q_hi != float("inf") and q_hi > q_lo
+        assert is_reactive_only_generation(0.0, 0.0, q_min, q_max) is former

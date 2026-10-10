@@ -21,8 +21,17 @@ the default box.
 
 from __future__ import annotations
 
+import math
 
-__all__ = ["SENTINEL_VALUE", "is_reactive_only_generation", "is_sentinel", "resolve_bounds"]
+
+__all__ = [
+    "SENTINEL_VALUE",
+    "bounds_unset",
+    "declared_box",
+    "is_reactive_only_generation",
+    "is_sentinel",
+    "resolve_bounds",
+]
 
 #: Точное значение-сентинел «нет данных» (контрактная конвенция ±9999).
 SENTINEL_VALUE = 9999.0
@@ -67,6 +76,29 @@ def resolve_bounds(lo_raw: float, hi_raw: float) -> tuple[float, float]:
     return (lo, hi)
 
 
+def declared_box(
+    lo_raw: float, hi_raw: float, *, allow_point: bool = False
+) -> tuple[float, float] | None:
+    """The pair resolved by :func:`resolve_bounds` when both sides are set, else ``None``.
+
+    "Set" means both resolved bounds are finite and ``hi > lo``; with
+    ``allow_point`` a point box ``hi == lo`` counts as well (finite sides only:
+    :func:`resolve_bounds` never returns ``lo > hi``).
+    """
+    lo, hi = resolve_bounds(lo_raw, hi_raw)
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        return None
+    if not allow_point and not hi > lo:
+        return None
+    return (lo, hi)
+
+
+def bounds_unset(lo_raw: float, hi_raw: float) -> bool:
+    """Neither side of the pair is set (both resolved bounds are infinite)."""
+    lo, hi = resolve_bounds(lo_raw, hi_raw)
+    return not (math.isfinite(lo) or math.isfinite(hi))
+
+
 def is_reactive_only_generation(p_min: float, p_max: float, q_min: float, q_max: float) -> bool:
     """Генерация только реактивная: ``P ∈ [0, 0]`` при заданном невырожденном Q.
 
@@ -77,5 +109,4 @@ def is_reactive_only_generation(p_min: float, p_max: float, q_min: float, q_max:
     """
     if float(p_min) != 0.0 or float(p_max) != 0.0:
         return False
-    q_lo, q_hi = resolve_bounds(q_min, q_max)
-    return q_lo != float("-inf") and q_hi != float("inf") and q_hi > q_lo
+    return declared_box(q_min, q_max) is not None

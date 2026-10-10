@@ -147,6 +147,10 @@ def _slack_nodes_to_demote(nodes_arr: Any, branches_arr: Any) -> list[int]:
     ``branch.{status,from_node,to_node}``. Кандидаты — active SLACK с
     ``balance_priority>0`` и active-branch; оставляем min priority (ties → min
     id), остальные SLACK → PQ. Без валидных кандидатов — ``[]``.
+
+    The slack picked by ``units.network_pu_from_tables`` when several remain
+    follows a different rule (any balance_priority, no branch check, ties to
+    the first position); the two coincide only when this plan leaves one slack.
     """
     nodes_with_branch = nodes_with_active_branch(branches_arr)
 
