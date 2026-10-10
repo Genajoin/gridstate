@@ -136,7 +136,11 @@ class NearCriticalRow:
         omega_ratio: ``Ω_ii / σ²_i`` (below the configured threshold).
         normalized_residual: ``|r| / √Ω_ii`` as computed (``inf`` if
             ``Ω_ii`` is numerically non-positive).
-        is_pseudo: pseudo-prior, not a telemetry measurement.
+        is_pseudo: pseudo-prior, not a telemetry measurement. Always
+            ``False`` under the default residual scope ``"real"``, which
+            leaves pseudo-measurements out of ``r_N`` (and so out of this
+            report); it can be ``True`` only with
+            ``quality_summary_scope="all"``.
     """
 
     measurement_id: int
@@ -290,6 +294,12 @@ class SEResult:
             near-critical threshold, ascending by that ratio; their
             ``normalized_residual`` is numerically unreliable (see
             :class:`NearCriticalRow`). Reported only, nothing is changed.
+            Pseudo-measurements are excluded from ``r_N`` by construction
+            under the default scope ``"real"`` (their ratio is not
+            computed), so they never appear here and ``is_pseudo`` is always
+            ``False``; with ``quality_summary_scope="all"`` they take part
+            and are marked by ``is_pseudo`` (the pipeline always uses
+            ``"real"``).
     """
 
     model: Working
