@@ -28,7 +28,7 @@ from gridstate.bad_data_repass import apply_bad_data_plan, classify_bad_data
 from gridstate.pipeline.config import PipelineConfig
 from gridstate.pipeline.context import _Ctx, _no_solution
 from gridstate.post_processing import refine_anti_overshoot
-from gridstate.resolve_pass import ResolvePass
+from gridstate.resolve_pass import ResolvePass, fail_out_of_range, state_range_violation
 from gridstate.result import SEResult
 from gridstate.v_mirror import apply_v_mirror_plan, classify_chain_mirror, classify_v_mirror
 from gridstate.v_refine import apply_v_refine_plan, classify_v_refine
@@ -97,13 +97,22 @@ def _s_estimate(ctx: _Ctx) -> dict:
         # then holds this solve's V/δ, as on a cold start.
         kwargs["x0"] = ctx.x0
     ctx.result = estimate(ctx.model, **kwargs)
-    return {
+    # A state out of range (e.g. angles beyond ±2π) is unusable whatever the
+    # solver reports: it cannot be converted back to p.u., so the re-solve
+    # passes and the quality summary must not start from it.
+    violation = state_range_violation(ctx.model.nodes.to_numpy())
+    if violation is not None:
+        fail_out_of_range(ctx.result, violation)
+    stats = {
         "algorithm": cfg.algorithm,
         "success": bool(ctx.result.success),
         "iterations": int(ctx.result.iterations),
         "objective_value": float(ctx.result.objective_value),
         **_status_stats(ctx.result),
     }
+    if violation is not None:
+        stats["state_violation"] = violation
+    return stats
 
 
 def _status_stats(result: SEResult) -> dict[str, Any]:
@@ -343,12 +352,19 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
     )
 
 
+_STATE_OUT_OF_RANGE = "state out of range (see estimate stats)"
+
+
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
     """Anti-overshoot pass; its :class:`ResolvePass` lives in
     :func:`gridstate.post_processing.refine_anti_overshoot` (several
     apply/re-solve rounds and its own acceptance criterion)."""
     if ctx.result is None:  # the step runs after estimate
         raise _no_solution("anti_overshoot")
+    if state_range_violation(ctx.model.nodes.to_numpy()) is not None:
+        # Only the main estimate can leave such a state (the passes revert
+        # theirs); no re-solve can start from it.
+        return {"skipped": _STATE_OUT_OF_RANGE}
     cfg = ctx.cfg
 
     def _resolve() -> SEResult:

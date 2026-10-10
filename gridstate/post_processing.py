@@ -36,7 +36,12 @@ from gridstate.algebra.base import (
 from gridstate.bounds import is_reactive_only_generation, resolve_bounds
 from gridstate.measurement_ids import ANTI_OVERSHOOT_ID_BASE, IdAllocator
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
-from gridstate.resolve_pass import REVERT_REASON_NOT_CONVERGED, ResolvePass
+from gridstate.resolve_pass import (
+    REVERT_REASON_NOT_CONVERGED,
+    REVERT_REASON_OUT_OF_RANGE,
+    ResolvePass,
+    state_range_violation,
+)
 from gridstate.units import BASE_MVA, NetworkPU
 from gridstate.utils import id_to_pos_map
 from gridstate.working import table_copy, table_replace
@@ -740,13 +745,17 @@ def refine_anti_overshoot(
         mid_start: starting id for the added pseudo-measurements.
 
     The refinement is accepted only if the last re-solve converged
-    (``refined.success``); a non-converged re-solve is reverted even when it
-    lowered ``max(V/Vnom)``, and the stats then carry ``revert_reason``.
+    (``refined.success``) and left the state in range
+    (:func:`~gridstate.resolve_pass.state_range_violation`; an out-of-range
+    state also ends the rounds, since no further solve can start from it); a
+    rejected re-solve is reverted even when it lowered ``max(V/Vnom)``, and
+    the stats then carry ``revert_reason``.
 
     Returns:
         ``(result, stats)`` — the final ``SEResult`` (refined, or base on rollback),
         ``stats = {"tightened": N, "accepted": bool, "max_ratio_before/after": ...}``
-        (+ ``revert_reason`` when the re-solve did not converge).
+        (+ ``revert_reason`` when the re-solve did not converge or left the
+        state out of range, + ``state_violation`` in the latter case).
     """
     # Snapshots for a FULL rollback: nodes (V/δ/estimated), branches (flows) and
     # measurements (the added tight priors + estimated_si). Otherwise a revert would leave
@@ -773,6 +782,7 @@ def refine_anti_overshoot(
     ids = IdAllocator(me["id"], mid_start, name="anti_overshoot")
     var = float(inj_sigma) * float(inj_sigma)
     refined = result
+    violation: str | None = None
     for _ in range(max_iters):
         nd = model.nodes.to_numpy()
         newly: list[tuple[int, float, float]] = []
@@ -795,6 +805,9 @@ def refine_anti_overshoot(
                 model.measurements.add(pseudo_node_measurement(ids.next(), nid, kind, val, var))
             tightened.add(nid)
         refined = resolve()
+        violation = state_range_violation(model.nodes.to_numpy())
+        if violation is not None:
+            break
         # The round did not push max V/Vnom below the base — further rounds
         # would add priors to an already destabilised solution; the result
         # would be rolled back anyway unless it becomes better than the base.
@@ -805,14 +818,17 @@ def refine_anti_overshoot(
     # A non-converged re-solve is never accepted: the V it stopped at says
     # nothing about the overshoot being resolved.
     converged = not tightened or bool(refined.success)
-    accepted = bool(tightened) and converged and maxr1 < maxr0 - 1e-4
+    accepted = bool(tightened) and converged and violation is None and maxr1 < maxr0 - 1e-4
     stats: dict[str, int | float | bool | str] = {
         "tightened": len(tightened),
         "accepted": accepted,
         "max_ratio_before": round(maxr0, 4),
         "max_ratio_after": round(maxr1, 4),
     }
-    if not converged:
+    if violation is not None:
+        stats["revert_reason"] = REVERT_REASON_OUT_OF_RANGE
+        stats["state_violation"] = violation
+    elif not converged:
         stats["revert_reason"] = REVERT_REASON_NOT_CONVERGED
     if accepted:
         return refined, stats

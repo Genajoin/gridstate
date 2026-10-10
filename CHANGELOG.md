@@ -87,6 +87,11 @@ cut by tagging the merged main commit; the version is derived from that tag.
   `ResidualRow`. A threshold of `0` restores the previous rankings exactly.
   The `r_N` values and the bad-data test (`remove_bad_data`) are unchanged
   (#60)
+- The pipeline treats a solved state that is out of range (non-finite V/δ,
+  `V/Vnom` below 1e-3 or `|δ|` beyond 2π) as unusable: a main estimate that
+  leaves one ends with `success=False` and a message naming the nodes, the
+  re-solve passes and the quality summary are skipped for it, and a re-solve
+  pass that produces one is reverted (#90)
 
 ### Feat
 
@@ -190,6 +195,12 @@ cut by tagging the merged main commit; the version is derived from that tag.
   transformers with an off-nominal LV-side tap or rated voltages that differ
   from the bus voltages. The Y-bus matches pandapower to 1e-13 p.u. on IEEE
   case14 / case30 / case118 (case118 differed by 0.4 p.u.) (#80)
+- A re-solve pass (anti-overshoot, bad-data re-pass, V refine / mirror) no
+  longer accepts a re-solve whose state is out of range (e.g. node angles
+  beyond ±2π); the previous solution is restored with `revert_reason` and
+  `state_violation` in the step stats. On gross measurement errors the
+  accepted state used to make the final quality summary raise `ValueError` in
+  the p.u. conversion (#90)
 
 ### Perf
 

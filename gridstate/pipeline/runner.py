@@ -36,7 +36,10 @@ cleaner one. Every event is a ``dict`` with a ``"type"`` key:
     its re-solve adds ``stats["reverted"] = True`` and
     ``stats["revert_reason"]``; anti-overshoot reports
     ``stats["accepted"]`` (plus ``revert_reason`` on a non-converged
-    re-solve) instead.
+    re-solve) instead. A re-solve whose state is out of range is rejected
+    the same way, with ``stats["state_violation"]`` describing it; an
+    ``estimate`` that leaves such a state reports ``success=False`` and
+    ``stats["state_violation"]``.
 ``step_error``
     ``{"type", "name", "error": repr(exc), "duration_ms": int}``; the
     exception is re-raised and no further event follows.
@@ -45,7 +48,9 @@ Two ``step_done`` events do not belong to a registry step (they appear in
 neither :data:`STEPS` nor the manifest and have no ``step_start``):
 
 * ``quality_summary`` — ``{"type", "name", "stats": {}, "duration_ms"}``,
-  after the last step of :func:`run`;
+  after the last step of :func:`run`; ``stats["skipped"]`` when the final
+  state is out of range (the result is then failed, see
+  :func:`gridstate.resolve_pass.state_range_violation`);
 * ``shunt_sanity`` — ``{"type", "name", "stats"}`` without ``duration_ms``,
   emitted by :mod:`gridstate.pipeline.orchestration` AFTER the ``final``
   event of the base run, and only when the base run converged; the trial
@@ -69,6 +74,7 @@ from gridstate.contract.derived import DerivedInputs
 from gridstate.pipeline.config import PipelineConfig
 from gridstate.pipeline.context import Step, _Ctx, _no_solution
 from gridstate.pipeline.steps import STEPS
+from gridstate.resolve_pass import fail_out_of_range, state_range_violation
 from gridstate.result import SEResult
 from gridstate.state import InitialPoint
 from gridstate.working import Working
@@ -337,19 +343,28 @@ def run(
     # include_quality_summary=False, since on large models it costs about as
     # much as the solve itself.
     t0 = time.monotonic()
-    populate_quality_summary(
-        ctx.result,
-        top_n=cfg.top_residuals_n,
-        rn_method=cfg.normalized_residuals_method,
-        rn_refine_below=cfg.selected_inversion_refine_below,
-        near_critical=cfg.near_critical_threshold,
-    )
+    qs_stats: dict[str, Any] = {}
+    violation = state_range_violation(ctx.model.nodes.to_numpy())
+    if violation is None:
+        populate_quality_summary(
+            ctx.result,
+            top_n=cfg.top_residuals_n,
+            rn_method=cfg.normalized_residuals_method,
+            rn_refine_below=cfg.selected_inversion_refine_below,
+            near_critical=cfg.near_critical_threshold,
+        )
+    else:
+        # The main estimate left a state that cannot be converted back to p.u.
+        # (already marked failed by the estimate step): no summary, no crash.
+        if ctx.result.success:
+            fail_out_of_range(ctx.result, violation)
+        qs_stats["skipped"] = f"state out of range: {violation}"
     _emit(
         on_event,
         {
             "type": "step_done",
             "name": "quality_summary",
-            "stats": {},
+            "stats": qs_stats,
             "duration_ms": int((time.monotonic() - t0) * 1000),
         },
     )
