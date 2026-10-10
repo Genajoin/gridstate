@@ -13,6 +13,39 @@ cut by tagging the merged main commit; the version is derived from that tag.
 
 ### Breaking changes
 
+- Data contract 3.0.0 (`CONTRACT_VERSION`, MAJOR bump). It covers the typed
+  derived inputs below and the changed meaning of the transformer
+  `conductance_from` / `susceptance_from` fields (#52): the version policy now
+  states that changing the meaning of an existing field is a MAJOR change, so
+  data written under contract 2.x fails `is_data_compatible` instead of being
+  read with the new meaning (#65)
+- The `.npz` contract stores `DerivedInputs` as typed tables plus JSON
+  metadata (`derived.<table>` / `derived.meta`) instead of a pickled blob, and
+  the loader never unpickles by default (#65):
+  - new public module `gridstate.contract.derived_tables`: the key vocabulary,
+    the dtype / shape / meaning of every derived table
+    (`DERIVED_TABLES`), and `derived_to_tables` / `derived_from_tables`;
+    the writer rejects keys outside the vocabulary with `ValueError`;
+  - neutral key vocabulary of the plans: telemetry kinds `v`, `p_from` /
+    `p_to` / `q_from` / `q_to`, `p_gen` / `p_load` / `q_gen` / `q_load`, with
+    an optional component number for injection components (`"p_gen:3"`,
+    formerly a per-unit suffix); topology object kinds `node` / `branch` /
+    `generator`; skip reasons `no_value` / `partial_inputs` /
+    `evaluation_error`; `materialize_obs` must be `{quantity: {node_id:
+    value}}` with `load_p` / `load_q` / `gen_p` / `gen_q`. The step statistics
+    keep their names. The kind names are defined once, as `KIND_*` constants
+    of `gridstate.contract.derived_tables`; the tables of
+    `gridstate.telemetry.kinds` (`KIND_MAP`, `NODE_INJ_MAP`) are keyed by them;
+  - `DerivedInputs` fields are typed (`TopologyItem`, `TelemetryKey`,
+    `TelemetryValue`, `FlowKey` in `gridstate.contract.derived`);
+  - `load_se_input_npz(path, trusted=False)`: a contract 2.x file (pickled
+    derived inputs, former transformer shunt meaning) raises
+    `UntrustedLegacyFormatError` (a `ValueError`); with `trusted=True` it is
+    unpickled, mapped onto the new vocabulary (topology items of other object
+    kinds, never applied by the core, are dropped), returned with the current
+    contract version and a `LegacyContractWarning` about the transformer
+    shunt semantics. Re-save it with `save_se_input` to convert it;
+  - the IEEE fixtures are converted to the new format (tables unchanged)
 - Transformer branch shunt model: the whole "from" shunt of a branch
   (`conductance_from` / `susceptance_from` plus half of `conductance` /
   `susceptance`) is connected at the "from" node, in the "from"-side base,

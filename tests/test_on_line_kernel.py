@@ -1,8 +1,8 @@
 """Float-free kernel that applies a resolved on-line status plan to contract arrays.
 
 The producer of the input resolves the element statuses into a plan
-``resolved: list[(tag, parent_id, status|None, eval_skip|None)]``; the kernel
-``_apply_topology_on_arrays`` matches ``parent_tag`` to the target array
+``resolved: list[(object_kind, object_id, status|None, skip_reason|None)]``; the kernel
+``_apply_topology_on_arrays`` matches ``object_kind`` to the target array
 (nodes/branches/generators) and writes the ``status`` column. A pure status
 cascade without floats, so results are compared exactly. These tests check the
 kernel on bare arrays.
@@ -45,7 +45,7 @@ def _gens(ids, status=True):
 
 def test_topo_core_node_status_write():
     nodes = _nodes([1, 2])
-    resolved = [("NODE", 1, False, None), ("NODE", 2, True, None)]
+    resolved = [("node", 1, False, None), ("node", 2, True, None)]
     stats = _apply_topology_on_arrays(nodes, _branches([]), _gens([]), resolved)
     assert bool(nodes[0]["status"]) is False
     assert bool(nodes[1]["status"]) is True
@@ -55,7 +55,7 @@ def test_topo_core_node_status_write():
 
 def test_topo_core_line_status_write():
     branches = _branches([7])
-    stats = _apply_topology_on_arrays(_nodes([]), branches, _gens([]), [("LINE", 7, False, None)])
+    stats = _apply_topology_on_arrays(_nodes([]), branches, _gens([]), [("branch", 7, False, None)])
     assert bool(branches[0]["status"]) is False
     assert stats["applied_off"] == 1
 
@@ -63,16 +63,16 @@ def test_topo_core_line_status_write():
 def test_topo_core_generator_status_write():
     gens = _gens([3])
     stats = _apply_topology_on_arrays(
-        _nodes([]), _branches([]), gens, [("GENERATOR", 3, False, None)]
+        _nodes([]), _branches([]), gens, [("generator", 3, False, None)]
     )
     assert bool(gens[0]["status"]) is False
     assert stats["applied_off"] == 1
 
 
 def test_topo_core_reactor_tag_skipped_no_object():
-    # The REACTOR tag no longer has a target array -> default branch -> skipped_no_object.
+    # An object kind without a target array -> skipped_no_object.
     stats = _apply_topology_on_arrays(
-        _nodes([]), _branches([]), _gens([]), [("REACTOR", 9, True, None)]
+        _nodes([]), _branches([]), _gens([]), [("shunt", 9, True, None)]
     )
     assert stats["skipped_no_object"] == 1
     assert stats["applied_on"] == 0
@@ -80,7 +80,7 @@ def test_topo_core_reactor_tag_skipped_no_object():
 
 def test_topo_core_skipped_no_object_unknown_id():
     nodes = _nodes([1])
-    stats = _apply_topology_on_arrays(nodes, _branches([]), _gens([]), [("NODE", 999, True, None)])
+    stats = _apply_topology_on_arrays(nodes, _branches([]), _gens([]), [("node", 999, True, None)])
     assert stats["skipped_no_object"] == 1
     assert bool(nodes[0]["status"]) is True  # untouched
 
@@ -92,13 +92,13 @@ def test_topo_core_unknown_tag_skipped_no_object():
     assert stats["skipped_no_object"] == 1
 
 
-def test_topo_core_eval_skip_counters_routed():
-    # status=None with different eval_skip -> the matching counter, no write.
+def test_topo_core_skip_reason_counters_routed():
+    # status=None with different skip reasons -> the matching counter, no write.
     nodes = _nodes([1, 2, 3])
     resolved = [
-        ("NODE", 1, None, "skipped_no_value"),
-        ("NODE", 2, None, "skipped_partial_args"),
-        ("NODE", 3, None, "skipped_formula_error"),
+        ("node", 1, None, "no_value"),
+        ("node", 2, None, "partial_inputs"),
+        ("node", 3, None, "evaluation_error"),
     ]
     stats = _apply_topology_on_arrays(nodes, _branches([]), _gens([]), resolved)
     assert stats["skipped_no_value"] == 1
@@ -108,10 +108,10 @@ def test_topo_core_eval_skip_counters_routed():
     assert all(bool(nodes[i]["status"]) for i in range(3))  # nobody touched
 
 
-def test_topo_core_no_object_precedes_eval_skip():
+def test_topo_core_no_object_precedes_skip_reason():
     # Non-existent object with status=None -> skipped_no_object (the object check comes first).
     stats = _apply_topology_on_arrays(
-        _nodes([1]), _branches([]), _gens([]), [("NODE", 42, None, "skipped_no_value")]
+        _nodes([1]), _branches([]), _gens([]), [("node", 42, None, "no_value")]
     )
     assert stats["skipped_no_object"] == 1
     assert stats["skipped_no_value"] == 0
@@ -119,9 +119,9 @@ def test_topo_core_no_object_precedes_eval_skip():
 
 def test_topo_core_total_specs_equals_resolved_len():
     resolved = [
-        ("NODE", 1, True, None),
-        ("LINE", 7, None, "skipped_formula_error"),
-        ("GENERATOR", 3, True, None),
+        ("node", 1, True, None),
+        ("branch", 7, None, "evaluation_error"),
+        ("generator", 3, True, None),
     ]
     stats = _apply_topology_on_arrays(_nodes([1]), _branches([7]), _gens([3]), resolved)
     assert stats["total_specs"] == 3
@@ -134,9 +134,9 @@ def test_topo_core_mixed_targets_independent():
     branches = _branches([7])
     gens = _gens([3])
     resolved = [
-        ("NODE", 1, False, None),
-        ("LINE", 7, True, None),
-        ("GENERATOR", 3, False, None),
+        ("node", 1, False, None),
+        ("branch", 7, True, None),
+        ("generator", 3, False, None),
     ]
     stats = _apply_topology_on_arrays(nodes, branches, gens, resolved)
     assert bool(nodes[0]["status"]) is False

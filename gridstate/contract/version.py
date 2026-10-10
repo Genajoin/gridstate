@@ -7,8 +7,11 @@ together with the gridstate package.
 
 Version policy (SemVer for the data schema):
 
-* **MAJOR** — breaking schema change: removing/renaming a required
-  column, changing its dtype family, removing a table. Data built under an
+* **MAJOR** — breaking change: removing/renaming a required column,
+  changing its dtype family, removing a table, changing the storage format
+  of a table, or changing the **meaning** of an existing field (same name and
+  dtype, different interpretation: data written under the old meaning would
+  pass a minor-level check and still be read wrongly). Data built under an
   older major is incompatible.
 * **MINOR** — backward-compatible (additive) change: a new optional
   column or table. Data of an older minor is still readable.
@@ -27,12 +30,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-# Current version of the SE data contract. 2.0.0 freezes the canonical contract
-# after the field clean-up (removed fields formula/source_numer/tip_ti/prv_num/
-# validity_timeout/guid_measurement, NODES.sxn_id, DerivedInputs.snapshot/
-# rpn_resolved) — a breaking schema change (MAJOR bump). Bump per the policy above;
-# update in sync whenever :mod:`gridstate.contract.tables` changes.
-CONTRACT_VERSION = "2.0.0"
+# Current version of the SE data contract — the single place it is defined; bump per
+# the policy above and update in sync whenever :mod:`gridstate.contract.tables` or
+# :mod:`gridstate.contract.derived_tables` changes.
+#
+# 2.0.0 froze the canonical contract after the field clean-up (removed fields formula/
+# source_numer/tip_ti/prv_num/validity_timeout/guid_measurement, NODES.sxn_id,
+# DerivedInputs.snapshot/rpn_resolved) — a breaking schema change (MAJOR bump).
+# 3.0.0 (MAJOR):
+#   * the derived inputs are stored as typed tables + JSON metadata
+#     (:mod:`gridstate.contract.derived_tables`) instead of a pickled blob, with a
+#     neutral key vocabulary;
+#   * the meaning of ``branches.conductance_from`` / ``susceptance_from`` changed for
+#     transformers with an off-nominal ratio: the from-side shunt sits at the from
+#     node, in the from-side base, before the ideal transformer (tap-independent).
+# Data of major 2 fails the compatibility check; it is read only through the
+# explicit legacy path ``load_se_input_npz(path, trusted=True)``.
+CONTRACT_VERSION = "3.0.0"
+
+# Major of the data the explicit legacy path of the ``.npz`` loader still reads
+# (``load_se_input_npz(path, trusted=True)``).
+LEGACY_MAJOR = 2
 
 # Key under which the contract version is stored in the data metadata
 # (``model.metadata`` / future ``SEInput.meta``). The validator reads it on input.

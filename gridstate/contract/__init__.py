@@ -10,6 +10,10 @@ Contents:
 * :mod:`gridstate.contract.tables` — declaration of tables/columns/roles
   (:data:`SE_INPUT`, :data:`SE_OUTPUT`, :class:`Role`, :class:`ColumnSpec`,
   :class:`TableSchema`).
+* :mod:`gridstate.contract.derived_tables` — specification of the derived inputs
+  (:class:`DerivedInputs`): key vocabulary, typed tables and metadata of the ``.npz``.
+* :mod:`gridstate.contract.serialize` — ``.npz`` reader/writer (no pickle; legacy
+  files only with ``trusted=True``).
 * :mod:`gridstate.contract.version` — :data:`CONTRACT_VERSION` + SemVer
   compatibility logic (:class:`ContractVersion`).
 * :mod:`gridstate.contract.validate` — :func:`validate_input` (input validation).
@@ -17,6 +21,7 @@ Contents:
 
 from gridstate.contract.containers import SEInput, SEOutput, load_se_input
 from gridstate.contract.derived import DerivedInputs
+from gridstate.contract.serialize import LegacyContractWarning, UntrustedLegacyFormatError
 from gridstate.contract.tables import (
     BRANCHES,
     BRANCHES_OUTPUT,
@@ -77,12 +82,14 @@ __all__ = [
     "ContractValidationError",
     "ContractVersion",
     "DerivedInputs",
+    "LegacyContractWarning",
     "Role",
     "SEInput",
     "SEInputSchema",
     "SEOutput",
     "SEOutputSchema",
     "TableSchema",
+    "UntrustedLegacyFormatError",
     "ValidationIssue",
     "ValidationReport",
     "current_version",

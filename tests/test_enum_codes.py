@@ -28,13 +28,18 @@ def test_z_vector_kind_and_object_codes() -> None:
 
 def test_telemetry_kind_tables() -> None:
     assert kinds.INJ_MT == {"P": 4, "Q": 5}
-    assert kinds.NODE_INJ_MAP == {"PG": ("P", 1), "PN": ("P", -1), "QG": ("Q", 1), "QN": ("Q", -1)}
+    assert kinds.NODE_INJ_MAP == {
+        "p_gen": ("P", 1),
+        "p_load": ("P", -1),
+        "q_gen": ("Q", 1),
+        "q_load": ("Q", -1),
+    }
     assert kinds.KIND_MAP == {
-        "U": (0, 2, -1, 1),
-        "PBEG": (1, 0, 0, 1),
-        "PEND": (1, 0, 1, 1),
-        "QBEG": (1, 1, 0, 1),
-        "QEND": (1, 1, 1, 1),
+        "v": (0, 2, -1, 1),
+        "p_from": (1, 0, 0, 1),
+        "p_to": (1, 0, 1, 1),
+        "q_from": (1, 1, 0, 1),
+        "q_to": (1, 1, 1, 1),
     }
     for codes in kinds.KIND_MAP.values():
         assert all(type(c) is int for c in codes)

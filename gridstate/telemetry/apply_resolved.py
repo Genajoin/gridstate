@@ -25,6 +25,14 @@ from gridstate.constants import (
     MeasurementQuality,
     MeasurementType,
 )
+from gridstate.contract.derived_tables import (
+    FLOW_KINDS,
+    KIND_P_FROM,
+    KIND_P_TO,
+    KIND_Q_FROM,
+    KIND_Q_TO,
+    kind_base,
+)
 from gridstate.measurement_ids import IdAllocator
 from gridstate.telemetry._filters import build_measurement_index
 from gridstate.telemetry.kinds import INJ_MT, KIND_MAP, NODE_INJ_MAP
@@ -146,7 +154,7 @@ def _detect_sign_inconsistent_branches(
     threshold_mw: float | None,
 ) -> set[int]:
     """Pre-pass: detect branches with sign-inconsistent P measurements
-    (PBEG and PEND both flowing into the line, i.e. of the same sign after
+    (p_from and p_to both flowing into the line, i.e. of the same sign after
     accounting for invert) -- this indicates a measurement bound to the wrong
     branch or stale telemetry. The branch measurements of such branches are
     not activated.
@@ -155,15 +163,15 @@ def _detect_sign_inconsistent_branches(
     if threshold_mw is None:
         return inconsistent_branches
     for obj_id, kind in arg_keys:
-        if kind != "PBEG":
+        if kind != KIND_P_FROM:
             continue
-        if (obj_id, "PEND") not in resolved:
+        if (obj_id, KIND_P_TO) not in resolved:
             continue
-        v_beg = resolved[(obj_id, "PBEG")][0]
-        v_end = resolved[(obj_id, "PEND")][0]
+        v_beg = resolved[(obj_id, KIND_P_FROM)][0]
+        v_end = resolved[(obj_id, KIND_P_TO)][0]
         if v_beg is None or v_end is None:
             continue
-        # PBEG/PEND values arrive with the sign already applied (the inversion
+        # p_from/p_to values arrive with the sign already applied (the inversion
         # is encoded in the input numeric plan by the adapter). On a physically
         # consistent line ``v_beg ≈ -v_end + losses`` holds, i.e. they have
         # **opposite signs**. If |v_beg + v_end| exceeds the threshold, it is
@@ -200,20 +208,20 @@ def _detect_q_inconsistent_branches(
         return q_inconsistent_branches, q_inconsistent_hv_branches
 
     for obj_id, kind in arg_keys:
-        if kind != "QBEG":
+        if kind != KIND_Q_FROM:
             continue
-        if (obj_id, "QEND") not in resolved:
+        if (obj_id, KIND_Q_TO) not in resolved:
             continue
-        v_beg = resolved[(obj_id, "QBEG")][0]
-        v_end = resolved[(obj_id, "QEND")][0]
+        v_beg = resolved[(obj_id, KIND_Q_FROM)][0]
+        v_end = resolved[(obj_id, KIND_Q_TO)][0]
         if v_beg is None or v_end is None:
             continue
         vn = branch_vn.get(int(obj_id), 0.0)
         if vn <= 0:
             continue
-        # Take P_typical from PBEG/PEND to estimate the X-loss.
+        # Take P_typical from p_from/p_to to estimate the X-loss.
         p_typical = 0.0
-        for p_kind in ("PBEG", "PEND"):
+        for p_kind in (KIND_P_FROM, KIND_P_TO):
             if (obj_id, p_kind) not in resolved:
                 continue
             pv = resolved[(obj_id, p_kind)][0]
@@ -299,11 +307,11 @@ def _apply_measurement_loop(
     (counters) and ``inj_acc`` (accumulated NODE injections) in place.
     """
     for obj_id, kind in arg_keys:
-        # NODE injection (PG/PN/QG/QN) or GENERATOR (PG_G<n>, QG_G<n>) ->
-        # accumulate for the later .add(). PG_G* and QG_G* count as a
-        # positive contribution of P_gen/Q_gen to the node (like a plain PG/QG).
-        kind_base = kind.split("_G", 1)[0] if kind.startswith(("PG_G", "QG_G")) else kind
-        if kind_base in NODE_INJ_MAP:
+        # NODE injection component (p_gen/p_load/q_gen/q_load, optionally with a
+        # component number "p_gen:<n>", e.g. one per generating unit) ->
+        # accumulate for the later .add(); the components of a node are summed.
+        base = kind_base(kind)
+        if base in NODE_INJ_MAP:
             value, n_res, guid_first, q = resolved[(obj_id, kind)]
             if value is None:
                 if n_res == 0:
@@ -314,7 +322,7 @@ def _apply_measurement_loop(
             if q == _Q_BAD:
                 stats["skipped_bad_quality"] += 1
                 continue
-            pq, mult = NODE_INJ_MAP[kind_base]
+            pq, mult = NODE_INJ_MAP[base]
             val = value * mult
             inj_acc.setdefault((obj_id, pq), []).append((val, guid_first, q))
             continue
@@ -323,8 +331,8 @@ def _apply_measurement_loop(
             stats["skipped_kind_unsupported"] += 1
             continue
         # A branch with sign-inconsistent P-meas: none of the 4 measurements of
-        # this LINE-OBJ_ID are activated (the data is broken).
-        if kind in ("PBEG", "PEND", "QBEG", "QEND") and obj_id in inconsistent_branches:
+        # this branch are activated (the data is broken).
+        if kind in FLOW_KINDS and obj_id in inconsistent_branches:
             stats.setdefault("skipped_sign_inconsistent", 0)
             stats["skipped_sign_inconsistent"] += 1
             ot_f, mt_f, side_f, _ = KIND_MAP[kind]
@@ -333,7 +341,7 @@ def _apply_measurement_loop(
                 meas_arr[idx_f]["filter_flag"] = int(FilterFlag.P_SIGN_INCONSISTENCY)
             continue
         # Q-inconsistent branches: skip only the Q measurements, keep P.
-        if kind in ("QBEG", "QEND") and obj_id in q_inconsistent_branches:
+        if kind in (KIND_Q_FROM, KIND_Q_TO) and obj_id in q_inconsistent_branches:
             stats.setdefault("skipped_q_inconsistent", 0)
             stats["skipped_q_inconsistent"] += 1
             ot_f, mt_f, side_f, _ = KIND_MAP[kind]
@@ -412,7 +420,7 @@ def _apply_measurement_loop(
                 stats.setdefault("v_sigma2_scaled", 0)
                 stats["v_sigma2_scaled"] += 1
         # A similar plan for branch flow measurements: {(branch_id, kind): factor},
-        # kind ∈ PBEG/PEND/QBEG/QEND. factor>1 reduces trust (a measurement that is
+        # kind ∈ p_from/p_to/q_from/q_to. factor>1 reduces trust (a measurement that is
         # a defect candidate per the producer's data), factor<1 increases it.
         if ot == _OT_BRANCH and config.flow_sigma2_scale_by_branch:
             scale = config.flow_sigma2_scale_by_branch.get((int(obj_id), kind))
@@ -423,7 +431,7 @@ def _apply_measurement_loop(
         # Q-inconsistent branch (physical filter, action="downweight"):
         # downweight σ² × factor (a loose anchor: the reading stays with a low weight).
         # Applied after the default σ is computed.
-        if kind in ("QBEG", "QEND") and obj_id in q_inconsistent_hv_branches:
+        if kind in (KIND_Q_FROM, KIND_Q_TO) and obj_id in q_inconsistent_hv_branches:
             var *= config.q_loss_filter_downweight_factor
             meas_arr[idx]["filter_flag"] = int(FilterFlag.Q_INCONSISTENCY)  # q_inconsistency mark
         meas_arr[idx]["variance"] = float(var)
@@ -498,7 +506,7 @@ def _apply_telemetry_on_arrays(
     The iteration order is given by ``arg_keys`` (= ``list(args.keys())``).
 
     Returns ``(stats, new_rows)``: ``new_rows`` is a list of dicts for the
-    later ``model.measurements.add()`` (NODE injections PG/PN/QG/QN); their
+    later ``model.measurements.add()`` (NODE injections p_gen/p_load/q_gen/q_load); their
     ``id`` values are assigned here so as to be bit-identical to the former
     in-loop ``.add()`` block.
 
@@ -610,7 +618,7 @@ def _materialize_area_on_arrays(
     ``fill=False`` -> verbatim only (for generation: the area spread ``k·gen_max``
     is bimodal and unreliable -- a generator is either dispatched or not; an A/B
     comparison on a regional model showed WLS dV_max worsening 0.25 -> 0.43).
-    Verbatim is sufficient given rich PG telemetry.
+    Verbatim is sufficient given rich generation telemetry.
 
     Returns:
         ``{"n_obs", "n_fill", "sum"}`` (``sum`` rounded to 0.1; the node values

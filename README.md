@@ -233,7 +233,13 @@ Input and output are governed by an explicit, versioned schema
   `shunts`).
 - `CONTRACT_VERSION` follows SemVer; `is_data_compatible(...)` gates whether a
   given `.npz` can be consumed.
-- `load_se_input_npz` / `save_se_input` round-trip the contract to disk.
+- `load_se_input_npz` / `save_se_input` round-trip the contract to disk. The
+  file holds plain numpy arrays only: the precomputed plans (`DerivedInputs`)
+  are typed tables plus JSON metadata, specified in
+  `gridstate.contract.derived_tables`, and the file is read with
+  `allow_pickle=False`. Files of an older contract major store the plans
+  pickled; they are read only with `load_se_input_npz(path, trusted=True)`
+  and should be re-saved.
 - `validate_input(...)` checks a model against the contract and fails early on
   missing required columns or an incompatible version.
 

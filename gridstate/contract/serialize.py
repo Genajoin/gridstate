@@ -16,30 +16,83 @@ Exactly what the kernel needs to run ``run(SEInput)`` is serialized:
 The loader restores the working layer via :meth:`gridstate.working.Working.from_arrays`
 (constructor from arrays) → ``run()`` executes without external dependencies.
 
-**Plan format (v0, provisional).** ``DerivedInputs`` carries dicts with tuple keys
-(``telemetry_resolved``), so the plans are encoded with ``pickle`` in an object array inside
-the ``.npz``. This is an internal Python format; a stable cross-tool format (a JSON schema
-of the plans) is future work. The contract TABLES are stored as ordinary npz arrays and can be read by
-any tool.
+**Derived inputs format.** Each ``DerivedInputs`` plan is stored as a typed
+structured array under ``derived.<table>`` plus a JSON metadata document under
+``derived.meta`` (see :mod:`gridstate.contract.derived_tables` for the tables,
+their dtypes and the key vocabulary). Everything in the file is a plain numpy
+array: it is read with ``allow_pickle=False`` and no code runs on load.
+
+**Files of contract major 2** stored the plans as a pickled blob, and their
+transformer from-side shunt fields had a different meaning (see
+:mod:`gridstate.contract.version`). They are read only with
+``load_se_input_npz(path, trusted=True)`` (unpickling can execute arbitrary
+code); without it the loader raises :class:`UntrustedLegacyFormatError`. The
+trusted path maps the plans onto the current vocabulary and warns
+(:class:`LegacyContractWarning`); re-saving such an input with
+:func:`save_se_input` writes the current format.
 """
 
 from __future__ import annotations
 
-import pickle
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from gridstate.contract._legacy import LEGACY_DERIVED_KEY, derived_from_legacy_blob
+from gridstate.contract.derived_tables import (
+    DERIVED_META_KEY,
+    DERIVED_TABLE_PREFIX,
+    DERIVED_TABLES,
+    derived_from_tables,
+    derived_to_tables,
+    meta_from_json,
+    meta_to_json,
+)
 from gridstate.contract.tables import SE_INPUT, SE_OUTPUT, io_dtype
+from gridstate.contract.version import (
+    CONTRACT_VERSION,
+    LEGACY_MAJOR,
+    ContractVersion,
+    check_compatibility,
+)
 
 
 if TYPE_CHECKING:
     from gridstate.contract.containers import SEInput
 
 
-_DERIVED_KEY = "__derived_pickle__"
 _META_KEY = "__contract_version__"
+
+
+class UntrustedLegacyFormatError(ValueError):
+    """An ``.npz`` is a legacy (contract major 2) file.
+
+    Its derived inputs are a pickled blob and its transformer shunt fields have the
+    former meaning. Raised by :func:`load_se_input_npz` unless the caller passes
+    ``trusted=True``.
+    """
+
+
+class LegacyContractWarning(UserWarning):
+    """A legacy (contract major 2) file was read through the trusted path."""
+
+
+_LEGACY_HINT = (
+    "Unpickling can execute arbitrary code, so it is refused by default. If the file "
+    "comes from a trusted source, load it with load_se_input_npz(path, trusted=True) and "
+    "re-save it with save_se_input, or regenerate it with the current source tool."
+)
+
+_LEGACY_WARNING = (
+    "{name!r} was built under contract {version} and is read through the legacy path. "
+    "Since contract 3.0.0 the from-side shunt of a transformer with an off-nominal ratio "
+    "(branches.conductance_from / susceptance_from) is connected at the from node, before "
+    "the ideal transformer, and is no longer divided by |t|^2: an input that relied on "
+    "the division is read with a different shunt. Regenerate it with the current source "
+    "tool when that matters."
+)
 
 # Input table names in the order of the contract declaration (single source —
 # SEInputSchema.tables()). The first four are the main contract tables
@@ -58,39 +111,37 @@ def _schema_map() -> dict[str, Any]:
     return {name: getattr(SE_INPUT, name) for name in _CONTRACT_TABLES}
 
 
-def _derived_to_blob(derived: Any) -> dict | None:
-    """``DerivedInputs`` → serializable dict (numeric plans of the steps)."""
+def _derived_arrays(derived: Any) -> dict[str, np.ndarray]:
+    """``DerivedInputs`` → ``.npz`` arrays (typed tables + JSON metadata); none for ``None``."""
     if derived is None:
+        return {}
+    tables, meta = derived_to_tables(derived)
+    arrays = {DERIVED_TABLE_PREFIX + name: arr for name, arr in tables.items()}
+    arrays[DERIVED_META_KEY] = np.asarray(meta_to_json(meta))
+    return arrays
+
+
+def _read_derived(npz: Any, files: set[str], path: str | Path, *, trusted: bool) -> Any:
+    """Derived inputs of an open ``.npz``: typed tables, or the legacy blob if trusted."""
+    if DERIVED_META_KEY in files:
+        meta = meta_from_json(str(npz[DERIVED_META_KEY]))
+        tables = {
+            t.name: np.asarray(npz[DERIVED_TABLE_PREFIX + t.name])
+            for t in DERIVED_TABLES
+            if DERIVED_TABLE_PREFIX + t.name in files
+        }
+        return derived_from_tables(tables, meta)
+    if LEGACY_DERIVED_KEY not in files:
         return None
-    return {
-        "topology_resolved": derived.topology_resolved,
-        "telemetry_resolved": derived.telemetry_resolved,
-        "telemetry_arg_keys": derived.telemetry_arg_keys,
-        "telemetry_total_args": derived.telemetry_total_args,
-        "materialize_obs": derived.materialize_obs,
-        "voltage_nominal": derived.voltage_nominal,
-        "v_sigma2_scale": derived.v_sigma2_scale,
-        "flow_sigma2_scale": derived.flow_sigma2_scale,
-    }
+    if not trusted:
+        raise UntrustedLegacyFormatError(
+            f"{Path(path).name!r} stores its derived inputs in the legacy pickled format "
+            f"(contract major {LEGACY_MAJOR}). {_LEGACY_HINT}"
+        )
+    import pickle  # only on the explicit trusted path
 
-
-def _blob_to_derived(blob: dict | None) -> Any:
-    """Serialized dict → ``DerivedInputs`` (numeric plans of the steps)."""
-    if blob is None:
-        return None
-    from gridstate.contract.derived import DerivedInputs
-
-    return DerivedInputs(
-        topology_resolved=blob["topology_resolved"],
-        telemetry_resolved=blob["telemetry_resolved"],
-        telemetry_arg_keys=blob["telemetry_arg_keys"],
-        telemetry_total_args=blob["telemetry_total_args"],
-        materialize_obs=blob["materialize_obs"],
-        # .get(): old .npz files do not carry this plan (backward compatibility).
-        voltage_nominal=blob["voltage_nominal"],
-        v_sigma2_scale=blob.get("v_sigma2_scale"),
-        flow_sigma2_scale=blob.get("flow_sigma2_scale"),
-    )
+    blob = pickle.loads(np.asarray(npz[LEGACY_DERIVED_KEY]).tobytes())
+    return derived_from_legacy_blob(blob)
 
 
 def _expand_to_io(arr: np.ndarray, in_schema: Any, out_schema: Any) -> np.ndarray:
@@ -154,8 +205,7 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
             if len(arr) > 0:
                 arrays[name] = arr
 
-    blob = _derived_to_blob(se_input.derived)
-    arrays[_DERIVED_KEY] = np.frombuffer(pickle.dumps(blob), dtype=np.uint8)
+    arrays.update(_derived_arrays(se_input.derived))
     arrays[_META_KEY] = np.asarray(str(se_input.contract_version))
 
     out = Path(path)
@@ -166,19 +216,56 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
     return out if out.suffix == ".npz" else out.with_suffix(".npz")
 
 
-def load_se_input_npz(path: str | Path) -> SEInput:
+def load_se_input_npz(path: str | Path, *, trusted: bool = False) -> SEInput:
     """Read an ``.npz`` (see :func:`save_se_input`) into ``SEInput``; no external dependencies.
 
     The working layer is built via :meth:`gridstate.working.Working.from_arrays`.
     The returned ``SEInput`` is ready for ``run(se_input)``: ``derived`` holds the
     restored numeric plans.
+
+    The file is read with ``allow_pickle=False``; no code from the file runs.
+
+    Args:
+        path: the ``.npz`` file.
+        trusted: also read a legacy file (contract major 2): its pickled derived
+            inputs are unpickled and mapped onto the current vocabulary, a
+            :class:`LegacyContractWarning` notes the changed transformer shunt
+            semantics, and the returned input carries the current contract
+            version. Unpickling can execute arbitrary code: pass ``True`` only
+            for files from a trusted source, and re-save them with
+            :func:`save_se_input`.
+
+    Raises:
+        UntrustedLegacyFormatError: the file is a legacy one (contract major 2 or
+            pickled derived inputs) and ``trusted`` is ``False``.
+        ValueError: incompatible contract version or malformed derived tables.
     """
     from gridstate.contract.containers import SEInput
-    from gridstate.contract.version import CONTRACT_VERSION, check_compatibility
     from gridstate.working import Working
 
     with np.load(path, allow_pickle=False) as npz:
         files = set(npz.files)
+        contract_version = str(npz[_META_KEY]) if _META_KEY in files else None
+        # Input boundary: the data version in the file must be compatible with the
+        # library's built-in contract. Fail EARLY and EXPLICITLY (rather than silently
+        # loading an incompatible schema that would fail deeper in the pipeline with an
+        # obscure error).
+        legacy = LEGACY_DERIVED_KEY in files and DERIVED_META_KEY not in files
+        if contract_version is not None and check_compatibility(contract_version) is not None:
+            if ContractVersion.parse(contract_version).major != LEGACY_MAJOR:
+                raise ValueError(
+                    f"Incompatible contract version in npz {Path(path).name!r}: "
+                    f"the file was built under {contract_version}, the library expects "
+                    f"{CONTRACT_VERSION} (same major, minor not newer). "
+                    f"Regenerate the npz with the current source tool."
+                )
+            if not trusted:
+                raise UntrustedLegacyFormatError(
+                    f"{Path(path).name!r} was built under the legacy contract "
+                    f"{contract_version}; the library expects {CONTRACT_VERSION}. "
+                    f"{_LEGACY_HINT}"
+                )
+            legacy = True
         # Expand the contract tables to the INPUT+OUTPUT dtype
         # (add empty OUTPUT columns for the pipeline).
         nodes = _expand_to_io(np.asarray(npz["nodes"]), SE_INPUT.nodes, SE_OUTPUT.nodes)
@@ -188,6 +275,7 @@ def load_se_input_npz(path: str | Path) -> SEInput:
         )
         generators = np.asarray(npz["generators"])  # generators have no OUTPUT
         domain = {name: np.asarray(npz[name]) for name in _DOMAIN_TABLES if name in files}
+        derived = _read_derived(npz, files, path, trusted=trusted)
         working = Working.from_arrays(
             nodes=nodes,
             branches=branches,
@@ -195,21 +283,15 @@ def load_se_input_npz(path: str | Path) -> SEInput:
             generators=generators,
             **domain,
         )
-        blob = pickle.loads(bytes(npz[_DERIVED_KEY])) if _DERIVED_KEY in files else None
-        contract_version = str(npz[_META_KEY]) if _META_KEY in files else None
 
-    # Input boundary: the data version in the file must be compatible with the library's built-in
-    # contract. Fail EARLY and EXPLICITLY (rather than silently loading an incompatible
-    # schema that would fail deeper in the pipeline with an obscure error).
-    if contract_version is not None and check_compatibility(contract_version) is not None:
-        raise ValueError(
-            f"Incompatible contract version in npz {Path(path).name!r}: "
-            f"the file was built under {contract_version}, the library expects "
-            f"{CONTRACT_VERSION} (majors must match). "
-            f"Regenerate the npz with the current source tool."
+    if legacy:
+        warnings.warn(
+            _LEGACY_WARNING.format(name=Path(path).name, version=contract_version or "2.x"),
+            LegacyContractWarning,
+            stacklevel=2,
         )
-
-    derived = _blob_to_derived(blob)
+        # The tables and plans now follow the current contract (with the caveat above).
+        contract_version = CONTRACT_VERSION
     kwargs: dict[str, Any] = {"model": working, "derived": derived}
     if contract_version is not None:
         kwargs["contract_version"] = contract_version
