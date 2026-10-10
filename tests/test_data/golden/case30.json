@@ -240,9 +240,6 @@
     "stats": {
      "v_priors_added": 0,
      "zero_inj_added": 0,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -559,9 +556,6 @@
     "stats": {
      "v_priors_added": 0,
      "zero_inj_added": 0,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -910,9 +904,6 @@
     "stats": {
      "v_priors_added": 0,
      "zero_inj_added": 0,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -1254,9 +1245,6 @@
     "stats": {
      "v_priors_added": 0,
      "zero_inj_added": 0,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -1615,9 +1603,6 @@
     "stats": {
      "v_priors_added": 0,
      "zero_inj_added": 0,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
@@ -1979,9 +1964,6 @@
     "stats": {
      "v_priors_added": 0,
      "zero_inj_added": 0,
-     "boundary_nodes": 0,
-     "block_buses": 0,
-     "block_bus_v_loose": 0,
      "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }

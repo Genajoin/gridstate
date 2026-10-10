@@ -1,8 +1,7 @@
 """Shared read-only scans over contract measurement/branch arrays.
 
-Collects the "gather per-node measurements by kind" and "count node degree over
-active branches" loops that were copy-pasted across the preprocessing steps. All
-helpers are pure reads and preserve the exact filtering semantics of the former
+Collects the "gather per-node measurements by kind" loops that were copy-pasted
+across the preprocessing steps. All helpers are pure reads and preserve the exact filtering semantics of the former
 inline loops (bit-for-bit): active (``status``) rows only, NODE-object filtering,
 and the ``is_pseudo`` guard behaviour where it applied.
 """
@@ -19,8 +18,6 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "node_degree_map",
-    "node_degree_with_first_branch",
     "scan_node_meas_by_kind",
     "scan_node_voltage",
 ]
@@ -83,46 +80,3 @@ def scan_node_voltage(
         if not (has_pseudo and bool(r["is_pseudo"])):
             real_v[nid] = vv
     return all_v, real_v
-
-
-def node_degree_map(
-    branches_arr: np.ndarray,
-    *,
-    active_nodes: dict[int, bool] | None = None,
-) -> dict[int, int]:
-    """Count incident active branches per node.
-
-    Iterates active (``status``) branches, incrementing both endpoints. When
-    ``active_nodes`` is given, an endpoint is counted only if it maps to a truthy
-    value (the dead-generator cascade counts degree over active-node endpoints only).
-    """
-    degree: dict[int, int] = {}
-    for r in branches_arr:
-        if not r["status"]:
-            continue
-        for end in (int(r["from_node"]), int(r["to_node"])):
-            if active_nodes is not None and not active_nodes.get(end):
-                continue
-            degree[end] = degree.get(end, 0) + 1
-    return degree
-
-
-def node_degree_with_first_branch(
-    branches_arr: np.ndarray,
-) -> tuple[dict[int, int], dict[int, np.void]]:
-    """``(degree, first_branch)`` over active branches.
-
-    Like :func:`node_degree_map` (no ``active_nodes`` filter) but also records, for
-    each node, the first active incident branch row encountered — used by the
-    block-bus detector to inspect the single branch of a degree-1 node.
-    """
-    degree: dict[int, int] = {}
-    first_branch: dict[int, np.void] = {}
-    for r in branches_arr:
-        if not r["status"]:
-            continue
-        for end in (int(r["from_node"]), int(r["to_node"])):
-            degree[end] = degree.get(end, 0) + 1
-            if end not in first_branch:
-                first_branch[end] = r
-    return degree, first_branch
