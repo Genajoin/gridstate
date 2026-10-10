@@ -37,6 +37,7 @@ from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.resolve_pass import REVERT_REASON_NOT_CONVERGED, ResolveSnapshot
 from gridstate.units import BASE_MVA, NetworkPU
 from gridstate.utils import id_to_pos_map
+from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
@@ -155,7 +156,7 @@ def write_measurement_estimates(
     # на крупных моделях). Сначала помечаем ВСЕ меры как «не оценено» (NaN),
     # затем перекрываем оценёнными по id — без NaN-fill меры вне meas_index
     # несли бы 0 из zero-fill коллекции, неотличимый от нулевой оценки.
-    arr = measurements.to_numpy()
+    arr = table_copy(measurements)
     arr["estimated_si"] = np.nan
     arr["residual"] = np.nan
     id_to_row = id_to_pos_map(arr["id"])  # duplicate ids -> last wins
@@ -173,7 +174,7 @@ def write_measurement_estimates(
     est[vr] = h_si[valid]
     # residual в исходных единицах: value (в исходных) − estimated; f8−f8.
     res[vr] = arr["value"][vr] - h_si[valid]
-    measurements.update_from_array(arr)
+    table_replace(measurements, arr)
 
     return {"updated": int(valid.sum()), "missing": int((~valid).sum())}
 

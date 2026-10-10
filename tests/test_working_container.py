@@ -14,7 +14,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gridstate.working import Working, _ArrayCollection, _RowProxy
+from gridstate.working import (
+    Working,
+    _ArrayCollection,
+    _RowProxy,
+    table_copy,
+    table_replace,
+    table_view,
+)
 
 
 # Атрибуты Measurement, читаемые в 4 object-итерация-местах + units + result.
@@ -450,3 +457,111 @@ def test_array_collection_direct_construction():
     # копия: мутация исходного arr не задевает коллекцию
     arr[0]["value"] = 99.0
     assert coll.get_by_id(1).value == pytest.approx(1.5)
+
+
+# --- copy-free access (hot paths) ---------------------------------------------
+
+
+def _collection() -> _ArrayCollection:
+    dt = np.dtype([("id", "i4"), ("value", "f8"), ("name", "U16")])
+    return _ArrayCollection(np.array([(10, 1.0, "a"), (20, 2.0, "b")], dtype=dt))
+
+
+def test_to_numpy_default_is_an_independent_copy():
+    coll = _collection()
+    arr = coll.to_numpy()
+    arr["value"] = 99.0
+    assert coll.get_by_id(10).value == pytest.approx(1.0)
+    assert arr.flags.writeable
+
+
+def test_to_numpy_without_copy_is_a_read_only_view():
+    coll = _collection()
+    view = coll.to_numpy(copy=False)
+    assert not view.flags.writeable
+    with pytest.raises(ValueError):
+        view["value"][0] = 5.0
+    # The view shares memory with the backing array: in-place updates show.
+    coll.update(10, value=7.0)
+    assert view["value"][0] == 7.0
+    # The collection itself stays writeable.
+    coll.get_by_id(20).value = 3.0
+    assert coll.to_numpy()["value"][1] == 3.0
+
+
+def test_update_from_array_copy_semantics():
+    coll = _collection()
+    arr = coll.to_numpy()
+    coll.update_from_array(arr)  # default: copied
+    arr["value"][0] = -1.0
+    assert coll.get_by_id(10).value == pytest.approx(1.0)
+
+    owned = coll.to_numpy()
+    owned["value"][1] = 42.0
+    coll.update_from_array(owned, copy=False)  # ownership hand-over
+    assert np.shares_memory(coll.to_numpy(copy=False), owned)
+    assert coll.get_by_id(20).value == pytest.approx(42.0)
+
+    # A read-only array is copied even with copy=False, so the collection
+    # stays writeable.
+    ro = coll.to_numpy()
+    ro.flags.writeable = False
+    coll.update_from_array(ro, copy=False)
+    assert not np.shares_memory(coll.to_numpy(copy=False), ro)
+    coll.update(10, value=5.0)
+    assert coll.get_by_id(10).value == pytest.approx(5.0)
+
+
+def test_lazy_id_index_follows_every_rewrite():
+    coll = _collection()
+    arr = coll.to_numpy()
+    arr["id"] = [30, 40]
+    coll.update_from_array(arr)
+    assert coll.get_by_id(10) is None
+    assert coll.get_by_id(40).value == pytest.approx(2.0)
+    coll.add({"id": 50, "value": 5.0})
+    coll.add_many([{"id": 60, "value": 6.0}])
+    assert [coll.get_by_id(i).value for i in (30, 40, 50, 60)] == [1.0, 2.0, 5.0, 6.0]
+    with pytest.raises(ValueError):
+        coll.add({"id": 40})
+    # Duplicate ids: the last row wins, as with the eager index.
+    dup = coll.to_numpy()
+    dup["id"] = 7
+    coll.update_from_array(dup)
+    assert coll.get_by_id(7).value == pytest.approx(6.0)
+
+
+class _PlainCollection:
+    """Duck-typed collection whose to_numpy() returns its internal array."""
+
+    def __init__(self, arr: np.ndarray) -> None:
+        self.arr = arr
+        self.received: np.ndarray | None = None
+
+    def to_numpy(self) -> np.ndarray:
+        return self.arr
+
+    def update_from_array(self, array: np.ndarray) -> None:
+        self.received = array
+
+
+def test_table_helpers_on_working_collections():
+    coll = _collection()
+    assert not table_view(coll).flags.writeable
+    priv = table_copy(coll)
+    assert priv.flags.writeable
+    assert not np.shares_memory(priv, coll.to_numpy(copy=False))
+    priv["value"] = 8.0
+    table_replace(coll, priv)
+    assert np.shares_memory(coll.to_numpy(copy=False), priv)
+    assert coll.get_by_id(20).value == pytest.approx(8.0)
+
+
+def test_table_helpers_keep_the_plain_protocol_for_other_collections():
+    arr = _collection().to_numpy()
+    plain = _PlainCollection(arr)
+    assert table_view(plain) is arr
+    priv = table_copy(plain)
+    assert not np.shares_memory(priv, arr)  # defensive copy kept
+    table_replace(plain, priv)
+    assert plain.received is priv

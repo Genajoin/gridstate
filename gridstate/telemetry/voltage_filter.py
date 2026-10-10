@@ -30,6 +30,7 @@ from gridstate.constants import (
 )
 from gridstate.telemetry._filters import downweight_measurement, validate_downweight_action
 from gridstate.utils import id_to_pos_map
+from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
@@ -108,7 +109,7 @@ def apply_voltage_range_filter(
     # Енумы object/measurement-type резолвятся здесь (gridstate.constants),
     # ядро принимает готовые int и читает только контрактные колонки.
     validate_downweight_action(action)
-    meas_arr = model.measurements.to_numpy().copy()
+    meas_arr = table_copy(model.measurements)
     nodes_arr = model.nodes.to_numpy()
     stats = _voltage_range_filter_on_arrays(
         meas_arr,
@@ -124,9 +125,7 @@ def apply_voltage_range_filter(
         nonphysical_upper_factor=nonphysical_upper_factor,
         questionable_sigma2_multiplier=questionable_sigma2_multiplier,
     )
-    # NB: model.measurements.to_numpy() кеширует array; **всегда** вызываем
-    # update_from_array — он перестраивает _measurements из arr и валидирует кеш.
-    model.measurements.update_from_array(meas_arr)
+    table_replace(model.measurements, meas_arr)
     return stats
 
 
@@ -316,7 +315,7 @@ def apply_voltage_meas_calibration_for_gen_nodes(
     """
     if mode not in ("absolute", "tighten"):
         raise ValueError(f"mode must be 'absolute' or 'tighten', got {mode!r}")
-    meas_arr = model.measurements.to_numpy().copy()
+    meas_arr = table_copy(model.measurements)
     nodes_arr = model.nodes.to_numpy()
     stats = _voltage_meas_calibration_on_arrays(
         meas_arr,
@@ -327,7 +326,7 @@ def apply_voltage_meas_calibration_for_gen_nodes(
         sigma2=sigma2,
         mode=mode,
     )
-    model.measurements.update_from_array(meas_arr)
+    table_replace(model.measurements, meas_arr)
     return stats
 
 

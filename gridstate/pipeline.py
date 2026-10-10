@@ -78,7 +78,7 @@ from gridstate.topology import (
 )
 from gridstate.v_mirror import apply_v_mirror_plan, classify_chain_mirror, classify_v_mirror
 from gridstate.v_refine import apply_v_refine_plan, classify_v_refine
-from gridstate.working import Working
+from gridstate.working import Working, table_view
 
 
 # ---------------------------------------------------------------------------
@@ -1070,8 +1070,8 @@ def _s_bad_data_repass(ctx: _Ctx) -> dict:
     return _refine_two_pass(
         ctx,
         classify=lambda c: classify_bad_data(
-            c.model.measurements.to_numpy(),
-            c.model.branches.to_numpy(),
+            table_view(c.model.measurements),
+            table_view(c.model.branches),
             threshold=cfg.bad_data_threshold,
             sigma_cap=cfg.bad_data_sigma_cap,
             flip_ratio=cfg.bad_data_flip_ratio,
@@ -1094,7 +1094,7 @@ def _s_v_refine(ctx: _Ctx) -> dict:
     return _refine_two_pass(
         ctx,
         classify=lambda c: classify_v_refine(
-            c.model.measurements.to_numpy(),
+            table_view(c.model.measurements),
             rn_threshold=cfg.v_refine_rn,
         ),
         apply=lambda c, plan: apply_v_refine_plan(c.model, plan, factor=cfg.v_refine_factor),
@@ -1113,9 +1113,9 @@ def _s_v_mirror(ctx: _Ctx) -> dict:
     return _refine_two_pass(
         ctx,
         classify=lambda c: classify_v_mirror(
-            c.model.measurements.to_numpy(),
-            c.model.branches.to_numpy(),
-            c.model.nodes.to_numpy(),
+            table_view(c.model.measurements),
+            table_view(c.model.branches),
+            table_view(c.model.nodes),
             max_pu_dev=cfg.v_mirror_max_pu_dev,
             min_lift=cfg.v_mirror_min_lift,
             cross_at=cfg.v_mirror_cross_at,
@@ -1142,9 +1142,9 @@ def _s_v_mirror_chain(ctx: _Ctx) -> dict:
     return _refine_two_pass(
         ctx,
         classify=lambda c: classify_chain_mirror(
-            c.model.measurements.to_numpy(),
-            c.model.branches.to_numpy(),
-            c.model.nodes.to_numpy(),
+            table_view(c.model.measurements),
+            table_view(c.model.branches),
+            table_view(c.model.nodes),
             max_pu_dev=cfg.v_mirror_max_pu_dev,
             min_lift=cfg.v_mirror_min_lift,
             decay=cfg.v_mirror_chain_decay,
@@ -1179,16 +1179,18 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
     # (classification itself is read-only).
     guard = ResolveGuard(ctx.model, ctx.result)
     if cfg.v_refine:
-        vr_plan = classify_v_refine(ctx.model.measurements.to_numpy(), rn_threshold=cfg.v_refine_rn)
+        vr_plan = classify_v_refine(
+            table_view(ctx.model.measurements), rn_threshold=cfg.v_refine_rn
+        )
         if not vr_plan.empty:
             guard.arm()
             stats["v_refine"] = apply_v_refine_plan(ctx.model, vr_plan, factor=cfg.v_refine_factor)
             applied = True
     if cfg.v_mirror:
         vm_plan = classify_v_mirror(
-            ctx.model.measurements.to_numpy(),
-            ctx.model.branches.to_numpy(),
-            ctx.model.nodes.to_numpy(),
+            table_view(ctx.model.measurements),
+            table_view(ctx.model.branches),
+            table_view(ctx.model.nodes),
             max_pu_dev=cfg.v_mirror_max_pu_dev,
             min_lift=cfg.v_mirror_min_lift,
             cross_at=cfg.v_mirror_cross_at,
@@ -1201,9 +1203,9 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
         # classify ПОСЛЕ apply v_mirror: его узлы уже не флэт → непересечение,
         # как в последовательном порядке шагов.
         ch_plan = classify_chain_mirror(
-            ctx.model.measurements.to_numpy(),
-            ctx.model.branches.to_numpy(),
-            ctx.model.nodes.to_numpy(),
+            table_view(ctx.model.measurements),
+            table_view(ctx.model.branches),
+            table_view(ctx.model.nodes),
             max_pu_dev=cfg.v_mirror_max_pu_dev,
             min_lift=cfg.v_mirror_min_lift,
             decay=cfg.v_mirror_chain_decay,

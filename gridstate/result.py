@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate.working import table_view
+
 
 if TYPE_CHECKING:
     from gridstate.working import Working
@@ -218,9 +220,9 @@ class OutputTables:
 def extract_output_tables(model: Working) -> OutputTables:
     """Извлечь :class:`OutputTables` из рабочей модели после записи результатов."""
     return OutputTables(
-        nodes=_select_output_fields(model.nodes.to_numpy(), NODE_OUTPUT_FIELDS),
-        branches=_select_output_fields(model.branches.to_numpy(), BRANCH_OUTPUT_FIELDS),
-        measurements=_select_output_fields(model.measurements.to_numpy(), MEAS_OUTPUT_FIELDS),
+        nodes=_select_output_fields(table_view(model.nodes), NODE_OUTPUT_FIELDS),
+        branches=_select_output_fields(table_view(model.branches), BRANCH_OUTPUT_FIELDS),
+        measurements=_select_output_fields(table_view(model.measurements), MEAS_OUTPUT_FIELDS),
     )
 
 

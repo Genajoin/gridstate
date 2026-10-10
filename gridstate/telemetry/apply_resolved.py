@@ -23,6 +23,7 @@ from gridstate.telemetry._specs import _INJ_MT, _KIND_MAP, _NODE_INJ_MAP
 from gridstate.telemetry.loss_filter import is_branch_q_consistent_with_physics
 from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_QUESTIONABLE, aggregate_qualities
 from gridstate.telemetry.units import variance_branch_q, variance_power, variance_voltage
+from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
@@ -94,7 +95,7 @@ def apply_telemetry_resolved(
         q_loss_filter_action=q_loss_filter_action,
         q_loss_filter_downweight_factor=q_loss_filter_downweight_factor,
     )
-    meas_arr = model.measurements.to_numpy().copy()
+    meas_arr = table_copy(model.measurements)
     nodes_arr = model.nodes.to_numpy()
     branches_arr = model.branches.to_numpy()
 
@@ -108,7 +109,7 @@ def apply_telemetry_resolved(
         config=config,
     )
 
-    model.measurements.update_from_array(meas_arr)
+    table_replace(model.measurements, meas_arr)
     # Пакетная вставка за одну конкатенацию (per-row .add() = O(n²)).
     model.measurements.add_many(new_rows)
 
