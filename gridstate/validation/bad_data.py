@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
+from gridstate.algebra.normalized_residuals import normalized_residuals
 from gridstate.api import estimate
 from gridstate.result import SEResult
 from gridstate.validation._diagnostics import compute_diagnostics
@@ -210,35 +211,11 @@ def _normalized_residuals(diag: Diagnostics) -> np.ndarray:
     G), элемент возвращается как ``+∞`` — такое измерение фактически
     «non-redundant», и нормированный остаток для него не определён.
 
-    Используем плотную линейную алгебру: ``n_state = 2·n_bus − 1`` обычно
-    мало (≤ десятков тысяч), поэтому ``G⁻¹`` через ``np.linalg.solve``
-    значительно проще, чем sparse-инверсия.
-
-    Note:
-        ``gridstate.quality_summary._normalized_residuals`` computes the same
-        quantity through a faster Cholesky + triangular-solve path. The two are
-        kept separate on purpose (not merged): results may differ in the tails
-        due to differing numerical paths, and this iterative bad-data driver
-        must not depend on the quality-summary module.
+    Delegates to the shared sparse implementation
+    :func:`gridstate.algebra.normalized_residuals.normalized_residuals`
+    (also used by the quality summary): no ``m × m`` matrix is formed.
     """
-    H_dense = diag.H.toarray()  # (m × (2n−1))
-    R_inv_dense = diag.R_inv.toarray()
-    G = H_dense.T @ R_inv_dense @ H_dense  # (n_state × n_state)
-
-    try:
-        X = np.linalg.solve(G, H_dense.T)  # (n_state × m), X = G⁻¹ · Hᵀ
-    except np.linalg.LinAlgError as exc:
-        logger.error("Сбой при инверсии G в rn_max-тесте: %s", exc)
-        return np.full_like(diag.r, np.inf, dtype=np.float64)
-
-    # diag(H · G⁻¹ · Hᵀ) = построчное произведение H_dense и X.T
-    HGH_diag = np.einsum("ij,ji->i", H_dense, X)
-    omega_diag = diag.sigma2 - HGH_diag
-
-    # Численная защита: «−0» и почти нули → ∞.
-    omega_diag = np.where(omega_diag > 1e-12, omega_diag, np.nan)
-    rn = np.abs(diag.r) / np.sqrt(omega_diag)
-    return np.where(np.isnan(rn), np.inf, rn)
+    return normalized_residuals(diag.r, diag.H, diag.sigma2)
 
 
 def remove_bad_data(
