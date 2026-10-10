@@ -1,0 +1,2333 @@
+{
+ "default": {
+  "error": null,
+  "scalars": {
+   "success": true,
+   "iterations": 3,
+   "objective_value": 155327.22269121627,
+   "algorithm": "wls",
+   "convergence_status": "converged",
+   "chi2": {
+    "value": 155327.2226912163,
+    "dof": 853,
+    "threshold": 922.056513328912,
+    "passes": false
+   }
+  },
+  "events": [
+   {
+    "type": "clone",
+    "nodes": 118,
+    "branches": 186
+   },
+   {
+    "type": "step_start",
+    "name": "normalize_breakers"
+   },
+   {
+    "type": "step_done",
+    "name": "normalize_breakers",
+    "stats": {
+     "normalized": 0,
+     "eps_pu": 0.001
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "voltage_nominal"
+   },
+   {
+    "type": "step_skipped",
+    "name": "topology"
+   },
+   {
+    "type": "step_skipped",
+    "name": "rpn"
+   },
+   {
+    "type": "step_start",
+    "name": "reactors"
+   },
+   {
+    "type": "step_done",
+    "name": "reactors",
+    "stats": {
+     "applied": 1,
+     "sum_b_added_S": -0.005250997689561016,
+     "sum_g_added_S": 0.0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "telemetry"
+   },
+   {
+    "type": "step_start",
+    "name": "refine_slack"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_slack",
+    "stats": {
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_orphan_branches"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_orphan_branches",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_disconnected"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_disconnected",
+    "stats": {
+     "disabled": 0,
+     "orphan_recheck_disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_isolated"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_isolated",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "generator_status"
+   },
+   {
+    "type": "step_done",
+    "name": "generator_status",
+    "stats": {
+     "applied_off": 0,
+     "missing_node": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "voltage_range_filter"
+   },
+   {
+    "type": "step_done",
+    "name": "voltage_range_filter",
+    "stats": {
+     "checked": 55,
+     "out_of_range": 0,
+     "hard_deactivated": 0,
+     "downweighted_nominal_substitution": 0,
+     "by_vnom": {
+      "138": 49,
+      "345": 5,
+      "161": 1
+     }
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "resolve_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "resolve_merged",
+    "stats": {
+     "resolved_v": 0,
+     "resolved_p_inj": 0,
+     "resolved_q_inj": 0,
+     "deactivated": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types_2"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types_2",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "aggregate_generators"
+   },
+   {
+    "type": "step_done",
+    "name": "aggregate_generators",
+    "stats": {
+     "updated_nodes": 53,
+     "active_gens": 53,
+     "off_gens": 0,
+     "missing_node": 0,
+     "sentinel_p_nodes": 0,
+     "sentinel_q_nodes": 0,
+     "exist_gen_raised": 0,
+     "closed_nodes": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "release_load_only_injections"
+   },
+   {
+    "type": "step_skipped",
+    "name": "relax_generation_min_to_injection"
+   },
+   {
+    "type": "step_skipped",
+    "name": "widen_generation_only_injections"
+   },
+   {
+    "type": "step_start",
+    "name": "gen_v_calibration"
+   },
+   {
+    "type": "step_done",
+    "name": "gen_v_calibration",
+    "stats": {
+     "updated_meas": 1,
+     "target_nodes": 1
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "deactivate_orphan_measurements"
+   },
+   {
+    "type": "step_done",
+    "name": "deactivate_orphan_measurements",
+    "stats": {
+     "branch_meas": 0,
+     "node_meas": 0,
+     "gen_meas": 0,
+     "orphan_object_id": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "synthesize_injections"
+   },
+   {
+    "type": "step_done",
+    "name": "synthesize_injections",
+    "stats": {
+     "nodes_synthesized": 0,
+     "skipped_has_inj": 115,
+     "skipped_no_full_coverage": 3,
+     "skipped_orphan": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "mirror_voltage"
+   },
+   {
+    "type": "step_done",
+    "name": "mirror_voltage",
+    "stats": {
+     "added": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "materialize"
+   },
+   {
+    "type": "step_start",
+    "name": "add_pseudo"
+   },
+   {
+    "type": "step_done",
+    "name": "add_pseudo",
+    "stats": {
+     "v_priors_added": 63,
+     "zero_inj_added": 3,
+     "boundary_nodes": 0,
+     "block_buses": 0,
+     "block_bus_v_loose": 0,
+     "unobservable_v_tight": 0,
+     "unknown_load_loose": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "flow_sigma_floor"
+   },
+   {
+    "type": "step_done",
+    "name": "flow_sigma_floor",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "estimate"
+   },
+   {
+    "type": "step_done",
+    "name": "estimate",
+    "stats": {
+     "algorithm": "wls",
+     "success": true,
+     "iterations": 3,
+     "objective_value": 155327.22269121627
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "bad_data_repass"
+   },
+   {
+    "type": "step_skipped",
+    "name": "v_refine"
+   },
+   {
+    "type": "step_skipped",
+    "name": "v_mirror"
+   },
+   {
+    "type": "step_skipped",
+    "name": "v_mirror_chain"
+   },
+   {
+    "type": "step_skipped",
+    "name": "refine_merged"
+   },
+   {
+    "type": "step_start",
+    "name": "anti_overshoot"
+   },
+   {
+    "type": "step_done",
+    "name": "anti_overshoot",
+    "stats": {
+     "tightened": 0,
+     "accepted": false,
+     "max_ratio_before": 1.0507,
+     "max_ratio_after": 1.0507
+    }
+   },
+   {
+    "type": "step_done",
+    "name": "quality_summary",
+    "stats": {}
+   },
+   {
+    "type": "final",
+    "success": true,
+    "iterations": 3
+   }
+  ]
+ },
+ "ipm_full": {
+  "error": null,
+  "scalars": {
+   "success": true,
+   "iterations": 9,
+   "objective_value": 3239.7444241892085,
+   "algorithm": "ipm",
+   "convergence_status": "completed",
+   "chi2": {
+    "value": 37445.83022758266,
+    "dof": 850,
+    "threshold": 918.936904065983,
+    "passes": false
+   }
+  },
+  "events": [
+   {
+    "type": "clone",
+    "nodes": 118,
+    "branches": 186
+   },
+   {
+    "type": "step_start",
+    "name": "normalize_breakers"
+   },
+   {
+    "type": "step_done",
+    "name": "normalize_breakers",
+    "stats": {
+     "normalized": 0,
+     "eps_pu": 0.001
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "voltage_nominal"
+   },
+   {
+    "type": "step_skipped",
+    "name": "topology"
+   },
+   {
+    "type": "step_skipped",
+    "name": "rpn"
+   },
+   {
+    "type": "step_start",
+    "name": "reactors"
+   },
+   {
+    "type": "step_done",
+    "name": "reactors",
+    "stats": {
+     "applied": 1,
+     "sum_b_added_S": -0.005250997689561016,
+     "sum_g_added_S": 0.0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "telemetry"
+   },
+   {
+    "type": "step_start",
+    "name": "refine_slack"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_slack",
+    "stats": {
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_orphan_branches"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_orphan_branches",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_disconnected"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_disconnected",
+    "stats": {
+     "disabled": 0,
+     "orphan_recheck_disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_isolated"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_isolated",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "generator_status"
+   },
+   {
+    "type": "step_done",
+    "name": "generator_status",
+    "stats": {
+     "applied_off": 0,
+     "missing_node": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "voltage_range_filter"
+   },
+   {
+    "type": "step_done",
+    "name": "voltage_range_filter",
+    "stats": {
+     "checked": 55,
+     "out_of_range": 0,
+     "hard_deactivated": 0,
+     "downweighted_nominal_substitution": 0,
+     "by_vnom": {
+      "138": 49,
+      "345": 5,
+      "161": 1
+     }
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "resolve_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "resolve_merged",
+    "stats": {
+     "resolved_v": 0,
+     "resolved_p_inj": 0,
+     "resolved_q_inj": 0,
+     "deactivated": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types_2"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types_2",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "aggregate_generators"
+   },
+   {
+    "type": "step_done",
+    "name": "aggregate_generators",
+    "stats": {
+     "updated_nodes": 53,
+     "active_gens": 53,
+     "off_gens": 0,
+     "missing_node": 0,
+     "sentinel_p_nodes": 0,
+     "sentinel_q_nodes": 0,
+     "exist_gen_raised": 0,
+     "closed_nodes": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "release_load_only_injections"
+   },
+   {
+    "type": "step_skipped",
+    "name": "relax_generation_min_to_injection"
+   },
+   {
+    "type": "step_skipped",
+    "name": "widen_generation_only_injections"
+   },
+   {
+    "type": "step_start",
+    "name": "gen_v_calibration"
+   },
+   {
+    "type": "step_done",
+    "name": "gen_v_calibration",
+    "stats": {
+     "updated_meas": 1,
+     "target_nodes": 1
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "deactivate_orphan_measurements"
+   },
+   {
+    "type": "step_done",
+    "name": "deactivate_orphan_measurements",
+    "stats": {
+     "branch_meas": 0,
+     "node_meas": 0,
+     "gen_meas": 0,
+     "orphan_object_id": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "synthesize_injections"
+   },
+   {
+    "type": "step_done",
+    "name": "synthesize_injections",
+    "stats": {
+     "nodes_synthesized": 0,
+     "skipped_has_inj": 115,
+     "skipped_no_full_coverage": 3,
+     "skipped_orphan": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "mirror_voltage"
+   },
+   {
+    "type": "step_done",
+    "name": "mirror_voltage",
+    "stats": {
+     "added": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "materialize"
+   },
+   {
+    "type": "step_start",
+    "name": "add_pseudo"
+   },
+   {
+    "type": "step_done",
+    "name": "add_pseudo",
+    "stats": {
+     "v_priors_added": 63,
+     "zero_inj_added": 3,
+     "boundary_nodes": 0,
+     "block_buses": 0,
+     "block_bus_v_loose": 0,
+     "unobservable_v_tight": 0,
+     "unknown_load_loose": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "flow_sigma_floor"
+   },
+   {
+    "type": "step_done",
+    "name": "flow_sigma_floor",
+    "stats": {
+     "checked": 734,
+     "floored": 734
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "estimate"
+   },
+   {
+    "type": "step_done",
+    "name": "estimate",
+    "stats": {
+     "algorithm": "ipm",
+     "success": true,
+     "iterations": 9,
+     "objective_value": 16030.89551789888
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "bad_data_repass"
+   },
+   {
+    "type": "step_done",
+    "name": "bad_data_repass",
+    "stats": {
+     "flips": 1,
+     "rejects": 3,
+     "damped": 1,
+     "candidates": 15,
+     "immune": 10,
+     "restored": 0,
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_refine"
+   },
+   {
+    "type": "step_done",
+    "name": "v_refine",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror_chain"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror_chain",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_merged",
+    "stats": {
+     "v_refine": {
+      "tightened": 48,
+      "conflicting": 7
+     },
+     "v_mirror": {
+      "clusters": 1,
+      "nodes": 1
+     },
+     "v_mirror_chain": {
+      "max_depth": 2,
+      "nodes": 36
+     },
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "anti_overshoot"
+   },
+   {
+    "type": "step_done",
+    "name": "quality_summary",
+    "stats": {}
+   },
+   {
+    "type": "final",
+    "success": true,
+    "iterations": 9
+   }
+  ]
+ },
+ "ipm_sequential": {
+  "error": null,
+  "scalars": {
+   "success": true,
+   "iterations": 9,
+   "objective_value": 3240.2174522507266,
+   "algorithm": "ipm",
+   "convergence_status": "completed",
+   "chi2": {
+    "value": 37447.39845318668,
+    "dof": 850,
+    "threshold": 918.936904065983,
+    "passes": false
+   }
+  },
+  "events": [
+   {
+    "type": "clone",
+    "nodes": 118,
+    "branches": 186
+   },
+   {
+    "type": "step_start",
+    "name": "normalize_breakers"
+   },
+   {
+    "type": "step_done",
+    "name": "normalize_breakers",
+    "stats": {
+     "normalized": 0,
+     "eps_pu": 0.001
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "voltage_nominal"
+   },
+   {
+    "type": "step_skipped",
+    "name": "topology"
+   },
+   {
+    "type": "step_skipped",
+    "name": "rpn"
+   },
+   {
+    "type": "step_start",
+    "name": "reactors"
+   },
+   {
+    "type": "step_done",
+    "name": "reactors",
+    "stats": {
+     "applied": 1,
+     "sum_b_added_S": -0.005250997689561016,
+     "sum_g_added_S": 0.0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "telemetry"
+   },
+   {
+    "type": "step_start",
+    "name": "refine_slack"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_slack",
+    "stats": {
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_orphan_branches"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_orphan_branches",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_disconnected"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_disconnected",
+    "stats": {
+     "disabled": 0,
+     "orphan_recheck_disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_isolated"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_isolated",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "generator_status"
+   },
+   {
+    "type": "step_done",
+    "name": "generator_status",
+    "stats": {
+     "applied_off": 0,
+     "missing_node": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "voltage_range_filter"
+   },
+   {
+    "type": "step_done",
+    "name": "voltage_range_filter",
+    "stats": {
+     "checked": 55,
+     "out_of_range": 0,
+     "hard_deactivated": 0,
+     "downweighted_nominal_substitution": 0,
+     "by_vnom": {
+      "138": 49,
+      "345": 5,
+      "161": 1
+     }
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "resolve_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "resolve_merged",
+    "stats": {
+     "resolved_v": 0,
+     "resolved_p_inj": 0,
+     "resolved_q_inj": 0,
+     "deactivated": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types_2"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types_2",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "aggregate_generators"
+   },
+   {
+    "type": "step_done",
+    "name": "aggregate_generators",
+    "stats": {
+     "updated_nodes": 53,
+     "active_gens": 53,
+     "off_gens": 0,
+     "missing_node": 0,
+     "sentinel_p_nodes": 0,
+     "sentinel_q_nodes": 0,
+     "exist_gen_raised": 0,
+     "closed_nodes": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "release_load_only_injections"
+   },
+   {
+    "type": "step_skipped",
+    "name": "relax_generation_min_to_injection"
+   },
+   {
+    "type": "step_skipped",
+    "name": "widen_generation_only_injections"
+   },
+   {
+    "type": "step_start",
+    "name": "gen_v_calibration"
+   },
+   {
+    "type": "step_done",
+    "name": "gen_v_calibration",
+    "stats": {
+     "updated_meas": 1,
+     "target_nodes": 1
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "deactivate_orphan_measurements"
+   },
+   {
+    "type": "step_done",
+    "name": "deactivate_orphan_measurements",
+    "stats": {
+     "branch_meas": 0,
+     "node_meas": 0,
+     "gen_meas": 0,
+     "orphan_object_id": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "synthesize_injections"
+   },
+   {
+    "type": "step_done",
+    "name": "synthesize_injections",
+    "stats": {
+     "nodes_synthesized": 0,
+     "skipped_has_inj": 115,
+     "skipped_no_full_coverage": 3,
+     "skipped_orphan": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "mirror_voltage"
+   },
+   {
+    "type": "step_done",
+    "name": "mirror_voltage",
+    "stats": {
+     "added": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "materialize"
+   },
+   {
+    "type": "step_start",
+    "name": "add_pseudo"
+   },
+   {
+    "type": "step_done",
+    "name": "add_pseudo",
+    "stats": {
+     "v_priors_added": 63,
+     "zero_inj_added": 3,
+     "boundary_nodes": 0,
+     "block_buses": 0,
+     "block_bus_v_loose": 0,
+     "unobservable_v_tight": 0,
+     "unknown_load_loose": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "flow_sigma_floor"
+   },
+   {
+    "type": "step_done",
+    "name": "flow_sigma_floor",
+    "stats": {
+     "checked": 734,
+     "floored": 734
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "estimate"
+   },
+   {
+    "type": "step_done",
+    "name": "estimate",
+    "stats": {
+     "algorithm": "ipm",
+     "success": true,
+     "iterations": 9,
+     "objective_value": 16030.89551789888
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "bad_data_repass"
+   },
+   {
+    "type": "step_done",
+    "name": "bad_data_repass",
+    "stats": {
+     "flips": 1,
+     "rejects": 3,
+     "damped": 1,
+     "candidates": 15,
+     "immune": 10,
+     "restored": 0,
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_refine"
+   },
+   {
+    "type": "step_done",
+    "name": "v_refine",
+    "stats": {
+     "tightened": 48,
+     "conflicting": 7,
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror",
+    "stats": {
+     "clusters": 1,
+     "nodes": 1,
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror_chain"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror_chain",
+    "stats": {
+     "max_depth": 2,
+     "nodes": 36,
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "refine_merged"
+   },
+   {
+    "type": "step_skipped",
+    "name": "anti_overshoot"
+   },
+   {
+    "type": "step_done",
+    "name": "quality_summary",
+    "stats": {}
+   },
+   {
+    "type": "final",
+    "success": true,
+    "iterations": 9
+   }
+  ]
+ },
+ "anti_overshoot": {
+  "error": null,
+  "scalars": {
+   "success": true,
+   "iterations": 9,
+   "objective_value": 3242.6164247757247,
+   "algorithm": "ipm",
+   "convergence_status": "completed",
+   "chi2": {
+    "value": 37443.099725299086,
+    "dof": 852,
+    "threshold": 921.0166669926216,
+    "passes": false
+   }
+  },
+  "events": [
+   {
+    "type": "clone",
+    "nodes": 118,
+    "branches": 186
+   },
+   {
+    "type": "step_start",
+    "name": "normalize_breakers"
+   },
+   {
+    "type": "step_done",
+    "name": "normalize_breakers",
+    "stats": {
+     "normalized": 0,
+     "eps_pu": 0.001
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "voltage_nominal"
+   },
+   {
+    "type": "step_skipped",
+    "name": "topology"
+   },
+   {
+    "type": "step_skipped",
+    "name": "rpn"
+   },
+   {
+    "type": "step_start",
+    "name": "reactors"
+   },
+   {
+    "type": "step_done",
+    "name": "reactors",
+    "stats": {
+     "applied": 1,
+     "sum_b_added_S": -0.005250997689561016,
+     "sum_g_added_S": 0.0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "telemetry"
+   },
+   {
+    "type": "step_start",
+    "name": "refine_slack"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_slack",
+    "stats": {
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_orphan_branches"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_orphan_branches",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_disconnected"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_disconnected",
+    "stats": {
+     "disabled": 0,
+     "orphan_recheck_disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_isolated"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_isolated",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "generator_status"
+   },
+   {
+    "type": "step_done",
+    "name": "generator_status",
+    "stats": {
+     "applied_off": 0,
+     "missing_node": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "voltage_range_filter"
+   },
+   {
+    "type": "step_done",
+    "name": "voltage_range_filter",
+    "stats": {
+     "checked": 55,
+     "out_of_range": 0,
+     "hard_deactivated": 0,
+     "downweighted_nominal_substitution": 0,
+     "by_vnom": {
+      "138": 49,
+      "345": 5,
+      "161": 1
+     }
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "resolve_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "resolve_merged",
+    "stats": {
+     "resolved_v": 0,
+     "resolved_p_inj": 0,
+     "resolved_q_inj": 0,
+     "deactivated": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types_2"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types_2",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "aggregate_generators"
+   },
+   {
+    "type": "step_done",
+    "name": "aggregate_generators",
+    "stats": {
+     "updated_nodes": 53,
+     "active_gens": 53,
+     "off_gens": 0,
+     "missing_node": 0,
+     "sentinel_p_nodes": 0,
+     "sentinel_q_nodes": 0,
+     "exist_gen_raised": 0,
+     "closed_nodes": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "release_load_only_injections"
+   },
+   {
+    "type": "step_skipped",
+    "name": "relax_generation_min_to_injection"
+   },
+   {
+    "type": "step_skipped",
+    "name": "widen_generation_only_injections"
+   },
+   {
+    "type": "step_start",
+    "name": "gen_v_calibration"
+   },
+   {
+    "type": "step_done",
+    "name": "gen_v_calibration",
+    "stats": {
+     "updated_meas": 1,
+     "target_nodes": 1
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "deactivate_orphan_measurements"
+   },
+   {
+    "type": "step_done",
+    "name": "deactivate_orphan_measurements",
+    "stats": {
+     "branch_meas": 0,
+     "node_meas": 0,
+     "gen_meas": 0,
+     "orphan_object_id": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "synthesize_injections"
+   },
+   {
+    "type": "step_done",
+    "name": "synthesize_injections",
+    "stats": {
+     "nodes_synthesized": 0,
+     "skipped_has_inj": 115,
+     "skipped_no_full_coverage": 3,
+     "skipped_orphan": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "mirror_voltage"
+   },
+   {
+    "type": "step_done",
+    "name": "mirror_voltage",
+    "stats": {
+     "added": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "materialize"
+   },
+   {
+    "type": "step_start",
+    "name": "add_pseudo"
+   },
+   {
+    "type": "step_done",
+    "name": "add_pseudo",
+    "stats": {
+     "v_priors_added": 63,
+     "zero_inj_added": 3,
+     "boundary_nodes": 0,
+     "block_buses": 0,
+     "block_bus_v_loose": 0,
+     "unobservable_v_tight": 0,
+     "unknown_load_loose": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "flow_sigma_floor"
+   },
+   {
+    "type": "step_done",
+    "name": "flow_sigma_floor",
+    "stats": {
+     "checked": 734,
+     "floored": 734
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "estimate"
+   },
+   {
+    "type": "step_done",
+    "name": "estimate",
+    "stats": {
+     "algorithm": "ipm",
+     "success": true,
+     "iterations": 9,
+     "objective_value": 16030.89551789888
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "bad_data_repass"
+   },
+   {
+    "type": "step_done",
+    "name": "bad_data_repass",
+    "stats": {
+     "flips": 1,
+     "rejects": 3,
+     "damped": 1,
+     "candidates": 15,
+     "immune": 10,
+     "restored": 0,
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_refine"
+   },
+   {
+    "type": "step_done",
+    "name": "v_refine",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror_chain"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror_chain",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_merged",
+    "stats": {
+     "v_refine": {
+      "tightened": 48,
+      "conflicting": 7
+     },
+     "v_mirror": {
+      "clusters": 1,
+      "nodes": 1
+     },
+     "v_mirror_chain": {
+      "max_depth": 2,
+      "nodes": 36
+     },
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "anti_overshoot"
+   },
+   {
+    "type": "step_done",
+    "name": "anti_overshoot",
+    "stats": {
+     "tightened": 1,
+     "accepted": true,
+     "max_ratio_before": 1.0503,
+     "max_ratio_after": 1.05
+    }
+   },
+   {
+    "type": "step_done",
+    "name": "quality_summary",
+    "stats": {}
+   },
+   {
+    "type": "final",
+    "success": true,
+    "iterations": 9
+   }
+  ]
+ },
+ "shunt_sanity": {
+  "error": null,
+  "scalars": {
+   "success": true,
+   "iterations": 9,
+   "objective_value": 3070.0790385288597,
+   "algorithm": "ipm",
+   "convergence_status": "completed",
+   "chi2": {
+    "value": 36979.821379905115,
+    "dof": 850,
+    "threshold": 918.936904065983,
+    "passes": false
+   }
+  },
+  "events": [
+   {
+    "type": "clone",
+    "nodes": 118,
+    "branches": 186
+   },
+   {
+    "type": "step_start",
+    "name": "normalize_breakers"
+   },
+   {
+    "type": "step_done",
+    "name": "normalize_breakers",
+    "stats": {
+     "normalized": 0,
+     "eps_pu": 0.001
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "voltage_nominal"
+   },
+   {
+    "type": "step_skipped",
+    "name": "topology"
+   },
+   {
+    "type": "step_skipped",
+    "name": "rpn"
+   },
+   {
+    "type": "step_start",
+    "name": "reactors"
+   },
+   {
+    "type": "step_done",
+    "name": "reactors",
+    "stats": {
+     "applied": 1,
+     "sum_b_added_S": -0.005250997689561016,
+     "sum_g_added_S": 0.0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "telemetry"
+   },
+   {
+    "type": "step_start",
+    "name": "refine_slack"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_slack",
+    "stats": {
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_orphan_branches"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_orphan_branches",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_disconnected"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_disconnected",
+    "stats": {
+     "disabled": 0,
+     "orphan_recheck_disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_isolated"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_isolated",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "generator_status"
+   },
+   {
+    "type": "step_done",
+    "name": "generator_status",
+    "stats": {
+     "applied_off": 0,
+     "missing_node": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "voltage_range_filter"
+   },
+   {
+    "type": "step_done",
+    "name": "voltage_range_filter",
+    "stats": {
+     "checked": 55,
+     "out_of_range": 0,
+     "hard_deactivated": 0,
+     "downweighted_nominal_substitution": 0,
+     "by_vnom": {
+      "138": 49,
+      "345": 5,
+      "161": 1
+     }
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "resolve_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "resolve_merged",
+    "stats": {
+     "resolved_v": 0,
+     "resolved_p_inj": 0,
+     "resolved_q_inj": 0,
+     "deactivated": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types_2"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types_2",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "aggregate_generators"
+   },
+   {
+    "type": "step_done",
+    "name": "aggregate_generators",
+    "stats": {
+     "updated_nodes": 53,
+     "active_gens": 53,
+     "off_gens": 0,
+     "missing_node": 0,
+     "sentinel_p_nodes": 0,
+     "sentinel_q_nodes": 0,
+     "exist_gen_raised": 0,
+     "closed_nodes": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "release_load_only_injections"
+   },
+   {
+    "type": "step_skipped",
+    "name": "relax_generation_min_to_injection"
+   },
+   {
+    "type": "step_skipped",
+    "name": "widen_generation_only_injections"
+   },
+   {
+    "type": "step_start",
+    "name": "gen_v_calibration"
+   },
+   {
+    "type": "step_done",
+    "name": "gen_v_calibration",
+    "stats": {
+     "updated_meas": 1,
+     "target_nodes": 1
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "deactivate_orphan_measurements"
+   },
+   {
+    "type": "step_done",
+    "name": "deactivate_orphan_measurements",
+    "stats": {
+     "branch_meas": 0,
+     "node_meas": 0,
+     "gen_meas": 0,
+     "orphan_object_id": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "synthesize_injections"
+   },
+   {
+    "type": "step_done",
+    "name": "synthesize_injections",
+    "stats": {
+     "nodes_synthesized": 0,
+     "skipped_has_inj": 115,
+     "skipped_no_full_coverage": 3,
+     "skipped_orphan": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "mirror_voltage"
+   },
+   {
+    "type": "step_done",
+    "name": "mirror_voltage",
+    "stats": {
+     "added": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "materialize"
+   },
+   {
+    "type": "step_start",
+    "name": "add_pseudo"
+   },
+   {
+    "type": "step_done",
+    "name": "add_pseudo",
+    "stats": {
+     "v_priors_added": 63,
+     "zero_inj_added": 3,
+     "boundary_nodes": 0,
+     "block_buses": 0,
+     "block_bus_v_loose": 0,
+     "unobservable_v_tight": 0,
+     "unknown_load_loose": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "flow_sigma_floor"
+   },
+   {
+    "type": "step_done",
+    "name": "flow_sigma_floor",
+    "stats": {
+     "checked": 734,
+     "floored": 734
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "estimate"
+   },
+   {
+    "type": "step_done",
+    "name": "estimate",
+    "stats": {
+     "algorithm": "ipm",
+     "success": true,
+     "iterations": 9,
+     "objective_value": 16030.89551789888
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "bad_data_repass"
+   },
+   {
+    "type": "step_done",
+    "name": "bad_data_repass",
+    "stats": {
+     "flips": 1,
+     "rejects": 3,
+     "damped": 1,
+     "candidates": 15,
+     "immune": 10,
+     "restored": 0,
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_refine"
+   },
+   {
+    "type": "step_done",
+    "name": "v_refine",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror_chain"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror_chain",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_merged",
+    "stats": {
+     "v_refine": {
+      "tightened": 48,
+      "conflicting": 7
+     },
+     "v_mirror": {
+      "clusters": 1,
+      "nodes": 1
+     },
+     "v_mirror_chain": {
+      "max_depth": 2,
+      "nodes": 36
+     },
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "anti_overshoot"
+   },
+   {
+    "type": "step_done",
+    "name": "quality_summary",
+    "stats": {}
+   },
+   {
+    "type": "final",
+    "success": true,
+    "iterations": 9
+   },
+   {
+    "type": "step_done",
+    "name": "shunt_sanity",
+    "stats": {
+     "candidates": 1,
+     "accepted": 1,
+     "edits": {
+      "36": "off"
+     },
+     "rn2_drop": 464.604611663417
+    }
+   }
+  ]
+ },
+ "warm_start": {
+  "error": null,
+  "scalars": {
+   "success": true,
+   "iterations": 9,
+   "objective_value": 3232.274067957369,
+   "algorithm": "ipm",
+   "convergence_status": "completed",
+   "chi2": {
+    "value": 37427.197639735656,
+    "dof": 850,
+    "threshold": 918.936904065983,
+    "passes": false
+   }
+  },
+  "events": [
+   {
+    "type": "warm_start",
+    "seeded_nodes": 118
+   },
+   {
+    "type": "clone",
+    "nodes": 118,
+    "branches": 186
+   },
+   {
+    "type": "step_start",
+    "name": "normalize_breakers"
+   },
+   {
+    "type": "step_done",
+    "name": "normalize_breakers",
+    "stats": {
+     "normalized": 0,
+     "eps_pu": 0.001
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "voltage_nominal"
+   },
+   {
+    "type": "step_skipped",
+    "name": "topology"
+   },
+   {
+    "type": "step_skipped",
+    "name": "rpn"
+   },
+   {
+    "type": "step_start",
+    "name": "reactors"
+   },
+   {
+    "type": "step_done",
+    "name": "reactors",
+    "stats": {
+     "applied": 1,
+     "sum_b_added_S": -0.005250997689561016,
+     "sum_g_added_S": 0.0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "telemetry"
+   },
+   {
+    "type": "step_start",
+    "name": "refine_slack"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_slack",
+    "stats": {
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_orphan_branches"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_orphan_branches",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_disconnected"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_disconnected",
+    "stats": {
+     "disabled": 0,
+     "orphan_recheck_disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "disable_isolated"
+   },
+   {
+    "type": "step_done",
+    "name": "disable_isolated",
+    "stats": {
+     "disabled": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "generator_status"
+   },
+   {
+    "type": "step_done",
+    "name": "generator_status",
+    "stats": {
+     "applied_off": 0,
+     "missing_node": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "voltage_range_filter"
+   },
+   {
+    "type": "step_done",
+    "name": "voltage_range_filter",
+    "stats": {
+     "checked": 55,
+     "out_of_range": 0,
+     "hard_deactivated": 0,
+     "downweighted_nominal_substitution": 0,
+     "by_vnom": {
+      "138": 49,
+      "345": 5,
+      "161": 1
+     }
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "resolve_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "resolve_merged",
+    "stats": {
+     "resolved_v": 0,
+     "resolved_p_inj": 0,
+     "resolved_q_inj": 0,
+     "deactivated": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_node_types_2"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_node_types_2",
+    "stats": {
+     "promoted": 0,
+     "demoted": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "aggregate_generators"
+   },
+   {
+    "type": "step_done",
+    "name": "aggregate_generators",
+    "stats": {
+     "updated_nodes": 53,
+     "active_gens": 53,
+     "off_gens": 0,
+     "missing_node": 0,
+     "sentinel_p_nodes": 0,
+     "sentinel_q_nodes": 0,
+     "exist_gen_raised": 0,
+     "closed_nodes": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "release_load_only_injections"
+   },
+   {
+    "type": "step_skipped",
+    "name": "relax_generation_min_to_injection"
+   },
+   {
+    "type": "step_skipped",
+    "name": "widen_generation_only_injections"
+   },
+   {
+    "type": "step_start",
+    "name": "gen_v_calibration"
+   },
+   {
+    "type": "step_done",
+    "name": "gen_v_calibration",
+    "stats": {
+     "updated_meas": 1,
+     "target_nodes": 1
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "deactivate_orphan_measurements"
+   },
+   {
+    "type": "step_done",
+    "name": "deactivate_orphan_measurements",
+    "stats": {
+     "branch_meas": 0,
+     "node_meas": 0,
+     "gen_meas": 0,
+     "orphan_object_id": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "synthesize_injections"
+   },
+   {
+    "type": "step_done",
+    "name": "synthesize_injections",
+    "stats": {
+     "nodes_synthesized": 0,
+     "skipped_has_inj": 115,
+     "skipped_no_full_coverage": 3,
+     "skipped_orphan": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "mirror_voltage"
+   },
+   {
+    "type": "step_done",
+    "name": "mirror_voltage",
+    "stats": {
+     "added": 0
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "materialize"
+   },
+   {
+    "type": "step_start",
+    "name": "add_pseudo"
+   },
+   {
+    "type": "step_done",
+    "name": "add_pseudo",
+    "stats": {
+     "v_priors_added": 63,
+     "zero_inj_added": 3,
+     "boundary_nodes": 0,
+     "block_buses": 0,
+     "block_bus_v_loose": 0,
+     "unobservable_v_tight": 5,
+     "unknown_load_loose": 0
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "flow_sigma_floor"
+   },
+   {
+    "type": "step_done",
+    "name": "flow_sigma_floor",
+    "stats": {
+     "checked": 734,
+     "floored": 734
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "estimate"
+   },
+   {
+    "type": "step_done",
+    "name": "estimate",
+    "stats": {
+     "algorithm": "ipm",
+     "success": true,
+     "iterations": 9,
+     "objective_value": 16020.840214226771
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "bad_data_repass"
+   },
+   {
+    "type": "step_done",
+    "name": "bad_data_repass",
+    "stats": {
+     "flips": 1,
+     "rejects": 3,
+     "damped": 1,
+     "candidates": 15,
+     "immune": 10,
+     "restored": 0,
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_refine"
+   },
+   {
+    "type": "step_done",
+    "name": "v_refine",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "v_mirror_chain"
+   },
+   {
+    "type": "step_done",
+    "name": "v_mirror_chain",
+    "stats": {
+     "skipped": "<text>"
+    }
+   },
+   {
+    "type": "step_start",
+    "name": "refine_merged"
+   },
+   {
+    "type": "step_done",
+    "name": "refine_merged",
+    "stats": {
+     "v_refine": {
+      "tightened": 48,
+      "conflicting": 7
+     },
+     "success": true,
+     "iterations": 9
+    }
+   },
+   {
+    "type": "step_skipped",
+    "name": "anti_overshoot"
+   },
+   {
+    "type": "step_done",
+    "name": "quality_summary",
+    "stats": {}
+   },
+   {
+    "type": "final",
+    "success": true,
+    "iterations": 9
+   }
+  ]
+ }
+}
