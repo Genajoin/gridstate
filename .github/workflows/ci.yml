@@ -94,6 +94,30 @@ jobs:
           GRIDSTATE_NUMBA: "0"
         run: pytest tests/test_kkt_solver.py tests/test_gram_numba.py tests/test_golden.py -q
 
+  test-models:
+    name: Test (pandapower adapter, Python 3.12)
+    runs-on: ubuntu-latest
+    # The pandapower adapter (gridstate.adapters) is checked against pandapower
+    # itself (Y-bus, branch flows, injections on IEEE cases). pandapower is not
+    # a gridstate dependency, so the `test` matrix skips those tests; this job
+    # installs the `test-models` extra and requires them to run.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # setuptools_scm needs full history + tags for the version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test,test-models]"
+      - name: Run the adapter tests (no skips allowed)
+        shell: bash  # explicit shell = -eo pipefail, so a pytest failure is not masked by tee
+        run: |
+          pytest tests/test_from_pandapower.py tests/test_adapters_lazy_import.py -rs | tee pytest.log
+          if grep -E "^SKIPPED" pytest.log; then
+            echo "::error::pandapower adapter tests were skipped"
+            exit 1
+          fi
+
   build:
     name: Build (sdist + wheel)
     runs-on: ubuntu-latest
