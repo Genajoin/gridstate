@@ -2,7 +2,7 @@
 
 A pass that edits measurements and warm re-solves must not turn a converged
 solution into a non-converged one. The re-solve failure is forced by wrapping
-``gridstate.pipeline.estimate``: the first call (main solve) is untouched,
+``gridstate.pipeline.passes.estimate``: the first call (main solve) is untouched,
 later calls (re-solves) run for real — so they do mutate V/δ, flows and
 ``estimated_si`` — and then report ``success=False``. After the revert the run
 must be bit-identical to a run with that pass switched off.
@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-import gridstate.pipeline as pipeline_mod
+import gridstate.pipeline.passes as passes_mod
 from gridstate.contract import run as run_se
 from gridstate.contract.serialize import load_se_input_npz
 from gridstate.pipeline import PipelineConfig
@@ -63,7 +63,7 @@ def _load(*, blind_every: int = 0) -> Any:
 
 def _fail_resolves(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Make every estimate call after the first report non-convergence."""
-    real = pipeline_mod.estimate
+    real = passes_mod.estimate
     calls: list[int] = []
 
     def _estimate(model: Any, **kw: Any) -> Any:
@@ -73,7 +73,7 @@ def _fail_resolves(monkeypatch: pytest.MonkeyPatch) -> list[int]:
             res.success = False
         return res
 
-    monkeypatch.setattr(pipeline_mod, "estimate", _estimate)
+    monkeypatch.setattr(passes_mod, "estimate", _estimate)
     return calls
 
 
@@ -169,7 +169,7 @@ def _pseudo_v_plan(measurements: np.ndarray, *_a: Any, **_kw: Any) -> VMirrorPla
 def test_v_mirror_reverts_on_failed_resolve(monkeypatch):
     base = replace(PipelineConfig(algorithm="wls"), **_PASSES_OFF)
     # The IEEE fixture has no blind clusters with a boundary; force a plan.
-    monkeypatch.setattr(pipeline_mod, "classify_v_mirror", _pseudo_v_plan)
+    monkeypatch.setattr(passes_mod, "classify_v_mirror", _pseudo_v_plan)
     st = _check_revert(
         monkeypatch,
         se_in_factory=lambda: _load(blind_every=2),
