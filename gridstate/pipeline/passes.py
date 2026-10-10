@@ -22,7 +22,7 @@ from typing import Any
 from gridstate.api import estimate
 from gridstate.bad_data_repass import apply_bad_data_plan, classify_bad_data
 from gridstate.pipeline.config import PipelineConfig
-from gridstate.pipeline.context import _Ctx
+from gridstate.pipeline.context import _Ctx, _no_solution
 from gridstate.post_processing import refine_anti_overshoot
 from gridstate.resolve_pass import ResolveGuard
 from gridstate.result import SEResult
@@ -124,7 +124,8 @@ def _refine_two_pass(
     expose an ``empty`` property. A re-solve that loses convergence is
     reverted (see :mod:`gridstate.resolve_pass`).
     """
-    assert ctx.result is not None  # steps run after estimate → result exists
+    if ctx.result is None:  # the passes run after estimate
+        raise _no_solution("two-pass refine")
     if not ctx.result.success:
         # An unusable solution (completed=False) has unreliable residuals —
         # classifying on them is worse than skipping the re-pass.
@@ -253,7 +254,8 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
     cfg = ctx.cfg
     if not cfg.refine_merge:
         return {"skipped": "выключено (refine_merge=False)"}
-    assert ctx.result is not None
+    if ctx.result is None:
+        raise _no_solution("refine_merged")
     if not ctx.result.success:
         return {"skipped": "решение непригодно — нет надёжных остатков"}
     stats: dict[str, Any] = {}
@@ -309,7 +311,8 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
 
 
 def _s_anti_overshoot(ctx: _Ctx) -> dict:
-    assert ctx.result is not None  # the step runs after estimate → the result exists
+    if ctx.result is None:  # the step runs after estimate
+        raise _no_solution("anti_overshoot")
     cfg = ctx.cfg
 
     def _resolve() -> SEResult:

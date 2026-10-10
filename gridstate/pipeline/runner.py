@@ -16,7 +16,7 @@ from typing import Any
 from gridstate.api import populate_quality_summary
 from gridstate.contract.derived import DerivedInputs
 from gridstate.pipeline.config import PipelineConfig
-from gridstate.pipeline.context import Step, _Ctx
+from gridstate.pipeline.context import Step, _Ctx, _no_solution
 from gridstate.pipeline.steps import STEPS
 from gridstate.result import SEResult
 from gridstate.working import Working
@@ -258,7 +258,8 @@ def run(
     for step in STEPS:
         _execute_step(step, ctx, on_event)
 
-    assert ctx.result is not None  # _s_estimate (no toggle) always sets the result
+    if ctx.result is None:  # _s_estimate (no toggle) always sets the result
+        raise _no_solution("quality_summary")
 
     # Quality summary is computed once, on the final solution: the intermediate
     # solves (estimate, anti-overshoot re-solve) run with

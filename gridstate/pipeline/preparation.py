@@ -7,7 +7,7 @@ order they run in is declared by the registry (:mod:`gridstate.pipeline.steps`).
 
 from __future__ import annotations
 
-from gridstate.pipeline.context import _Ctx
+from gridstate.pipeline.context import _Ctx, _missing_plan
 from gridstate.preprocessing import (
     add_pseudo_measurements,
     mirror_voltage_through_unit_tap_links,
@@ -51,14 +51,16 @@ def _s_normalize_breakers(ctx: _Ctx) -> dict:
 
 def _s_voltage_nominal(ctx: _Ctx) -> dict:
     # Apply the ready Vnom plan (computed outside the core).
-    assert ctx.derived is not None and ctx.derived.voltage_nominal is not None
+    if ctx.derived is None or ctx.derived.voltage_nominal is None:
+        raise _missing_plan("voltage_nominal", "voltage_nominal")
     apply_voltage_nominal_resolved(ctx.model, ctx.derived.voltage_nominal)
     return {}
 
 
 def _s_topology(ctx: _Ctx) -> dict:
     # Apply the ready ON_LINE status plan (computed outside the core).
-    assert ctx.derived is not None and ctx.derived.topology_resolved is not None
+    if ctx.derived is None or ctx.derived.topology_resolved is None:
+        raise _missing_plan("topology", "topology_resolved")
     return dict(apply_topology_resolved(ctx.model, ctx.derived.topology_resolved) or {})
 
 
@@ -108,8 +110,12 @@ def _s_telemetry(ctx: _Ctx) -> dict:
     # input measurements (they arrive with status=True) are cleared by the
     # kernel itself (_apply_telemetry_on_arrays sets arr["status"]=False
     # before activating).
-    assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
-    assert ctx.derived.telemetry_arg_keys is not None
+    if (
+        ctx.derived is None
+        or ctx.derived.telemetry_resolved is None
+        or ctx.derived.telemetry_arg_keys is None
+    ):
+        raise _missing_plan("telemetry", "telemetry_resolved", "telemetry_arg_keys")
     return dict(
         apply_telemetry_resolved(
             ctx.model,
@@ -141,8 +147,14 @@ def _s_aggregate_generators(ctx: _Ctx) -> dict:
 
 
 def _s_release_load_only_injections(ctx: _Ctx) -> dict:
-    assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
-    assert ctx.derived.telemetry_arg_keys is not None
+    if (
+        ctx.derived is None
+        or ctx.derived.telemetry_resolved is None
+        or ctx.derived.telemetry_arg_keys is None
+    ):
+        raise _missing_plan(
+            "release_load_only_injections", "telemetry_resolved", "telemetry_arg_keys"
+        )
     load_only = load_only_injection_nodes(
         ctx.derived.telemetry_resolved, ctx.derived.telemetry_arg_keys
     )
@@ -151,8 +163,14 @@ def _s_release_load_only_injections(ctx: _Ctx) -> dict:
 
 
 def _s_relax_generation_min_to_injection(ctx: _Ctx) -> dict:
-    assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
-    assert ctx.derived.telemetry_arg_keys is not None
+    if (
+        ctx.derived is None
+        or ctx.derived.telemetry_resolved is None
+        or ctx.derived.telemetry_arg_keys is None
+    ):
+        raise _missing_plan(
+            "relax_generation_min_to_injection", "telemetry_resolved", "telemetry_arg_keys"
+        )
     gen_only = generation_only_injection_nodes(
         ctx.derived.telemetry_resolved, ctx.derived.telemetry_arg_keys
     )
@@ -160,8 +178,14 @@ def _s_relax_generation_min_to_injection(ctx: _Ctx) -> dict:
 
 
 def _s_widen_generation_only_injections(ctx: _Ctx) -> dict:
-    assert ctx.derived is not None and ctx.derived.telemetry_resolved is not None
-    assert ctx.derived.telemetry_arg_keys is not None
+    if (
+        ctx.derived is None
+        or ctx.derived.telemetry_resolved is None
+        or ctx.derived.telemetry_arg_keys is None
+    ):
+        raise _missing_plan(
+            "widen_generation_only_injections", "telemetry_resolved", "telemetry_arg_keys"
+        )
     gen_only = generation_only_injection_nodes(
         ctx.derived.telemetry_resolved, ctx.derived.telemetry_arg_keys
     )

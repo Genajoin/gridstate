@@ -45,3 +45,21 @@ class Step:
     # change the numbers). Checked by steps.check_step_order() when the
     # registry is built; a network step may only rely on network steps.
     after: tuple[str, ...] = ()
+
+
+# Invariant errors. They are raised explicitly (not asserted) so that they hold
+# under ``python -O`` as well.
+
+
+def _no_solution(step: str) -> RuntimeError:
+    """Error for a post-solve step reached without a solution."""
+    return RuntimeError(f"step {step!r} needs a solution, but the 'estimate' step has not run")
+
+
+def _missing_plan(step: str, *attrs: str) -> ValueError:
+    """Error for a step whose derived plan is absent."""
+    plans = ", ".join(f"derived.{attr}" for attr in attrs)
+    return ValueError(
+        f"step {step!r} needs {plans}, which is missing; derive the plans and run "
+        "the pipeline with the same config"
+    )
