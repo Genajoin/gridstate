@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import fields
+from dataclasses import dataclass, fields
+
+import pytest
 
 from gridstate import pipeline as P  # noqa: N812
 
@@ -66,6 +68,75 @@ def test_manifest_param_defaults_match_config():
     cfg = P.PipelineConfig()
     for p in P.manifest()["params"]:
         assert p["default"] == getattr(cfg, p["name"])
+
+
+def test_manifest_config_none_class_and_instance_identical():
+    base = P.manifest()
+    assert P.manifest(None) == base
+    assert P.manifest(P.PipelineConfig) == base
+    assert P.manifest(P.PipelineConfig()) == base
+    assert [p["name"] for p in base["params"]] == [
+        f.name for f in fields(P.PipelineConfig) if f.metadata
+    ]
+
+
+def _by_name(items: list[dict]) -> dict[str, dict]:
+    return {i["name"]: i for i in items}
+
+
+def test_manifest_subclass_defaults_reflected():
+    @dataclass
+    class Custom(P.PipelineConfig):
+        normalize_breakers: bool = False
+        voltage_filter_min_nominal_kv: float = 35.0
+
+    base = _by_name(P.manifest()["params"])
+    man = P.manifest(Custom)
+    params = _by_name(man["params"])
+    assert params["normalize_breakers"]["default"] is False
+    assert params["voltage_filter_min_nominal_kv"]["default"] == 35.0
+    # Everything else (metadata included) is untouched.
+    assert base["normalize_breakers"]["default"] is True
+    for name, entry in params.items():
+        if name not in ("normalize_breakers", "voltage_filter_min_nominal_kv"):
+            assert entry == base[name]
+    step = next(s for s in man["steps"] if s["toggle"] == "normalize_breakers")
+    assert step["default_enabled"] is False
+    assert json.loads(json.dumps(man)) == man
+
+
+def test_manifest_subclass_extra_field_with_metadata():
+    @dataclass
+    class Custom(P.PipelineConfig):
+        extra_knob: float = P._param(
+            1.5, group="Custom group", label="Extra", control="number", min=0.0, max=3.0, help="h"
+        )
+
+    params = _by_name(P.manifest(Custom)["params"])
+    assert params["extra_knob"]["default"] == 1.5
+    assert params["extra_knob"]["type"] == "float"
+    assert params["extra_knob"]["max"] == 3.0
+    assert "extra_knob" not in _by_name(P.manifest()["params"])
+
+
+def test_manifest_instance_values_reflected():
+    cfg = P.PipelineConfig(apply_rpn=False, voltage_filter_min_nominal_kv=0.0)
+    man = P.manifest(cfg)
+    params = _by_name(man["params"])
+    assert params["voltage_filter_min_nominal_kv"]["default"] == 0.0
+    assert params["apply_rpn"]["default"] is False
+    step = next(s for s in man["steps"] if s["toggle"] == "apply_rpn")
+    assert step["default_enabled"] is False
+    # The instance is not mutated and library defaults are unaffected.
+    assert cfg.apply_rpn is False
+    assert _by_name(P.manifest()["params"])["apply_rpn"]["default"] is True
+
+
+def test_manifest_rejects_invalid_config():
+    with pytest.raises(TypeError):
+        P.manifest(dict)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        P.manifest({"apply_rpn": False})  # type: ignore[arg-type]
 
 
 def test_groups_cover_all_entries():

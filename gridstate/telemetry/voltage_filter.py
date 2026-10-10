@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -287,8 +287,9 @@ def apply_voltage_meas_calibration_for_gen_nodes(
     model: Working,
     *,
     sigma2: float = 0.1,
+    mode: Literal["absolute", "tighten"] = "absolute",
 ) -> dict:
-    """Tighten σ² of V measurements on generating and slack nodes.
+    """Calibrate σ² of V measurements on generating and slack nodes.
 
     Voltage transducers on generator buses (110-750 kV) are far more accurate
     than on passive load buses (σ_V of tenths of a kV against several kV).
@@ -304,20 +305,42 @@ def apply_voltage_meas_calibration_for_gen_nodes(
       nodes are skipped;
     * slack nodes (``node_type == NodeType.SLACK``).
 
-    Only measurements of ``quality == GOOD`` are tightened. A measurement an
+    Only measurements of ``quality == GOOD`` are touched. A measurement an
     earlier stage marked QUESTIONABLE (telemetry quality, the voltage range
-    filter) keeps its inflated variance: tightening it would turn a suspect
+    filter) keeps its inflated variance: calibrating it would turn a suspect
     reading into the strongest anchor of the estimate.
+
+    Modes:
+
+    * ``"absolute"`` (default): the variance is **set** to ``sigma2``
+      regardless of its current value, and the weight to ``1 / sigma2``. This
+      is a tightening only where the current variance is larger than
+      ``sigma2``. On low-voltage generator buses (6-16 kV) the telemetry
+      variance is already smaller (``max(1 % · Vn, 0.1)² ≈ 0.01-0.025``), so
+      ``"absolute"`` *loosens* those measurements, by up to a factor of 10,
+      and it discards any variance scaling applied by earlier stages.
+    * ``"tighten"``: the variance becomes ``min(current, sigma2)``, i.e. it is
+      never loosened and a measurement already tighter than ``sigma2`` is left
+      untouched (variance and weight). The weight of a tightened measurement
+      is ``1 / sigma2``.
 
     Args:
         model: ``Working`` after aggregate_generators_to_node
             and apply_voltage_range_filter.
         sigma2: target σ² of the V measurement, in the units of the model's
             V measurements. Default 0.1 (σ ≈ 0.32 kV).
+        mode: ``"absolute"`` or ``"tighten"``, see above.
 
     Returns:
-        ``{"updated_meas": N, "target_nodes": N}``.
+        ``{"updated_meas": N, "target_nodes": N}``; in ``"tighten"`` mode also
+        ``"kept_tighter": N`` -- targeted GOOD measurements whose variance was
+        already at or below ``sigma2`` and was left as is.
+
+    Raises:
+        ValueError: if ``mode`` is not one of the two listed.
     """
+    if mode not in ("absolute", "tighten"):
+        raise ValueError(f"mode must be 'absolute' or 'tighten', got {mode!r}")
     meas_arr = model.measurements.to_numpy().copy()
     nodes_arr = model.nodes.to_numpy()
     stats = _voltage_meas_calibration_on_arrays(
@@ -327,6 +350,7 @@ def apply_voltage_meas_calibration_for_gen_nodes(
         ot_node=int(MeasurementObjectType.NODE),
         mt_v=int(MeasurementType.VOLTAGE),
         sigma2=sigma2,
+        mode=mode,
     )
     model.measurements.update_from_array(meas_arr)
     return stats
@@ -340,13 +364,14 @@ def _voltage_meas_calibration_on_arrays(
     ot_node: int,
     mt_v: int,
     sigma2: float,
+    mode: Literal["absolute", "tighten"] = "absolute",
 ) -> dict:
     """Core of :func:`apply_voltage_meas_calibration_for_gen_nodes` on arrays.
 
     Targets are active nodes with a non-zero, non-sentinel
     ``generation_p_max`` or ``node_type == SLACK`` (enum values as ints).
     Mutates ``variance``/``weight`` of GOOD measurements in ``meas_arr`` in
-    place; reads ``nodes_arr``.
+    place; reads ``nodes_arr``. ``mode`` is validated by the public wrapper.
     """
     has_gen_max = "generation_p_max" in (nodes_arr.dtype.names or ())
     target_ids: set[int] = set()
@@ -361,7 +386,9 @@ def _voltage_meas_calibration_on_arrays(
             if p_max != 0.0 and not is_sentinel(p_max):
                 target_ids.add(int(n["id"]))
 
+    tighten = mode == "tighten"
     n_updated = 0
+    n_kept = 0
     for i in range(len(meas_arr)):
         if not bool(meas_arr[i]["status"]):
             continue
@@ -373,8 +400,16 @@ def _voltage_meas_calibration_on_arrays(
             continue
         if int(meas_arr[i]["quality"]) != int(MeasurementQuality.GOOD):
             continue
+        if tighten:
+            current = float(meas_arr[i]["variance"])
+            if np.isfinite(current) and 0.0 < current <= sigma2:
+                n_kept += 1
+                continue
         meas_arr[i]["variance"] = float(sigma2)
         meas_arr[i]["weight"] = 1.0 / float(sigma2) if sigma2 > 0 else 0.0
         n_updated += 1
 
-    return {"updated_meas": n_updated, "target_nodes": len(target_ids)}
+    stats = {"updated_meas": n_updated, "target_nodes": len(target_ids)}
+    if tighten:
+        stats["kept_tighter"] = n_kept
+    return stats
