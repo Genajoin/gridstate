@@ -19,6 +19,9 @@ Modules of the package:
   (name, title, group, description, toggle field);
 * :mod:`~gridstate.pipeline.runner` -- :func:`run` executes the registry in
   order, :func:`prepare_network` its network subset; progress events;
+* :mod:`~gridstate.pipeline.orchestration` -- what the contract facade
+  (:func:`gridstate.runtime.run`) executes: one run plus the shunt sanity
+  trial runs (full re-runs of edited copies of the input);
 * :mod:`~gridstate.pipeline.manifest` -- :func:`manifest`, a JSON-serializable
   description (steps + parameters with defaults, types, bounds,
   label/help/group). A UI builds its form from it, without hard-coding the list
@@ -33,7 +36,7 @@ and the like).
 Example::
 
     from gridstate.contract.serialize import load_se_input_npz
-    from gridstate.contract.runtime import run as contract_run
+    from gridstate.runtime import run as contract_run
     from gridstate.pipeline import PipelineConfig, manifest
 
     se_input = load_se_input_npz("model.npz")

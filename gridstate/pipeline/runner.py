@@ -4,6 +4,54 @@ Progress is reported through the ``on_event(event: dict)`` callback:
 ``clone`` / ``warm_start`` / ``step_start`` / ``step_done`` / ``step_skipped`` /
 ``step_error`` / ``final``. gridstate does not depend on a web framework; the
 consumer wraps the events into its own transport (NDJSON and the like).
+
+Event schema
+------------
+This is the protocol as emitted; it is descriptive, not a promise of a
+cleaner one. Every event is a ``dict`` with a ``"type"`` key:
+
+``warm_start``
+    ``{"type", "seeded_nodes": int}``. :func:`run` with ``init_state`` only;
+    emitted first, before ``clone``.
+``clone``
+    ``{"type", "nodes": int, "branches": int}``: sizes of the working copy.
+    :func:`run` only (not :func:`prepare_network`).
+``step_skipped``
+    ``{"type", "name", "reason": str}`` for a step of :data:`STEPS` whose
+    toggle is off (``reason`` = ``"отключено (<toggle>=False)"``) or that
+    needs derived inputs that were not given (``"no derived inputs"``). No
+    ``step_start`` precedes it, no ``duration_ms``.
+``step_start``
+    ``{"type", "name"}`` for a step of :data:`STEPS` that runs.
+``step_done``
+    ``{"type", "name", "stats": dict, "duration_ms": int}`` after it. A step
+    that decides by itself not to act still reports ``step_done`` and says
+    so in ``stats["skipped"]`` (a free-text reason): the refine steps folded
+    into the merged step (``refine_merge=True``), ``materialize`` without a
+    plan, ``flow_sigma_floor`` without a floor, the post-solve passes on an
+    unusable solution or with an empty plan. A re-solve pass that rejected
+    its re-solve adds ``stats["reverted"] = True`` and
+    ``stats["revert_reason"]``; anti-overshoot reports
+    ``stats["accepted"]`` (plus ``revert_reason`` on a non-converged
+    re-solve) instead.
+``step_error``
+    ``{"type", "name", "error": repr(exc), "duration_ms": int}``; the
+    exception is re-raised and no further event follows.
+
+Two ``step_done`` events do not belong to a registry step (they appear in
+neither :data:`STEPS` nor the manifest and have no ``step_start``):
+
+* ``quality_summary`` — ``{"type", "name", "stats": {}, "duration_ms"}``,
+  after the last step of :func:`run`;
+* ``shunt_sanity`` — ``{"type", "name", "stats"}`` without ``duration_ms``,
+  emitted by :mod:`gridstate.pipeline.orchestration` AFTER the ``final``
+  event of the base run, and only when the base run converged; the trial
+  runs emit nothing.
+
+``final``
+    ``{"type", "success": bool, "iterations": int}`` — last event of
+    :func:`run` (of the base run when shunt sanity is on: an accepted edit
+    replaces the result after ``final`` was sent).
 """
 
 from __future__ import annotations

@@ -280,3 +280,44 @@ def test_load_se_input_facade_bit_identical_without_plans():
     assert _arrays_bit_identical(out.nodes, direct.outputs.nodes)
     assert _arrays_bit_identical(out.branches, direct.outputs.branches)
     assert _arrays_bit_identical(out.measurements, direct.outputs.measurements)
+
+
+# ---------------------------------------------------------------------------
+# Layout: the facade lives in gridstate.runtime; the contract package and the
+# former module re-export it.
+# ---------------------------------------------------------------------------
+
+
+def test_facade_reexports_keep_former_import_paths():
+    import gridstate.contract as contract
+    import gridstate.contract.containers as containers
+    import gridstate.contract.runtime as former
+    import gridstate.runtime as runtime
+
+    assert contract.run is runtime.run
+    assert contract.prepare_network is runtime.prepare_network
+    assert former.run is runtime.run
+    assert former.prepare_network is runtime.prepare_network
+    assert former.SEInput is SEInput is containers.SEInput
+    assert former.SEOutput is SEOutput
+    assert former.load_se_input is load_se_input
+
+
+def test_patching_contract_run_reaches_call_time_importers(monkeypatch):
+    """A caller importing ``run`` from ``gridstate.contract`` at call time
+    sees a patch of the package attribute (the pattern of downstream tests)."""
+    import gridstate.contract as contract
+
+    def _caller(se_input):
+        from gridstate.contract import run as _contract_run
+
+        return _contract_run(se_input, config=None)
+
+    def _fake_run(inp, *, config=None, **kw):
+        return ("sentinel", inp)
+
+    monkeypatch.setattr(contract, "run", _fake_run)
+    marker = object()
+    assert _caller(marker) == ("sentinel", marker)
+    monkeypatch.undo()
+    assert contract.run is gridstate.runtime.run

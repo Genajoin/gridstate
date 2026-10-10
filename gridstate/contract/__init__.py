@@ -15,14 +15,8 @@
 * :mod:`gridstate.contract.validate` — :func:`validate_input` (валидация входа).
 """
 
+from gridstate.contract.containers import SEInput, SEOutput, load_se_input
 from gridstate.contract.derived import DerivedInputs
-from gridstate.contract.runtime import (
-    SEInput,
-    SEOutput,
-    load_se_input,
-    prepare_network,
-    run,
-)
 from gridstate.contract.tables import (
     BRANCHES,
     BRANCHES_OUTPUT,
@@ -56,6 +50,12 @@ from gridstate.contract.version import (
     current_version,
     is_data_compatible,
 )
+
+# The SE facade lives in gridstate.runtime (orchestration does not belong to
+# the contract). Its functions are re-exported here as attributes of this
+# package: callers that do ``from gridstate.contract import run`` at call time
+# resolve the name here, so patching ``gridstate.contract.run`` reaches them.
+from gridstate.runtime import prepare_network, run
 
 
 __all__ = [

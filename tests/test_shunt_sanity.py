@@ -147,3 +147,78 @@ def test_toggle_default_off_and_not_a_step():
     # Оркестрация — на уровне contract.run (полные re-run'ы), НЕ шаг пайплайна.
     assert PipelineConfig().shunt_sanity is False
     assert "shunt_sanity" not in [s.name for s in STEPS]
+
+
+# ---------------------------------------------------------------------------
+# Orchestration (gridstate.pipeline.orchestration) on a harness input whose
+# added reactor is a candidate the gate accepts.
+# ---------------------------------------------------------------------------
+
+
+def _sanity_input():
+    import dataclasses
+
+    from tests import _golden as golden
+
+    se_input = golden.load_ieee_input("case14" + golden.DEGRADED_SUFFIX)
+    cfg = dataclasses.replace(golden.CONFIGS["ipm_full"].config, shunt_sanity=True)
+    return se_input, cfg
+
+
+def _tables(model) -> dict[str, np.ndarray]:
+    names = ("nodes", "branches", "measurements", "generators", "shunts")
+    return {n: getattr(model, n).to_numpy().copy() for n in names}
+
+
+def test_orchestration_leaves_the_input_untouched():
+    """The trials copy the input itself: the base run never mutates it."""
+    from gridstate.contract import run as contract_run
+
+    se_input, cfg = _sanity_input()
+    before = _tables(se_input.model)
+    events: list[dict] = []
+    out = contract_run(se_input, config=cfg, on_event=events.append, validate=False)
+    after = _tables(se_input.model)
+    for name, arr in before.items():
+        assert np.array_equal(arr, after[name]), name
+    (sanity,) = [e for e in events if e.get("name") == "shunt_sanity"]
+    assert sanity["stats"]["accepted"] == 1
+    assert out.success
+
+
+def test_single_accepted_candidate_reuses_its_trial(monkeypatch):
+    """One accepted candidate: the joint run of the accepted edits IS its trial
+    run (same input copy, edit, configuration, cold start), so it is not run a
+    second time, and the output equals an explicit re-run bit for bit."""
+    import dataclasses
+
+    import gridstate.pipeline.orchestration as orch
+    from gridstate.contract import run as contract_run
+    from gridstate.pipeline import run as pipeline_run
+
+    se_input, cfg = _sanity_input()
+    calls: list[int] = []
+    real_run = orch._pipeline_run
+
+    def _counting_run(*args, **kwargs):
+        calls.append(1)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(orch, "_pipeline_run", _counting_run)
+    events: list[dict] = []
+    out = contract_run(se_input, config=cfg, on_event=events.append, validate=False)
+    (sanity,) = [e for e in events if e.get("name") == "shunt_sanity"]
+    assert sanity["stats"]["candidates"] == 1
+    assert sanity["stats"]["accepted"] == 1
+    assert len(calls) == 1 + 2  # base run + off/flip trials of the one candidate
+
+    edited = se_input.model.copy()
+    for nid, mode in sanity["stats"]["edits"].items():
+        assert edit_shunt(edited, nid, mode) > 0
+    rerun = pipeline_run(
+        edited, config=dataclasses.replace(cfg, shunt_sanity=False), derived=se_input.derived
+    )
+    for name in ("nodes", "branches", "measurements"):
+        assert getattr(out, name).tobytes() == getattr(rerun.outputs, name).tobytes(), name
+    assert out.iterations == rerun.iterations
+    assert out.objective_value == rerun.objective_value

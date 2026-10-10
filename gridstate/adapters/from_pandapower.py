@@ -2,7 +2,7 @@
 
 Конвертирует описание сети из ``pandapower`` в контрактные структурированные
 массивы (:data:`gridstate.contract.tables.SE_INPUT`) и оборачивает их в
-:class:`~gridstate.contract.runtime.SEInput` (``derived=None`` — формат-зависимые
+:class:`~gridstate.contract.containers.SEInput` (``derived=None`` — формат-зависимые
 шаги пайплайна пропускаются: модель уже несёт измерения/режим).
 
 Единицы (контракт; перевод в p.u. делает :mod:`gridstate.units`):
@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 
 from gridstate.constants import BranchType, NodeType
-from gridstate.contract.runtime import SEInput
+from gridstate.contract.containers import SEInput
 from gridstate.contract.tables import SE_INPUT, SE_OUTPUT, io_dtype
 from gridstate.working import Working
 

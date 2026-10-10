@@ -94,7 +94,9 @@ VOCABULARY: list[tuple[str, str, int]] = [
     ("private artefact", _w("old-", "vs-", "new"), _I),
     ("private artefact", r"(?:before|after)" + _w("_O", "C") + _LA, _I),
     ("private artefact", _w("FOR", "MULE"), 0),
-    ("private artefact", _LB + _w("H", r"\d{1,2}") + _LA, 0),
+    # Hypothesis labels: two-digit codes and the one single-digit label that
+    # occurred. Math names (a Jacobian H0, H1, H_k) are not labels.
+    ("private artefact", _LB + _w("H", r"(?:[1-9]\d|4)") + r"(?!\d)" + _LA, 0),
     ("private artefact", _LB + _w("B", "L") + r"\d" + _LA, 0),
     ("private artefact", _LB + _w("Ли", "ния") + r" [A-DА-Г]" + _LA, 0),
     ("private artefact", _w("au", "dit_") + r"\w+\.md", _I),
@@ -181,6 +183,10 @@ def test_no_forbidden_vocabulary() -> None:
         _w("note ", "ce", "x3_pseudov"),
         _w("as in ", "sta", "ge_c_aft", "er_oc"),
         _w("loaded from ", "U_", "KRIT"),
+        _w("orphan branches (cascade ", "H", "46)"),
+        _w("the ", "H", "30-factoring of the shunt"),
+        _w("after the ", "H", "29-split"),
+        _w("rejected lever ", "H", "4: the estimate drifts"),
     ],
 )
 def test_vocabulary_catches_samples(line: str) -> None:
@@ -197,6 +203,12 @@ def test_vocabulary_catches_samples(line: str) -> None:
         "--cov-report=term",
         "github.com/astral-sh/ruff-pre-commit",
         "module_name, dump(), center of the box",
+        "H0 = jacobian(x0)",
+        "G = H0.T @ R_inv @ H0",
+        "H1 = H(x1); dx = solve(H1, r)",
+        "H_k.T @ W @ H_k",
+        "H2 and H3 blocks of the Hessian",
+        "tag H123 of a three-digit id",
     ],
 )
 def test_vocabulary_spares_ordinary_words(line: str) -> None:
