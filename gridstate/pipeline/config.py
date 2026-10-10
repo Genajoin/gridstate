@@ -26,7 +26,7 @@ from __future__ import annotations
 import math
 import numbers
 from dataclasses import Field, dataclass, field, fields
-from typing import Any
+from typing import Any, Literal
 
 
 def _toggle(default: bool, *, group: str, label: str, help: str = "") -> Any:
@@ -396,6 +396,32 @@ class PipelineConfig:
         min=0,
         max=200,
         help="Размер worst_residuals/worst_imbalance в quality summary (bad-data панель).",
+    )
+    normalized_residuals_method: Literal["solve", "selected_inversion"] = _param(
+        "solve",
+        group=_G_EST,
+        label="Normalized residuals method",
+        control="select",
+        choices=["solve", "selected_inversion"],
+        help="How diag(H G⁻¹ Hᵀ) of the quality summary r_N is computed. solve: one "
+        "triangular solve per measurement (the previous behaviour, bit for bit). "
+        "selected_inversion: the entries of G⁻¹ on the pattern of the sparse Cholesky "
+        "factor (Takahashi recurrence) and one quadratic form per measurement; many "
+        "times faster on large models, needs the numba extra (otherwise solve is used). "
+        "The methods agree to rounding except on nearly critical measurements, whose "
+        "r_N is numerically unreliable with either method (see near_critical_threshold).",
+    )
+    near_critical_threshold: float = _param(
+        1e-4,
+        group=_G_EST,
+        label="Near-critical threshold Ω/σ²",
+        control="number",
+        min=0.0,
+        max=1.0,
+        help="A measurement with Ω_ii/σ²_i below this value is listed in "
+        "near_critical_measurements of the quality summary: Ω_ii = σ²_i − (H G⁻¹ Hᵀ)_ii "
+        "is a small difference of nearly equal numbers, so its r_N carries the rounding "
+        "amplified by σ²/Ω. Reported only, r_N values are not changed. 0 lists none.",
     )
 
     # --- IPM ---

@@ -13,6 +13,7 @@ import numpy as np
 
 from gridstate.algebra.base import BaseAlgebra
 from gridstate.algebra.estimators import build_branch_pq_huber_mask
+from gridstate.algebra.normalized_residuals import RN_METHODS, compute_normalized_residuals
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.wls import solve_wls
@@ -25,8 +26,11 @@ from gridstate.post_processing import (
 )
 from gridstate.preprocessing.ipm_setup import build_ipm_setup
 from gridstate.quality_summary import (
+    NEAR_CRITICAL_THRESHOLD,
     compute_chi2,
+    near_critical_measurements,
     observability_warnings_from_H,
+    residual_scope_mask,
     top_worst_imbalance,
     top_worst_residuals,
 )
@@ -79,6 +83,8 @@ def estimate(
     quality_summary_top_n: int = 10,
     quality_summary_scope: str = "real",
     x0: InitialPoint | None = None,
+    quality_summary_rn_method: str = "solve",
+    quality_summary_near_critical: float = NEAR_CRITICAL_THRESHOLD,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Run state estimation for a model and telemetry.
@@ -137,6 +143,13 @@ def estimate(
             out telemetry (large models: 8/10 of the top are our own priors
             with r_N in the hundreds) and the masked block-solve is ~2.5×
             cheaper. ``"all"`` — legacy semantics (every z-vector row).
+        quality_summary_rn_method: method of ``diag(H G⁻¹ Hᵀ)`` for the
+            normalized residuals: ``"solve"`` (per-row triangular solves) or
+            ``"selected_inversion"`` (Takahashi recurrence on the sparse
+            Cholesky factor, needs numba; see
+            :mod:`gridstate.algebra.normalized_residuals`).
+        quality_summary_near_critical: ``Ω_ii / σ²_i`` threshold of
+            ``near_critical_measurements``; ``0`` reports none.
         **ipm_kwargs: IPM-mode knobs, ignored for WLS. ``trust_region_scope``
             (``"all"`` default | ``"state"``) selects the coordinates the IPM
             trust region is measured on (see ``_run_ipm``); everything else is
@@ -150,7 +163,10 @@ def estimate(
     Raises:
         NotImplementedError: for unsupported ``algorithm`` or
             ``zero_injection``.
+        ValueError: unknown ``quality_summary_rn_method``.
     """
+    if include_quality_summary:
+        _check_rn_method(quality_summary_rn_method)
     if algorithm not in ("wls", "ipm"):
         raise NotImplementedError(
             f"Algorithm {algorithm!r} is not implemented yet; available: 'wls' and 'ipm'."
@@ -305,9 +321,16 @@ def estimate(
             delta_rad=delta,
             top_n=quality_summary_top_n,
             scope=quality_summary_scope,
+            rn_method=quality_summary_rn_method,
+            near_critical=quality_summary_near_critical,
         )
 
     return result
+
+
+def _check_rn_method(method: str) -> None:
+    if method not in RN_METHODS:
+        raise ValueError(f"unknown normalized residuals method {method!r}; available: {RN_METHODS}")
 
 
 def _populate_quality_summary(
@@ -327,9 +350,12 @@ def _populate_quality_summary(
     delta_rad: np.ndarray,
     top_n: int,
     scope: str = "real",
+    rn_method: str = "solve",
+    near_critical: float = NEAR_CRITICAL_THRESHOLD,
 ) -> None:
     """Fill ``result.chi2 / worst_residuals / worst_imbalance /
-    observability_warnings`` after ``write_results_to_model``.
+    observability_warnings / near_critical_measurements`` after
+    ``write_results_to_model``.
 
     All errors in the summary are swallowed into the logs: report quality is not an indicator of
     SE success, and a failure here must not break ``estimate()``.
@@ -360,17 +386,26 @@ def _populate_quality_summary(
             )
 
         result.chi2 = compute_chi2(r_vec, sigma2, n_state=int(layout.size))
-        result.worst_residuals = top_worst_residuals(
-            r_vec,
-            sigma2,
-            H,
-            meas_index,
-            z,
-            n=top_n,
-            network_pu=network_pu,
-            is_pseudo=is_pseudo_z,
-            scope=scope,
-        )
+        rows_mask = residual_scope_mask(scope, is_pseudo_z)
+        if rows_mask is None or rows_mask.any():
+            normalized = compute_normalized_residuals(
+                r_vec, H, sigma2, rows_mask=rows_mask, method=rn_method
+            )
+            result.worst_residuals = top_worst_residuals(
+                r_vec,
+                sigma2,
+                H,
+                meas_index,
+                z,
+                n=top_n,
+                network_pu=network_pu,
+                is_pseudo=is_pseudo_z,
+                scope=scope,
+                normalized=normalized,
+            )
+            result.near_critical_measurements = near_critical_measurements(
+                normalized, meas_index, threshold=near_critical, is_pseudo=is_pseudo_z
+            )
         result.worst_imbalance = top_worst_imbalance(model, n=top_n)
         result.observability_warnings = observability_warnings_from_H(
             H,
@@ -382,7 +417,14 @@ def _populate_quality_summary(
         logger.warning("quality_summary failed: %s", exc)
 
 
-def populate_quality_summary(result: SEResult, *, top_n: int = 10, scope: str = "real") -> None:
+def populate_quality_summary(
+    result: SEResult,
+    *,
+    top_n: int = 10,
+    scope: str = "real",
+    rn_method: str = "solve",
+    near_critical: float = NEAR_CRITICAL_THRESHOLD,
+) -> None:
     """Compute the quality summary post hoc — from the final ``result.model``.
 
     Does the same as ``estimate(..., include_quality_summary=True)``, but on a
@@ -393,7 +435,14 @@ def populate_quality_summary(result: SEResult, *, top_n: int = 10, scope: str = 
     is computed once — on the final solution. The measurements and V/δ
     of the model must correspond to the final solve (in the pipeline they do:
     the revert branches roll back both measurements and V/δ).
+
+    ``top_n`` / ``scope`` / ``rn_method`` / ``near_critical`` have the meaning
+    of the ``quality_summary_*`` arguments of :func:`estimate`.
+
+    Raises:
+        ValueError: unknown ``rn_method``.
     """
+    _check_rn_method(rn_method)
     model = result.model
     measurements = model.measurements
     network_pu = model_to_pu(model)
@@ -416,6 +465,8 @@ def populate_quality_summary(result: SEResult, *, top_n: int = 10, scope: str = 
         delta_rad=result.delta_rad,
         top_n=top_n,
         scope=scope,
+        rn_method=rn_method,
+        near_critical=near_critical,
     )
 
 

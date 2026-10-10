@@ -119,6 +119,33 @@ class ResidualRow:
 
 
 @dataclass
+class NearCriticalRow:
+    """A measurement whose ``Ω_ii`` is a small fraction of its variance.
+
+    ``Ω_ii = σ²_i − (H G⁻¹ Hᵀ)_ii`` is then a difference of two nearly equal
+    numbers: the rounding of ``(H G⁻¹ Hᵀ)_ii`` is amplified by
+    ``1 / omega_ratio`` in ``Ω_ii`` and in the normalized residual, and two
+    exact methods of computing it may disagree in the leading digits. The
+    measurement is nearly critical: the estimate follows it almost exactly,
+    so its residual says little about its error.
+
+    Attributes:
+        measurement_id: ``Measurement.id`` of the source measurement.
+        kind: text label of the type (as in :class:`ResidualRow`).
+        omega_ratio: ``Ω_ii / σ²_i`` (below the configured threshold).
+        normalized_residual: ``|r| / √Ω_ii`` as computed (``inf`` if
+            ``Ω_ii`` is numerically non-positive).
+        is_pseudo: pseudo-prior, not a telemetry measurement.
+    """
+
+    measurement_id: int
+    kind: str
+    omega_ratio: float
+    normalized_residual: float
+    is_pseudo: bool = False
+
+
+@dataclass
 class ImbalanceRow:
     """A single entry of the top nodal imbalances.
 
@@ -250,6 +277,11 @@ class SEResult:
         observability_warnings: list of ``node_id`` of nodes with zero
             ``H`` columns (state variables not covered by measurements).
             Empty if the analysis was not run.
+        near_critical_measurements: measurements (in the scope of
+            ``worst_residuals``) whose ``Ω_ii / σ²_i`` is below the
+            near-critical threshold, ascending by that ratio; their
+            ``normalized_residual`` is numerically unreliable (see
+            :class:`NearCriticalRow`). Reported only, nothing is changed.
     """
 
     model: Working
@@ -277,6 +309,7 @@ class SEResult:
     worst_residuals: list[ResidualRow] = field(default_factory=list)
     worst_imbalance: list[ImbalanceRow] = field(default_factory=list)
     observability_warnings: list[int] = field(default_factory=list)
+    near_critical_measurements: list[NearCriticalRow] = field(default_factory=list)
 
 
 def label_for_kind(kind_code: int) -> str:

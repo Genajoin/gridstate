@@ -337,7 +337,12 @@ def run(
     # include_quality_summary=False, since on large models it costs about as
     # much as the solve itself.
     t0 = time.monotonic()
-    populate_quality_summary(ctx.result, top_n=cfg.top_residuals_n)
+    populate_quality_summary(
+        ctx.result,
+        top_n=cfg.top_residuals_n,
+        rn_method=cfg.normalized_residuals_method,
+        near_critical=cfg.near_critical_threshold,
+    )
     _emit(
         on_event,
         {

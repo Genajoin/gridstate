@@ -15,7 +15,9 @@ SKIP_DIRS):
   PyInstaller must find it as a .py file;
 - ``gridstate/algorithms/_gram_numba.py``: its function is decorated by numba
   at import time, and numba cannot decorate a compiled (C) function. Add any
-  future numba-jitted module to SKIP_PATHS.
+  future numba-jitted module to SKIP_PATHS;
+- ``gridstate/algebra/_selinv_kernels.py``: plain Python kernels that
+  ``gridstate.algebra.normalized_residuals`` compiles with numba at run time.
 
 Usage (needs the ``build`` extra: Cython, numpy, setuptools, a C compiler):
 
@@ -51,6 +53,7 @@ SKIP_NAMES = {
 # Package-relative paths of individual modules that must stay plain Python.
 SKIP_PATHS = {
     "algorithms/_gram_numba.py",  # numba-jitted kernel: numba cannot decorate compiled code
+    "algebra/_selinv_kernels.py",  # compiled by numba at run time, likewise
 }
 
 # Package-relative directories whose files must stay plain Python.
