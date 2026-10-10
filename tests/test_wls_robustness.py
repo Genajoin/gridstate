@@ -28,6 +28,7 @@ from scipy.sparse import csc_matrix, csr_matrix
 
 from gridstate.algorithms import wls
 from gridstate.algorithms.kkt_solver import KKTSolver
+from gridstate.algorithms.status import SolveStatus
 from gridstate.algorithms.wls import _solve_in_trust_region, solve_wls
 from gridstate.constants import BranchType, NodeType
 from gridstate.contract.serialize import load_se_input_npz
@@ -295,6 +296,7 @@ def test_force_accepted_tiny_step_after_rejections_reports_success(
     monkeypatch.undo()
 
     assert res.success  # #57: reported as converged
+    assert res.solve_status is SolveStatus.TR_COLLAPSED  # ... but the status tells
     assert res.iterations < 50
     # The last iteration made several attempts with a shrinking radius (rejections).
     last = spy.calls[-1]
@@ -316,6 +318,7 @@ def test_trust_region_collapse_reports_failure(case14_problem, monkeypatch) -> N
     monkeypatch.undo()
 
     assert not res.success
+    assert res.solve_status is SolveStatus.STALLED
     assert res.iterations < 50  # early stop, not the iteration limit
     # lambda grows x10 per rejection from 1e-3; the last attempt ran with 1e8.
     assert spy.calls[-1]["lam_floor"] == pytest.approx(1e8)
@@ -404,6 +407,7 @@ def test_zero_gain_diagonal_stops_before_the_first_step() -> None:
     e0 = flat_start(layout)
     res = solve_wls(e0, z, r_matrix, ybus, yf, yt, idx, layout, pu)
     assert not res.success
+    assert res.solve_status is SolveStatus.ERROR
     assert res.iterations == 0
     np.testing.assert_array_equal(res.x, e0)
 
@@ -419,6 +423,7 @@ def test_non_finite_objective_stops_with_failure() -> None:
     e0 = flat_start(layout)
     res = solve_wls(e0, z, r_matrix, ybus, yf, yt, idx, layout, pu)
     assert not res.success
+    assert res.solve_status is SolveStatus.DIVERGED
     assert res.iterations == 0
     np.testing.assert_array_equal(res.x, e0)
     assert not np.isfinite(res.objective)
@@ -434,9 +439,11 @@ def test_max_step_below_tolerance_reports_convergence_after_one_step() -> None:
     e0 = flat_start(layout)
     reference = solve_wls(e0, z, r_matrix, ybus, yf, yt, idx, layout, pu, tolerance=1e-10)
     assert reference.success
+    assert reference.solve_status is SolveStatus.KKT
 
     res = solve_wls(e0, z, r_matrix, ybus, yf, yt, idx, layout, pu, tolerance=1e-6, max_step=1e-7)
     assert res.success
+    assert res.solve_status is SolveStatus.TR_COLLAPSED
     assert res.iterations == 1
     assert np.max(np.abs(res.x - e0)) == pytest.approx(1e-7)
     assert np.max(np.abs(reference.x - e0)) > 1e-3

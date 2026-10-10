@@ -267,7 +267,9 @@
      "algorithm": "wls",
      "success": true,
      "iterations": 3,
-     "objective_value": 845.3285893926766
+     "objective_value": 845.3285893926766,
+     "solve_status": "kkt",
+     "objective_wls": 845.3285893926765
     }
    },
    {
@@ -585,7 +587,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.2199426016654
+     "objective_value": 300.2199426016654,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 601.3975695398065
     }
    },
    {
@@ -646,7 +650,9 @@
       "conflicting": 0
      },
      "success": true,
-     "iterations": 9
+     "iterations": 9,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 789.3586435426
     }
    },
    {
@@ -934,7 +940,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.2199426016654
+     "objective_value": 300.2199426016654,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 601.3975695398065
     }
    },
    {
@@ -960,7 +968,9 @@
      "tightened": 118,
      "conflicting": 0,
      "success": true,
-     "iterations": 9
+     "iterations": 9,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 789.3586435426
     }
    },
    {
@@ -1276,7 +1286,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.2199426016654
+     "objective_value": 300.2199426016654,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 601.3975695398065
     }
    },
    {
@@ -1337,7 +1349,9 @@
       "conflicting": 0
      },
      "success": true,
-     "iterations": 9
+     "iterations": 9,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 789.3586435426
     }
    },
    {
@@ -1635,7 +1649,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.2199426016654
+     "objective_value": 300.2199426016654,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 601.3975695398065
     }
    },
    {
@@ -1696,7 +1712,9 @@
       "conflicting": 0
      },
      "success": true,
-     "iterations": 9
+     "iterations": 9,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 789.3586435426
     }
    },
    {
@@ -1997,7 +2015,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 300.21362560129944
+     "objective_value": 300.21362560129944,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 601.4013715064611
     }
    },
    {
@@ -2058,7 +2078,9 @@
       "conflicting": 0
      },
      "success": true,
-     "iterations": 9
+     "iterations": 9,
+     "solve_status": "mu_schedule_done",
+     "objective_wls": 789.3586653937731
     }
    },
    {

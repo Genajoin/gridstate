@@ -75,6 +75,7 @@ def _estimate_kwargs(cfg: PipelineConfig, *, init: str, **overrides: Any) -> dic
         "include_quality_summary": False,
         "reconcile_balance": cfg.reconcile_balance,
         "reconcile_respect_bounds": cfg.reconcile_respect_bounds,
+        "success_policy": cfg.success_policy,
     }
     kw.update(overrides)
     if cfg.algorithm == "ipm":
@@ -101,6 +102,15 @@ def _s_estimate(ctx: _Ctx) -> dict:
         "success": bool(ctx.result.success),
         "iterations": int(ctx.result.iterations),
         "objective_value": float(ctx.result.objective_value),
+        **_status_stats(ctx.result),
+    }
+
+
+def _status_stats(result: SEResult) -> dict[str, Any]:
+    """Solver-independent status and objective of a solve, for the step stats."""
+    return {
+        "solve_status": None if result.solve_status is None else result.solve_status.value,
+        "objective_wls": float(result.objective_wls),
     }
 
 
@@ -268,6 +278,7 @@ def _resolve_pass(
         return empty_stats(plan)
     result = _warm_resolve(ctx)
     stats.update(success=bool(result.success), iterations=int(result.iterations))
+    stats.update(_status_stats(result))
     # A non-converged re-solve must not replace the converged first pass:
     # restore the measurement edits, V/δ and the previous result.
     ctx.result = rp.settle(result, stats)

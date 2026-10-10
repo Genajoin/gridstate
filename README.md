@@ -178,6 +178,15 @@ out = run_se(load_se_input_npz("tests/test_data/ieee/case14.npz"), config=cfg)
 print(out.convergence_status, out.success)
 ```
 
+`out.success` is the solver's own flag by default. Both solvers also report a
+common termination status, `SEResult.solve_status` (`kkt`, `mu_schedule_done`,
+`tr_collapsed`, `max_iter`, `stalled`, `diverged`, `error`; also in the stats of
+the `estimate` step and of every re-solve), and `SEResult.objective_wls`, the
+plain WLS objective of the measurements at the final state, which is
+comparable between WLS and IPM. `PipelineConfig(success_policy="status")`
+derives `success` from that status instead (`kkt` and `mu_schedule_done`
+count as converged), which also lets the re-solve revert act on IPM re-solves.
+
 `pipeline_manifest()` returns a JSON-serializable description of the pipeline —
 the steps in execution order (with their toggles and default state), the
 parameters (type, default, bounds, choices, help) and the section order — so
@@ -250,6 +259,7 @@ Exported from the top-level package (`gridstate.__all__`):
 | `load_se_input_npz`, `load_se_input`, `save_se_input` | data-contract I/O |
 | `SEInput`, `SEOutput`, `SEResult` | input / output / detailed result objects |
 | `Chi2Summary`, `ResidualRow`, `ImbalanceRow` | quality summary rows carried by `SEResult` |
+| `SolveStatus` | solver-independent termination status (`SEResult.solve_status`) |
 | `populate_quality_summary` | fill the quality summary of a result you hold |
 | `PipelineConfig`, `pipeline_manifest` | pipeline configuration and its step / parameter manifest |
 | `chi2_analysis`, `Chi2Result` | χ² test of the estimate |

@@ -53,6 +53,7 @@ from scipy.sparse import csc_matrix, csr_matrix
 from gridstate.algebra.base import BaseAlgebra
 from gridstate.algebra.estimators import HuberReweighter, build_branch_pq_huber_mask
 from gridstate.algorithms.kkt_solver import KKTSolver
+from gridstate.algorithms.status import SolveStatus
 from gridstate.state import unpack
 from gridstate.utils import floored_sigma2, scale_csr_rows, sparse_diag
 
@@ -78,12 +79,17 @@ class WLSResult:
         success: ``max|dE| <= tolerance`` reached without divergence.
         iterations: accepted Gauss-Newton iterations.
         objective: ``r^T R^-1 r`` at the last iterate (NaN for empty ``z``).
+        solve_status: why the solver stopped (:class:`SolveStatus`):
+            ``KKT``, ``TR_COLLAPSED``, ``MAX_ITER``, ``STALLED``,
+            ``DIVERGED`` or ``ERROR``. ``success`` keeps the legacy rule
+            (``True`` for both ``KKT`` and ``TR_COLLAPSED``).
     """
 
     x: np.ndarray
     success: bool
     iterations: int
     objective: float
+    solve_status: SolveStatus = SolveStatus.ERROR
 
 
 def _solve_damped(
@@ -109,6 +115,23 @@ def _solve_damped(
         logger.debug("kkt solve fail at λ=%.3e: %s", lam, exc)
         return None
     return np.asarray(d, dtype=np.float64).ravel()
+
+
+def _gauss_newton_step_inf(
+    G: csc_matrix,
+    rhs: np.ndarray,
+    diag_G: np.ndarray,
+    solver: KKTSolver,
+) -> float:
+    """``|d|∞`` of the undamped, unclipped Gauss-Newton step ``G·d = rhs``.
+
+    Diagnostic for the termination status only (the step is not applied);
+    ``inf`` when the system cannot be solved.
+    """
+    d = _solve_damped(G, rhs, diag_G, 0.0, solver)
+    if d is None or not np.all(np.isfinite(d)):
+        return float("inf")
+    return float(np.max(np.abs(d))) if d.size else 0.0
 
 
 def _solve_in_trust_region(
@@ -303,7 +326,13 @@ def solve_wls(
 
     if n_meas == 0:
         logger.warning("WLS called with an empty measurement vector — returning e_init")
-        return WLSResult(x=e_init.copy(), success=False, iterations=0, objective=float("nan"))
+        return WLSResult(
+            x=e_init.copy(),
+            success=False,
+            iterations=0,
+            objective=float("nan"),
+            solve_status=SolveStatus.ERROR,
+        )
 
     E = e_init.astype(np.float64, copy=True)
 
@@ -343,6 +372,12 @@ def solve_wls(
     cur_it = 0
     current_error = float("inf")
     diverged = False
+    # Diagnostics for the termination status only (they never feed back into
+    # the iteration): the reason of an early stop, and whether the last
+    # accepted step was the plain Gauss-Newton step (λ = 0, not clipped by the
+    # trust region).
+    stop_status: SolveStatus | None = None
+    last_step_plain_gn = False
 
     while current_error > tolerance and cur_it < max_iterations:
         # SHGM-IRLS: recompute weights from the last residual. Warmup
@@ -361,6 +396,7 @@ def solve_wls(
         diag_G = G.diagonal()
         if not np.any(diag_G != 0):
             logger.warning("Zero diagonal of G at iteration %d — stopping", cur_it)
+            stop_status = SolveStatus.ERROR
             break
 
         accepted = False
@@ -370,6 +406,7 @@ def solve_wls(
         r_trial = r_cur
         obj_trial = objective
         for inner in range(inner_max):
+            tr_attempt = tr_radius
             d_E, step_inf, lam_used, solve_ok = _solve_in_trust_region(
                 G,
                 rhs,
@@ -378,6 +415,7 @@ def solve_wls(
                 lam,
                 solver,
             )
+            last_step_plain_gn = lam_used == 0.0 and step_inf < tr_attempt
             if not solve_ok:
                 # The linear system could not be solved (singular G, NaN in the result)
                 # — this is not a "zero step" but an iteration failure. We mark
@@ -388,6 +426,7 @@ def solve_wls(
                     inner,
                 )
                 diverged = True
+                stop_status = SolveStatus.ERROR
                 break
             if step_inf < 1e-15:
                 # The step vanished — we converged (rhs ≈ 0), or the TR collapsed.
@@ -415,6 +454,7 @@ def solve_wls(
                     obj_trial,
                 )
                 diverged = True
+                stop_status = SolveStatus.DIVERGED
                 break
 
             # Predicted decrease of J from the quadratic model:
@@ -502,6 +542,7 @@ def solve_wls(
                     lam,
                 )
                 diverged = True
+                stop_status = SolveStatus.STALLED
                 break
 
         if not accepted:
@@ -511,6 +552,8 @@ def solve_wls(
                 cur_it,
                 tr_radius,
             )
+            if stop_status is None:
+                stop_status = SolveStatus.STALLED
             break
 
         E = E_trial
@@ -525,6 +568,16 @@ def solve_wls(
             break
 
     success = current_error <= tolerance and not diverged
+    if stop_status is not None:
+        solve_status = stop_status
+    elif success:
+        solve_status = (
+            SolveStatus.KKT
+            if last_step_plain_gn or _gauss_newton_step_inf(G, rhs, diag_G, solver) <= tolerance
+            else SolveStatus.TR_COLLAPSED
+        )
+    else:
+        solve_status = SolveStatus.MAX_ITER
     if success:
         logger.debug("WLS converged in %d iterations (max|ΔE|=%.3e)", cur_it, current_error)
     else:
@@ -535,4 +588,10 @@ def solve_wls(
             current_error,
             tolerance,
         )
-    return WLSResult(x=E, success=success, iterations=cur_it, objective=objective)
+    return WLSResult(
+        x=E,
+        success=success,
+        iterations=cur_it,
+        objective=objective,
+        solve_status=solve_status,
+    )
