@@ -47,6 +47,7 @@ from gridstate.preprocessing import (
     mirror_voltage_through_unit_tap_links,
     synthesize_node_injection_from_branch_flows,
 )
+from gridstate.resolve_pass import ResolveGuard
 from gridstate.result import SEResult
 from gridstate.telemetry import (
     aggregate_generators_to_node,
@@ -870,7 +871,8 @@ def _refine_two_pass(
     Guard on a usable first-pass solution, classify residuals into a plan,
     apply the plan to the working model and warm re-solve. The steps differ
     only in their classifier/applier and skip wording; the plan object must
-    expose an ``empty`` property.
+    expose an ``empty`` property. A re-solve that loses convergence is
+    reverted (see :mod:`gridstate.resolve_pass`).
     """
     assert ctx.result is not None  # steps run after estimate → result exists
     if not ctx.result.success:
@@ -880,6 +882,8 @@ def _refine_two_pass(
     plan = classify(ctx)
     if plan.empty:
         return empty_stats(plan)
+    guard = ResolveGuard(ctx.model, ctx.result)
+    guard.arm()
     stats = apply(ctx, plan)
     result = _warm_resolve(ctx)
     stats.update(
@@ -888,6 +892,9 @@ def _refine_two_pass(
             "iterations": int(result.iterations),
         }
     )
+    # A non-converged re-solve must not replace the converged first pass:
+    # restore the measurement edits, V/δ and the previous result.
+    ctx.result = guard.settle(result, stats)
     return stats
 
 
@@ -1174,7 +1181,11 @@ def _s_v_mirror_chain(ctx: _Ctx) -> dict:
 
 def _s_refine_merged(ctx: _Ctx) -> dict:
     """Слитые v_refine + v_mirror + v_mirror_chain: планы по одному решению,
-    один общий warm re-solve (перф-режим refine_merge)."""
+    один общий warm re-solve (перф-режим refine_merge).
+
+    A re-solve that loses convergence reverts all three plans at once
+    (see :mod:`gridstate.resolve_pass`).
+    """
     cfg = ctx.cfg
     if not cfg.refine_merge:
         return {"skipped": "выключено (refine_merge=False)"}
@@ -1183,9 +1194,13 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
         return {"skipped": "решение непригодно — нет надёжных остатков"}
     stats: dict[str, Any] = {}
     applied = False
+    # Snapshot is taken lazily, right before the first plan edits the model
+    # (classification itself is read-only).
+    guard = ResolveGuard(ctx.model, ctx.result)
     if cfg.v_refine:
         vr_plan = classify_v_refine(ctx.model.measurements.to_numpy(), rn_threshold=cfg.v_refine_rn)
         if not vr_plan.empty:
+            guard.arm()
             stats["v_refine"] = apply_v_refine_plan(ctx.model, vr_plan, factor=cfg.v_refine_factor)
             applied = True
     if cfg.v_mirror:
@@ -1198,6 +1213,7 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
             cross_at=cfg.v_mirror_cross_at,
         )
         if not vm_plan.empty:
+            guard.arm()
             stats["v_mirror"] = apply_v_mirror_plan(ctx.model, vm_plan)
             applied = True
     if cfg.v_mirror_chain:
@@ -1214,6 +1230,7 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
             cross_at=cfg.v_mirror_cross_at,
         )
         if not ch_plan.empty:
+            guard.arm()
             st = apply_v_mirror_plan(ctx.model, ch_plan)
             stats["v_mirror_chain"] = {"max_depth": st.pop("clusters"), **st}
             applied = True
@@ -1221,6 +1238,7 @@ def _s_refine_merged(ctx: _Ctx) -> dict:
         return {"skipped": "no-op (все планы пусты)"}
     result = _warm_resolve(ctx)
     stats.update(success=bool(result.success), iterations=int(result.iterations))
+    ctx.result = guard.settle(result, stats)
     return stats
 
 

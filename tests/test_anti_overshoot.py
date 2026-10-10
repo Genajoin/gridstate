@@ -11,13 +11,20 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from gridstate.constants import (
     MeasurementObjectType,
     MeasurementType,
     NodeType,
 )
 from gridstate.post_processing import _max_voltage_ratio, refine_anti_overshoot
+from gridstate.resolve_pass import REVERT_REASON_NOT_CONVERGED
 from gridstate.working import Working
+
+
+# Stand-in for a converged re-solve result (only ``success`` is read).
+_REFINED = SimpleNamespace(success=True)
 
 
 def _build_model(*, overshoot_pu: float = 1.30):
@@ -83,11 +90,11 @@ def test_anti_overshoot_accept_lowers_v():
     def resolve():
         # имитируем эффект tight-инжекции: V садится к физ-уровню 1.05pu
         m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.05})
-        return "REFINED"
+        return _REFINED
 
     result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
 
-    assert result == "REFINED"
+    assert result is _REFINED
     assert stats["accepted"] is True
     assert stats["tightened"] == 1
     assert stats["max_ratio_before"] > stats["max_ratio_after"]
@@ -103,7 +110,7 @@ def test_anti_overshoot_revert_when_not_improved():
 
     def resolve():
         m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.35})  # стало хуже
-        return "REFINED"
+        return _REFINED
 
     result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
 
@@ -133,7 +140,7 @@ def test_anti_overshoot_stops_after_round_that_did_not_help():
         calls.append(1)
         m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.10})
         m.nodes.update(3, {"voltage_magnitude": 110.0 * 1.40})  # новый overshoot
-        return "REFINED"
+        return _REFINED
 
     result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
 
@@ -150,7 +157,7 @@ def test_anti_overshoot_noop_when_no_overshoot():
 
     def resolve():
         calls["n"] += 1
-        return "REFINED"
+        return _REFINED
 
     result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
 
@@ -181,10 +188,48 @@ def test_anti_overshoot_skips_node_with_real_v():
 
     def resolve():
         calls["n"] += 1
-        return "REFINED"
+        return _REFINED
 
     result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
 
     assert result == "BASE"
     assert stats["tightened"] == 0
     assert calls["n"] == 0
+
+
+def test_anti_overshoot_rejects_non_converged_resolve():
+    """A re-solve that lowers max V/Vnom but did not converge is NOT accepted:
+    full revert (V, added priors) to the base result."""
+    m = _build_model(overshoot_pu=1.30)
+    nodes0 = m.nodes.to_numpy()
+    meas0 = m.measurements.to_numpy()
+    failed = SimpleNamespace(success=False)
+
+    def resolve():
+        m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.05})
+        return failed
+
+    result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
+
+    assert result == "BASE"
+    assert stats["accepted"] is False
+    assert stats["tightened"] == 1
+    assert stats["revert_reason"] == REVERT_REASON_NOT_CONVERGED
+    # the ratio did drop — the rejection is due to non-convergence alone
+    assert stats["max_ratio_after"] < stats["max_ratio_before"]
+    assert (m.nodes.to_numpy() == nodes0).all()
+    assert len(m.measurements) == len(meas0)
+    assert _count_pseudo_inj(m) == 0
+
+
+def test_anti_overshoot_accepts_converged_resolve_without_revert_reason():
+    m = _build_model(overshoot_pu=1.30)
+
+    def resolve():
+        m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.05})
+        return _REFINED
+
+    _, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
+
+    assert stats["accepted"] is True
+    assert "revert_reason" not in stats
