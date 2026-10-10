@@ -3,7 +3,7 @@
 Адаптеры применения (``apply_*_resolved``) поверх контрактных ядер (``_apply_*_on_arrays``):
 телеметрия/z-вектор, ON_LINE-топология, РПН/ПБВ, материализация узлового режима, Vnom.
 Плюс независимые prep-шаги: агрегация генераторов, реакторы→шунт, нормализация
-короткозамыкателей, слияние дублей, фильтры качества/V/Q-потерь. Все они работают над
+короткозамыкателей, фильтры качества/V/Q-потерь. Все они работают над
 числовыми массивами ``SE_INPUT`` (без формат-слоя источника).
 """
 
@@ -20,10 +20,7 @@ from gridstate.telemetry.loss_filter import (
     analyze_branch_loss_consistency,
     compute_branch_loss_formulas,
 )
-from gridstate.telemetry.measurements import (
-    deactivate_orphan_measurements,
-    resolve_merged_measurement_conflicts,
-)
+from gridstate.telemetry.measurements import deactivate_orphan_measurements
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.quality import (
     QUALITY_BAD,
@@ -78,7 +75,6 @@ __all__ = [
     "normalize_breaker_reactance",
     "normalize_guid",
     "passthrough_classifier",
-    "resolve_merged_measurement_conflicts",
     "strict_classifier",
     "tm_code_histogram",
     "variance_branch_q",

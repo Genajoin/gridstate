@@ -57,7 +57,6 @@ from gridstate.telemetry import (
     apply_voltage_range_filter,
     deactivate_orphan_measurements,
     normalize_breaker_reactance,
-    resolve_merged_measurement_conflicts,
 )
 from gridstate.telemetry.apply_resolved import apply_materialize_resolved, apply_telemetry_resolved
 from gridstate.telemetry.load_only_injection import (
@@ -232,12 +231,6 @@ class PipelineConfig:
         help="voltage_filter_deactivate_nonphysical: V>Vnom·factor деактивируется как "
         "нефизичное (default 1.5 = 150 % Vnom).",
         depends={"voltage_filter_deactivate_nonphysical": True},
-    )
-    resolve_merged_conflicts: bool = _toggle(
-        True,
-        group=_G_XML,
-        label="Слить дубли измерений",
-        help="resolve_merged_measurement_conflicts: слить дубли замеров на одном объекте.",
     )
     aggregate_generators: bool = _toggle(
         True,
@@ -963,10 +956,6 @@ def _s_voltage_range_filter(ctx: _Ctx) -> dict:
     )
 
 
-def _s_resolve_merged(ctx: _Ctx) -> dict:
-    return dict(resolve_merged_measurement_conflicts(ctx.model) or {})
-
-
 def _s_refine_slack(ctx: _Ctx) -> dict:
     return dict(refine_slack_to_one(ctx.model) or {})
 
@@ -1401,14 +1390,6 @@ STEPS: list[Step] = [
         "apply_voltage_range_filter: downweight V вне диапазона.",
         _s_voltage_range_filter,
         toggle="apply_voltage_range_filter",
-    ),
-    Step(
-        "resolve_merged",
-        "Слить дубли измерений",
-        _G_XML,
-        "resolve_merged_measurement_conflicts: слить дубли на объекте.",
-        _s_resolve_merged,
-        toggle="resolve_merged_conflicts",
     ),
     Step(
         "refine_node_types_2",

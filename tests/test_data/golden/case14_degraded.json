@@ -149,20 +149,6 @@
    },
    {
     "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "refine_node_types_2"
    },
    {
@@ -480,20 +466,6 @@
       "0": 1,
       "12": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -865,20 +837,6 @@
    },
    {
     "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
-    }
-   },
-   {
-    "type": "step_start",
     "name": "refine_node_types_2"
    },
    {
@@ -1231,20 +1189,6 @@
       "0": 1,
       "12": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -1622,20 +1566,6 @@
       "0": 1,
       "12": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
@@ -2019,20 +1949,6 @@
       "0": 1,
       "12": 1
      }
-    }
-   },
-   {
-    "type": "step_start",
-    "name": "resolve_merged"
-   },
-   {
-    "type": "step_done",
-    "name": "resolve_merged",
-    "stats": {
-     "resolved_v": 0,
-     "resolved_p_inj": 0,
-     "resolved_q_inj": 0,
-     "deactivated": 0
     }
    },
    {
