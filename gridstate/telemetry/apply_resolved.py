@@ -17,17 +17,33 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from gridstate.constants import FilterFlag
+from gridstate._arrays import id_value_map
+from gridstate.constants import FilterFlag, MeasurementObjectType, MeasurementType
+from gridstate.measurement_ids import IdAllocator
 from gridstate.telemetry._filters import build_measurement_index
 from gridstate.telemetry._specs import _INJ_MT, _KIND_MAP, _NODE_INJ_MAP
 from gridstate.telemetry.loss_filter import is_branch_q_consistent_with_physics
+from gridstate.telemetry.noise import (
+    QUESTIONABLE_SIGMA2_MULTIPLIER,
+    branch_nominal_kv,
+    variance_branch_q,
+    variance_injection,
+    variance_power,
+    variance_voltage,
+)
 from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_QUESTIONABLE, aggregate_qualities
-from gridstate.telemetry.units import variance_branch_q, variance_power, variance_voltage
 from gridstate.working import table_copy, table_replace
+from gridstate.z_vector import SIDE_NONE
 
 
 if TYPE_CHECKING:
     from gridstate.working import Working
+
+
+_OT_NODE = int(MeasurementObjectType.NODE)
+_OT_BRANCH = int(MeasurementObjectType.BRANCH)
+_MT_Q = int(MeasurementType.POWER_Q)
+_MT_V = int(MeasurementType.VOLTAGE)
 
 
 @dataclass(frozen=True)
@@ -40,7 +56,7 @@ class TelemetryApplyConfig:
     compatibility and assembles this config to hand down.
     """
 
-    questionable_sigma2_multiplier: float = 100.0
+    questionable_sigma2_multiplier: float = QUESTIONABLE_SIGMA2_MULTIPLIER
     v_sigma2_scale_by_node: dict[int, float] | None = None
     flow_sigma2_scale_by_branch: dict[tuple[int, str], float] | None = None
     branch_p_sigma_frac: float = 0.02
@@ -60,7 +76,7 @@ def apply_telemetry_resolved(
     arg_keys: list[tuple[int, str]],
     *,
     total_args: int,
-    questionable_sigma2_multiplier: float = 100.0,
+    questionable_sigma2_multiplier: float = QUESTIONABLE_SIGMA2_MULTIPLIER,
     v_sigma2_scale_by_node: dict[int, float] | None = None,
     flow_sigma2_scale_by_branch: dict[tuple[int, str], float] | None = None,
     branch_p_sigma_frac: float = 0.02,
@@ -231,18 +247,18 @@ def _measurement_variance(
     """
     # variance: V — по vn узла, P/Q — по магнитуде
     value = float(meas_arr[idx]["value"])
-    if mt == 2:  # NODE V
+    if mt == _MT_V:  # NODE V
         obj_node = int(meas_arr[idx]["object_id"])
         vn = vn_by_node.get(obj_node, 220.0)
         return variance_voltage(value, vn)
-    if mt == 1:  # BRANCH Q
+    if mt == _MT_Q:  # BRANCH Q
         # Charging-aware σ_Q (единый источник — variance_branch_q): на
         # длинных HV/EHV-ВЛ с большой B legitimate Q ≈ V²·B; static σ_frac
         # недооценивает шум. σ_min = α·|B|·Vn² (default α=0.10), so Q readings
         # of 750 kV lines get σ ≈ 50–100 Mvar. A parameter sweep confirmed
         # α=0.10 as the best value on four large production models.
-        vn_q = branch_vn.get(int(obj_id), 0.0) if ot == 1 else 0.0
-        b_si_q = branch_b.get(int(obj_id), 0.0) if ot == 1 else 0.0
+        vn_q = branch_vn.get(int(obj_id), 0.0) if ot == _OT_BRANCH else 0.0
+        b_si_q = branch_b.get(int(obj_id), 0.0) if ot == _OT_BRANCH else 0.0
         return variance_branch_q(
             value,
             charging_mvar=abs(b_si_q) * vn_q * vn_q,
@@ -323,7 +339,7 @@ def _apply_measurement_loop(
         ot, mt, side, sign = _KIND_MAP[kind]
         # Не активируем меру на отключённой ветви — иначе WLS получит
         # residual P/Q≠0 на ветви, чью Y-bus занулил.
-        if ot == 1 and not branch_status_by_id.get(int(obj_id), False):
+        if ot == _OT_BRANCH and not branch_status_by_id.get(int(obj_id), False):
             stats.setdefault("skipped_branch_off", 0)
             stats["skipped_branch_off"] += 1
             continue
@@ -348,7 +364,7 @@ def _apply_measurement_loop(
         # оборудование. Принимать его как жёсткий якорь нельзя: SE будет тянуть
         # V→0 at the node and around it (a non-physical minimum of J). It is not
         # activated; add_pseudo_measurements adds pseudo-V=Vnom instead.
-        if mt == 2 and ot == 0:
+        if mt == _MT_V and ot == _OT_NODE:
             obj_node = int(meas_arr[idx]["object_id"])
             vn = vn_by_node.get(obj_node, 220.0)
             if vn > 0 and abs(val) < 0.5 * vn:
@@ -380,7 +396,7 @@ def _apply_measurement_loop(
         # Точечный масштаб σ² V-меры узла из плана производителя данных
         # ({node_id: factor}; factor<1 усиливает доверие к мере — «якорный»
         # датчик, factor>1 ослабляет). Только узловые V (mt=2, ot=0).
-        if mt == 2 and ot == 0 and config.v_sigma2_scale_by_node:
+        if mt == _MT_V and ot == _OT_NODE and config.v_sigma2_scale_by_node:
             scale = config.v_sigma2_scale_by_node.get(int(meas_arr[idx]["object_id"]))
             if scale is not None:
                 var *= float(scale)
@@ -389,7 +405,7 @@ def _apply_measurement_loop(
         # Аналогичный план для потоковых мер ветвей: {(branch_id, kind): factor},
         # kind ∈ PBEG/PEND/QBEG/QEND. factor>1 ослабляет доверие (мера-кандидат
         # в дефектные по данным производителя), factor<1 усиливает.
-        if ot == 1 and config.flow_sigma2_scale_by_branch:
+        if ot == _OT_BRANCH and config.flow_sigma2_scale_by_branch:
             scale = config.flow_sigma2_scale_by_branch.get((int(obj_id), kind))
             if scale is not None:
                 var *= float(scale)
@@ -415,30 +431,29 @@ def _build_node_injection_rows(
     config: TelemetryApplyConfig,
     stats: dict[str, int],
 ) -> list[dict]:
-    """Собрать NODE injections для последующего .add() адаптером. Локальная
-    sigma 5% (не 2% как JSON-TI) — net inj это агрегированная величина
-    (PG+PN с разными ARG), уверенность ниже чем у направленного branch
-    flow. Tighter sigma (как в `_variance_power` 2%) эмпирически ломала
-    convergence. id назначаются здесь (бит-идентично прежнему .add()).
+    """Собрать NODE injections для последующего .add() адаптером.
+
+    The variance is :func:`gridstate.telemetry.noise.variance_injection` (sigma
+    5 % of the net value, see there), scaled for a QUESTIONABLE aggregate. id
+    назначаются здесь (бит-идентично прежнему .add()).
     """
     new_rows: list[dict] = []
-    next_id = int(meas_arr["id"].max()) + 1 if len(meas_arr) else 1
+    ids = IdAllocator.after_max(meas_arr["id"], name="apply_telemetry")
     for (obj_id, pq), entries in inj_acc.items():
         net = sum(v for v, _, _ in entries)
         guid_first = entries[0][1]
         net_q = aggregate_qualities([q for _, _, q in entries])
         mt = _INJ_MT[pq]
-        sigma = max(0.05 * abs(net), 0.5)
-        var = sigma * sigma + (1.0 if pq == "P" else 0.5)
+        var = variance_injection(net, "P" if pq == "P" else "Q")
         if net_q == QUALITY_QUESTIONABLE:
             var *= config.questionable_sigma2_multiplier
         new_rows.append(
             {
-                "id": next_id,
-                "object_type": 0,
+                "id": ids.next(),
+                "object_type": _OT_NODE,
                 "object_id": int(obj_id),
                 "measurement_type": mt,
-                "branch_side": -1,
+                "branch_side": SIDE_NONE,
                 "value": float(net),
                 "variance": float(var),
                 "weight": 1.0 / float(var),
@@ -447,7 +462,6 @@ def _build_node_injection_rows(
                 "source_guid": guid_first,
             }
         )
-        next_id += 1
         stats["node_inj_added"] += 1
         if net_q == QUALITY_QUESTIONABLE:
             stats["applied_questionable"] += 1
@@ -485,16 +499,12 @@ def _apply_telemetry_on_arrays(
     meas_idx = build_measurement_index(meas_arr)
 
     # node_id → voltage_nominal для расчёта sigma_V.
-    vn_by_node: dict[int, float] = {
-        int(i): float(v) for i, v in zip(nodes_arr["id"], nodes_arr["voltage_nominal"], strict=True)
-    }
+    vn_by_node: dict[int, float] = id_value_map(nodes_arr, "voltage_nominal")
     # branch_id → status. Меру нельзя ставить на отключённую ветвь:
     # WLS получит residual P/Q≠0 на ветви где Y-bus её зануляет —
     # iter будет компенсировать через V/δ соседних узлов и портит
     # решение. Проверяется при активации branch-meas (ot=1).
-    branch_status_by_id: dict[int, bool] = {
-        int(i): bool(s) for i, s in zip(branches_arr["id"], branches_arr["status"], strict=True)
-    }
+    branch_status_by_id: dict[int, bool] = id_value_map(branches_arr, "status", bool)
 
     # Сначала отключим ВСЕ measurements (на входе они приходят со status=True
     # по умолчанию). После apply сделаем status=True только для тех, что
@@ -521,18 +531,9 @@ def _apply_telemetry_on_arrays(
 
     # Per-branch nominal voltage / susceptance / reactance: питают Q-physics
     # pre-pass и charging-aware σ_Q. Vn берётся из узла начала ветви.
-    branch_vn: dict[int, float] = {
-        int(bid): vn_by_node.get(int(fn), 0.0)
-        for bid, fn in zip(branches_arr["id"], branches_arr["from_node"], strict=True)
-    }
-    branch_b: dict[int, float] = {
-        int(bid): float(b)
-        for bid, b in zip(branches_arr["id"], branches_arr["susceptance"], strict=True)
-    }
-    branch_x: dict[int, float] = {
-        int(bid): float(x)
-        for bid, x in zip(branches_arr["id"], branches_arr["reactance"], strict=True)
-    }
+    branch_vn = branch_nominal_kv(vn_by_node, branches_arr, policy="from")
+    branch_b: dict[int, float] = id_value_map(branches_arr, "susceptance")
+    branch_x: dict[int, float] = id_value_map(branches_arr, "reactance")
 
     inconsistent_branches = _detect_sign_inconsistent_branches(
         arg_keys, resolved, config.sign_inconsistency_threshold_mw

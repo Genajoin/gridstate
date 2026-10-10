@@ -19,8 +19,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from gridstate.bounds import resolve_bounds
+from gridstate._arrays import meas_mask
+from gridstate.bounds import bounds_unset, declared_box
 from gridstate.constants import NodeType
+from gridstate.measurement_ids import PSEUDO_ID_BASE, IdAllocator
 from gridstate.preprocessing._scan import scan_node_meas_by_kind
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.preprocessing.node_props import extract_node_load_props_from_model
@@ -36,6 +38,8 @@ from gridstate.z_vector import (
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from gridstate.working import Working
 
 
@@ -56,7 +60,7 @@ class PseudoMeasConfig:
     zero_inj_variance: float = 100.0
     empty_model_loose_factor: float = 100.0
     load_inj_loose_factor: float = 10.0
-    mid_start: int = 300_000_000
+    mid_start: int = PSEUDO_ID_BASE
     boundary_inj_loose_factor: float = 10000.0
     unobservable_v_sigma_frac: float | None = None
     unobservable_v_exclude_real_v_neighbor: bool = True
@@ -72,8 +76,9 @@ class PseudoMeasConfig:
 
 def _generation_range_variance(row: np.void, lo_col: str, hi_col: str, fallback: float) -> float:
     """Squared half-width of the node generation range; ``fallback`` if unset."""
-    lo, hi = resolve_bounds(float(row[lo_col]), float(row[hi_col]))
-    if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+    box = declared_box(float(row[lo_col]), float(row[hi_col]))
+    if box is not None:
+        lo, hi = box
         return max(fallback, (0.5 * (hi - lo)) ** 2)
     return fallback * 100.0
 
@@ -145,24 +150,15 @@ def _unknown_load_determined_nodes(
     * Q: every active incident branch carries a real Q flow measurement or
       real V measurements at both ends.
     """
-    names = meas_arr.dtype.names or ()
-    real = meas_arr["status"].astype(bool)
-    if "is_pseudo" in names:
-        real &= ~meas_arr["is_pseudo"].astype(bool)
-    on_branch = real & (meas_arr["object_type"] == OBJ_BRANCH)
-    flow_p = set(
-        meas_arr["object_id"][on_branch & (meas_arr["measurement_type"] == KIND_POWER_P)].tolist()
-    )
-    flow_q = set(
-        meas_arr["object_id"][on_branch & (meas_arr["measurement_type"] == KIND_POWER_Q)].tolist()
-    )
-    real_v = set(
-        meas_arr["object_id"][
-            real
-            & (meas_arr["object_type"] == OBJ_NODE)
-            & (meas_arr["measurement_type"] == KIND_VOLTAGE)
-        ].tolist()
-    )
+
+    # A missing ``is_pseudo`` column means every row is real.
+    def _real(kind: int, obj: int) -> set[int]:
+        sel = meas_mask(meas_arr, kinds=kind, obj=obj, pseudo=False, missing_pseudo="real")
+        return set(meas_arr["object_id"][sel].tolist())
+
+    flow_p = _real(KIND_POWER_P, OBJ_BRANCH)
+    flow_q = _real(KIND_POWER_Q, OBJ_BRANCH)
+    real_v = _real(KIND_VOLTAGE, OBJ_NODE)
 
     incident: dict[int, list[int]] = {}
     covered_q = set(flow_q)
@@ -188,8 +184,8 @@ def _unknown_load_determined_nodes(
             ("load_p_min", "load_p_max", "load_p", flow_p, for_p),
             ("load_q_min", "load_q_max", "load_q", covered_q, for_q),
         ):
-            lo, hi = resolve_bounds(float(r[lo_col]), float(r[hi_col]))
-            if np.isfinite(lo) or np.isfinite(hi) or abs(float(r[val_col])) > 1e-6:
+            unset = bounds_unset(float(r[lo_col]), float(r[hi_col]))
+            if not unset or abs(float(r[val_col])) > 1e-6:
                 continue
             if all(b in covered for b in branches):
                 out.add(nid)
@@ -208,14 +204,16 @@ def _build_pseudo_rows(
     real_v_neighbor: set[int],
     unknown_load_p: set[int] | None = None,
     unknown_load_q: set[int] | None = None,
+    existing_ids: Iterable[int] | np.ndarray = (),
 ) -> tuple[list[dict], dict]:
     """Основной цикл: построить pseudo V/P_inj/Q_inj-строки по активным узлам.
 
     Последовательный проход по ``nodes_arr`` в исходном порядке, с тем же порядком
     добавления строк внутри узла (V-приор → P_inj → Q_inj) и монотонной раздачей
-    ``mid``. Возвращает ``(new_rows, stats)``.
+    id от ``config.mid_start`` (сверяются с ``existing_ids``). Возвращает
+    ``(new_rows, stats)``.
     """
-    mid = config.mid_start
+    ids = IdAllocator(existing_ids, config.mid_start, name="add_pseudo_measurements")
     n_v_added = 0
     n_zinj_added = 0
     n_unobs_v = 0
@@ -266,9 +264,8 @@ def _build_pseudo_rows(
                 # утаскивать V в 0.3-0.5 p.u. — pseudo-V не держал якорь.
                 sigma = (0.05 * vn) ** 2
             new_rows.append(
-                pseudo_node_measurement(mid, nid, KIND_VOLTAGE, v_prior_value, float(sigma))
+                pseudo_node_measurement(ids.next(), nid, KIND_VOLTAGE, v_prior_value, float(sigma))
             )
-            mid += 1
             n_v_added += 1
 
         # Q-псевдо требует отсутствия у узла real-P_inj И real-Q_inj: узел с
@@ -323,17 +320,15 @@ def _build_pseudo_rows(
                 var_q *= config.boundary_inj_loose_factor
             new_rows.append(
                 pseudo_node_measurement(
-                    mid, nid, KIND_POWER_INJECTION_P, float(p_inj_prior), float(var_p)
+                    ids.next(), nid, KIND_POWER_INJECTION_P, float(p_inj_prior), float(var_p)
                 )
             )
-            mid += 1
             if want_qinj:
                 new_rows.append(
                     pseudo_node_measurement(
-                        mid, nid, KIND_POWER_INJECTION_Q, float(q_inj_prior), float(var_q)
+                        ids.next(), nid, KIND_POWER_INJECTION_Q, float(q_inj_prior), float(var_q)
                     )
                 )
-                mid += 1
                 n_zinj_added += 1
 
     stats = {
@@ -397,6 +392,7 @@ def _add_pseudo_measurements_on_arrays(
         real_v_neighbor=real_v_neighbor,
         unknown_load_p=unknown_load_p,
         unknown_load_q=unknown_load_q,
+        existing_ids=meas_arr["id"],
     )
 
 
@@ -409,7 +405,7 @@ def add_pseudo_measurements(
     empty_model_loose_factor: float = 100.0,
     load_inj_loose_factor: float = 10.0,
     node_load_props: dict[int, dict] | None = None,
-    mid_start: int = 300_000_000,
+    mid_start: int = PSEUDO_ID_BASE,
     boundary_inj_loose_factor: float = 10000.0,
     unobservable_v_sigma_frac: float | None = None,
     unobservable_v_exclude_real_v_neighbor: bool = True,

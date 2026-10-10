@@ -44,6 +44,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+from gridstate._arrays import active_ids, nodes_with_active_branch
 from gridstate.constants import NodeType
 
 
@@ -65,7 +66,7 @@ def _orphan_branches_to_disable(nodes_arr: Any, branches_arr: Any) -> list[int]:
     Возвращает ``id`` active-ветвей, у которых хоть один конец не в наборе
     active-узлов (порядок — как в ``branches_arr``).
     """
-    valid_node_ids = {int(r["id"]) for r in nodes_arr if r["status"]}
+    valid_node_ids = active_ids(nodes_arr)
 
     to_disable: list[int] = []
     for r in branches_arr:
@@ -125,12 +126,7 @@ def _isolated_nodes_to_disable(nodes_arr: Any, branches_arr: Any) -> list[int]:
 
     Читает ``node.{id,status,node_type}`` и ``branch.{status,from_node,to_node}``.
     """
-    has_active_branch: set[int] = set()
-    for r in branches_arr:
-        if not r["status"]:
-            continue
-        has_active_branch.add(int(r["from_node"]))
-        has_active_branch.add(int(r["to_node"]))
+    has_active_branch = nodes_with_active_branch(branches_arr)
 
     to_disable: list[int] = []
     for r in nodes_arr:
@@ -151,13 +147,12 @@ def _slack_nodes_to_demote(nodes_arr: Any, branches_arr: Any) -> list[int]:
     ``branch.{status,from_node,to_node}``. Кандидаты — active SLACK с
     ``balance_priority>0`` и active-branch; оставляем min priority (ties → min
     id), остальные SLACK → PQ. Без валидных кандидатов — ``[]``.
+
+    The slack picked by ``units.network_pu_from_tables`` when several remain
+    follows a different rule (any balance_priority, no branch check, ties to
+    the first position); the two coincide only when this plan leaves one slack.
     """
-    nodes_with_branch: set[int] = set()
-    for r in branches_arr:
-        if not r["status"]:
-            continue
-        nodes_with_branch.add(int(r["from_node"]))
-        nodes_with_branch.add(int(r["to_node"]))
+    nodes_with_branch = nodes_with_active_branch(branches_arr)
 
     candidates: list[tuple[int, int]] = []  # (balance_priority, node_id)
     for r in nodes_arr:

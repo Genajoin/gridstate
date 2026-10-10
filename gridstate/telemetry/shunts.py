@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from gridstate._arrays import id_value_map
 from gridstate.units import BASE_MVA
 from gridstate.utils import id_to_pos_map
 
@@ -59,9 +60,7 @@ def _aggregate_shunts_on_arrays(nodes_arr: Any, shunts_arr: Any) -> dict[str, in
     :func:`apply_reactors_to_node_shunt` (без ``to_numpy`` при отсутствии данных).
     """
     by_id = id_to_pos_map(nodes_arr["id"])
-    node_status: dict[int, bool] = {
-        int(i): bool(s) for i, s in zip(nodes_arr["id"], nodes_arr["status"], strict=True)
-    }
+    node_status: dict[int, bool] = id_value_map(nodes_arr, "status", bool)
 
     applied = 0
     sum_b = 0.0
@@ -135,9 +134,7 @@ def _normalize_breaker_reactance_on_arrays(
     узла ``from`` (фолбэк ``to``); ветви без ``Vn>0`` не трогаются. Возвращает
     число нормализованных ветвей.
     """
-    vn_by_id: dict[int, float] = {
-        int(i): float(v) for i, v in zip(nodes_arr["id"], nodes_arr["voltage_nominal"], strict=True)
-    }
+    vn_by_id: dict[int, float] = id_value_map(nodes_arr, "voltage_nominal")
 
     n = 0
     for i in range(len(branches_arr)):

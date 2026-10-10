@@ -25,7 +25,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate._arrays import id_value_map, meas_mask
 from gridstate.constants import MeasurementObjectType, MeasurementType
+from gridstate.telemetry.noise import branch_nominal_kv, flow_sigma_floor
 from gridstate.working import table_copy, table_replace
 
 
@@ -90,27 +92,19 @@ def _flow_sigma_floor_on_arrays(
     ``to_node``). Векторно; python-цикл только в маппинге branch_id → Vn.
     Меры на неизвестных ветвях получают floor 0 (не трогаются).
     """
-    vn_by_node = {
-        int(i): float(v) for i, v in zip(nodes_arr["id"], nodes_arr["voltage_nominal"], strict=True)
-    }
-    vn_by_branch = {
-        int(b["id"]): max(
-            vn_by_node.get(int(b["from_node"]), 0.0),
-            vn_by_node.get(int(b["to_node"]), 0.0),
-        )
-        for b in branches_arr
-    }
+    vn_by_node = id_value_map(nodes_arr, "voltage_nominal")
+    vn_by_branch = branch_nominal_kv(vn_by_node, branches_arr, policy="max")
 
-    sel = (
-        (meas_arr["is_pseudo"] == 0)
-        & (meas_arr["object_type"] == ot_branch)
-        & np.isin(meas_arr["measurement_type"], [mt_p, mt_q])
-    )
-    scale = kv_frac * np.sqrt(3.0) * current_ka
-    floor = scale * np.fromiter(
-        (vn_by_branch.get(int(oid), 0.0) for oid in meas_arr["object_id"]),
-        dtype=float,
-        count=len(meas_arr),
+    # No status filter: inactive real flow rows are floored as well.
+    sel = meas_mask(meas_arr, kinds=[mt_p, mt_q], obj=ot_branch, active=False, pseudo=False)
+    floor = flow_sigma_floor(
+        np.fromiter(
+            (vn_by_branch.get(int(oid), 0.0) for oid in meas_arr["object_id"]),
+            dtype=float,
+            count=len(meas_arr),
+        ),
+        kv_frac=kv_frac,
+        current_ka=current_ka,
     )
     floor2 = floor * floor
 

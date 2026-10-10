@@ -38,9 +38,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from gridstate.bounds import resolve_bounds
-from gridstate.constants import FilterFlag
+from gridstate._arrays import meas_mask
+from gridstate.bounds import bounds_unset, declared_box, resolve_bounds
+from gridstate.constants import FilterFlag, MeasurementObjectType
 from gridstate.telemetry._specs import _INJ_MT, _NODE_INJ_MAP
+from gridstate.telemetry.noise import uniform_box_variance
 from gridstate.telemetry.quality import QUALITY_BAD
 from gridstate.working import table_copy, table_replace
 
@@ -57,6 +59,8 @@ __all__ = [
     "release_load_only_injections",
     "widen_generation_only_injections",
 ]
+
+_OT_NODE = int(MeasurementObjectType.NODE)
 
 #: Margin, in measurement sigmas, by which a P injection reading must miss the
 #: minimum generation of a node before that minimum is dropped.
@@ -147,8 +151,7 @@ def release_load_only_injections(
     for row in nodes:
         if not bool(row["status"]) or not bool(row["exist_gen"]):
             continue
-        lo, hi = resolve_bounds(float(row["generation_p_min"]), float(row["generation_p_max"]))
-        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+        if declared_box(float(row["generation_p_min"]), float(row["generation_p_max"])):
             gen_nodes.add(int(row["id"]))
 
     targets = {
@@ -156,9 +159,7 @@ def release_load_only_injections(
         _INJ_MT["Q"]: load_only.get("Q", frozenset()) & gen_nodes,
     }
     meas = table_copy(model.measurements)
-    base = (
-        meas["status"].astype(bool) & ~meas["is_pseudo"].astype(bool) & (meas["object_type"] == 0)
-    )
+    base = meas_mask(meas, obj=_OT_NODE, pseudo=False)
     released: dict[int, set[int]] = {}
     for mt, node_set in targets.items():
         if not node_set:
@@ -198,12 +199,7 @@ def relax_generation_min_to_injection(
     """
     nodes = model.nodes.to_numpy()
     meas = model.measurements.to_numpy()
-    sel = (
-        meas["status"].astype(bool)
-        & ~meas["is_pseudo"].astype(bool)
-        & (meas["object_type"] == 0)
-        & (meas["measurement_type"] == _INJ_MT["P"])
-    )
+    sel = meas_mask(meas, kinds=_INJ_MT["P"], obj=_OT_NODE, pseudo=False)
     reading: dict[int, tuple[float, float]] = {}
     for k in np.flatnonzero(sel):
         reading.setdefault(
@@ -223,9 +219,12 @@ def relax_generation_min_to_injection(
         if nid in gen_only_p or not bool(row["exist_load"]):
             load_lo = load_hi = 0.0
         else:
-            load_lo, load_hi = resolve_bounds(float(row["load_p_min"]), float(row["load_p_max"]))
-            if not (np.isfinite(load_lo) and np.isfinite(load_hi)):
+            load_box = declared_box(
+                float(row["load_p_min"]), float(row["load_p_max"]), allow_point=True
+            )
+            if load_box is None:
                 continue
+            load_lo, load_hi = load_box
         z, sigma = reading[nid]
         if z + load_hi + RELAX_SIGMA * sigma >= p_min:
             continue
@@ -262,22 +261,17 @@ def widen_generation_only_injections(
         ):
             if nid not in gen_only.get(pq, frozenset()):
                 continue
-            lo, hi = resolve_bounds(float(row[lo_col]), float(row[hi_col]))
-            if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
-                box[(nid, _INJ_MT[pq])] = (lo, hi)
-            elif not (np.isfinite(lo) or np.isfinite(hi)):
+            load_box = declared_box(float(row[lo_col]), float(row[hi_col]))
+            if load_box is not None:
+                box[(nid, _INJ_MT[pq])] = load_box
+            elif bounds_unset(float(row[lo_col]), float(row[hi_col])):
                 unknown.add((nid, _INJ_MT[pq]))
 
     counts = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
     released = {_INJ_MT["P"]: 0, _INJ_MT["Q"]: 0}
     if box or unknown:
         meas = table_copy(model.measurements)
-        sel = (
-            meas["status"].astype(bool)
-            & ~meas["is_pseudo"].astype(bool)
-            & (meas["object_type"] == 0)
-            & np.isin(meas["measurement_type"], list(counts))
-        )
+        sel = meas_mask(meas, kinds=list(counts), obj=_OT_NODE, pseudo=False)
         for k in np.flatnonzero(sel):
             mt = int(meas["measurement_type"][k])
             key = (int(meas["object_id"][k]), mt)
@@ -291,7 +285,7 @@ def widen_generation_only_injections(
                 continue
             lo, hi = bounds
             meas["value"][k] -= 0.5 * (lo + hi)
-            meas["variance"][k] += (hi - lo) ** 2 / 12.0
+            meas["variance"][k] += uniform_box_variance(lo, hi)
             meas["weight"][k] = 1.0 / meas["variance"][k]
             counts[mt] += 1
         if any(counts.values()) or any(released.values()):

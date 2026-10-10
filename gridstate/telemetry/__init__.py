@@ -16,6 +16,7 @@ from gridstate.telemetry.generators import (
     apply_generator_status_from_node,
 )
 from gridstate.telemetry.measurements import deactivate_orphan_measurements
+from gridstate.telemetry.noise import variance_branch_q, variance_power, variance_voltage
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.quality import (
     QUALITY_BAD,
@@ -33,12 +34,7 @@ from gridstate.telemetry.shunts import (
     normalize_breaker_reactance,
 )
 from gridstate.telemetry.sigma_floor import apply_flow_sigma_floor
-from gridstate.telemetry.units import (
-    normalize_guid,
-    variance_branch_q,
-    variance_power,
-    variance_voltage,
-)
+from gridstate.telemetry.units import normalize_guid
 from gridstate.telemetry.voltage_filter import (
     apply_voltage_meas_calibration_for_gen_nodes,
     apply_voltage_range_filter,

@@ -35,6 +35,7 @@ import numpy as np
 
 from gridstate.algebra.normalized_residuals import normalized_residuals
 from gridstate.api import estimate
+from gridstate.constants import MeasurementQuality
 from gridstate.result import SEResult
 from gridstate.validation._diagnostics import compute_diagnostics
 
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 
 # Код качества измерения «BAD» в контракте (значение колонки ``quality``).
-QUALITY_BAD = 2
+QUALITY_BAD = int(MeasurementQuality.BAD)
 
 
 class ResidualTopRecord(NamedTuple):

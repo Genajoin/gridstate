@@ -14,12 +14,12 @@ import pytest
 
 from gridstate.contract import SE_INPUT
 from gridstate.telemetry.apply_resolved import TelemetryApplyConfig, _apply_telemetry_on_arrays
-from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_GOOD, QUALITY_QUESTIONABLE
-from gridstate.telemetry.units import (
+from gridstate.telemetry.noise import (
     variance_branch_q,
     variance_power,
     variance_voltage,
 )
+from gridstate.telemetry.quality import QUALITY_BAD, QUALITY_GOOD, QUALITY_QUESTIONABLE
 
 
 OT_NODE, OT_BRANCH = 0, 1

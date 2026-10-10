@@ -39,9 +39,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gridstate._arrays import active_ids
+from gridstate.constants import BranchType
+from gridstate.measurement_ids import MIRROR_V_ID_BASE, IdAllocator
 from gridstate.preprocessing._scan import scan_node_voltage
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
-from gridstate.z_vector import KIND_VOLTAGE
+from gridstate.z_vector import KIND_VOLTAGE, SIDE_NONE
 
 
 if TYPE_CHECKING:
@@ -59,7 +62,7 @@ def _mirror_voltage_on_arrays(
     meas_arr: Any,
     *,
     tap_tolerance: float = 1e-3,
-    mid_start: int = 200_000_000,
+    mid_start: int = MIRROR_V_ID_BASE,
 ) -> list[dict]:
     """Построить новые mirror-V-строки на контрактных массивах (НЕ мутирует входы).
 
@@ -77,15 +80,12 @@ def _mirror_voltage_on_arrays(
     all_v_by_node, real_v_by_node = scan_node_voltage(meas_arr)
     any_v_by_node: set[int] = set(all_v_by_node)
 
-    active_node_ids = {int(r["id"]) for r in nodes_arr if r["status"]}
+    active_node_ids = active_ids(nodes_arr)
 
     # Свободный id: скан множества существующих id (== live-коллекция на момент
-    # снятия meas_arr) + инкремент-only внутри прохода. Дословно повторяет
-    # `while any(int(m.id)==new_id ...): new_id += 1` оригинала.
-    existing_ids = {int(x) for x in meas_arr["id"]}
-    new_id = mid_start
-    while new_id in existing_ids:
-        new_id += 1
+    # снятия meas_arr) — один раз в начале, затем инкремент-only внутри прохода
+    # (коллизия дальше по диапазону — ошибка, а не пропуск).
+    ids = IdAllocator(meas_arr["id"], mid_start, name="mirror_voltage", skip_taken_start=True)
 
     new_rows: list[dict] = []
 
@@ -95,26 +95,24 @@ def _mirror_voltage_on_arrays(
         ``(value, variance)`` are copied verbatim (no arithmetic); ``dst`` is
         recorded in ``any_v_by_node`` so a later branch does not re-mirror it.
         """
-        nonlocal new_id
         val, var = real_v_by_node[src]
         new_rows.append(
             pseudo_node_measurement(
-                new_id,
+                ids.next(),
                 dst,
                 KIND_VOLTAGE,
                 val,
                 var,
-                branch_side=-1,
+                branch_side=SIDE_NONE,
                 source_code="mirror_unit_tap",
             )
         )
-        new_id += 1
         any_v_by_node.add(dst)
 
     for r in branches_arr:
         if not r["status"]:
             continue
-        if int(r["branch_type"]) != 1:
+        if int(r["branch_type"]) != BranchType.TRANSFORMER:
             continue
         if abs(float(r["tap_ratio"]) - 1.0) >= tap_tolerance:
             continue
@@ -134,7 +132,7 @@ def mirror_voltage_through_unit_tap_links(
     model: Working,
     *,
     tap_tolerance: float = 1e-3,
-    mid_start: int = 200_000_000,
+    mid_start: int = MIRROR_V_ID_BASE,
 ) -> dict[str, int]:
     """Скопировать real V-измерения через ktr=1.0 trafo-связи.
 

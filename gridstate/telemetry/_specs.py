@@ -1,8 +1,9 @@
 """Kind-карты телеметрии: kind-код замера → семантика (object_type / mt / side / sign).
 
-Чистые stdlib-таблицы, потребляемые контрактным ядром z-вектора
-(``gridstate.telemetry.apply_resolved._apply_telemetry_on_arrays``): связывают
-строковый kind замера с числовыми координатами в ``SE_INPUT.measurements``.
+Plain int tables (codes from the ``gridstate.constants`` enums) used by the
+telemetry core (``gridstate.telemetry.apply_resolved._apply_telemetry_on_arrays``):
+they map the string kind of a reading to its numeric coordinates in
+``SE_INPUT.measurements``.
 
 Дата-классы привязок (``ArgEntry`` / ``FormulaSpec`` / ``RpnSpec``) — формат-специфика
 приёмного слоя источника и живут во внешнем адаптере данных, а НЕ в публичном ядре:
@@ -11,6 +12,15 @@
 
 from __future__ import annotations
 
+from gridstate.constants import MeasurementObjectType, MeasurementType
+
+
+_NODE = int(MeasurementObjectType.NODE)
+_BRANCH = int(MeasurementObjectType.BRANCH)
+_P = int(MeasurementType.POWER_P)
+_Q = int(MeasurementType.POWER_Q)
+_V = int(MeasurementType.VOLTAGE)
+
 
 # kind → (object_type, measurement_type, branch_side, sign)
 # Семантика:
@@ -18,11 +28,11 @@ from __future__ import annotations
 #  - BRANCH-замер (PBEG/PEND/QBEG/QEND) → object_type=1 (BRANCH), mt=0/1, side=0/+1
 #  - sign: множитель к value. Для V/branches +1.
 _KIND_MAP: dict[str, tuple[int, int, int, int]] = {
-    "U": (0, 2, -1, +1),  # NODE V
-    "PBEG": (1, 0, 0, +1),  # BRANCH P_from
-    "PEND": (1, 0, +1, +1),  # BRANCH P_to
-    "QBEG": (1, 1, 0, +1),  # BRANCH Q_from
-    "QEND": (1, 1, +1, +1),  # BRANCH Q_to
+    "U": (_NODE, _V, -1, +1),  # NODE V
+    "PBEG": (_BRANCH, _P, 0, +1),  # BRANCH P_from
+    "PEND": (_BRANCH, _P, +1, +1),  # BRANCH P_to
+    "QBEG": (_BRANCH, _Q, 0, +1),  # BRANCH Q_from
+    "QEND": (_BRANCH, _Q, +1, +1),  # BRANCH Q_to
 }
 
 # kind → (P_or_Q, sign-multiplier к net inj). PG/QG +1; PN/QN -1.
@@ -34,4 +44,7 @@ _NODE_INJ_MAP: dict[str, tuple[str, int]] = {
     "QN": ("Q", -1),
 }
 
-_INJ_MT = {"P": 4, "Q": 5}
+_INJ_MT = {
+    "P": int(MeasurementType.POWER_INJECTION_P),
+    "Q": int(MeasurementType.POWER_INJECTION_Q),
+}

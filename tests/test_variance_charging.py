@@ -1,4 +1,4 @@
-"""Тесты charging-aware σ_Q (:func:`gridstate.telemetry.units.variance_branch_q`).
+"""Тесты charging-aware σ_Q (:func:`gridstate.telemetry.noise.variance_branch_q`).
 
 Единый источник истины для branch-Q дисперсии: σ² = max(σ²_frac, (α·|B|·Vn²)²).
 ``apply_telemetry`` uses it, and so can callers that build measurement variances
@@ -12,7 +12,7 @@ import math
 
 import pytest
 
-from gridstate.telemetry.units import variance_branch_q, variance_power
+from gridstate.telemetry.noise import variance_branch_q, variance_power
 
 
 def test_alpha_zero_equals_variance_power() -> None:

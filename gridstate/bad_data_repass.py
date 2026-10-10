@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from gridstate._arrays import meas_mask
 from gridstate.utils import branch_endpoints_map
 from gridstate.working import table_copy, table_replace
 from gridstate.z_vector import (
@@ -95,13 +96,7 @@ class BadDataPlan:
 
 def _real_detectable(m: np.ndarray) -> np.ndarray:
     """Маска real-мер, пригодных для детекции (активна, не pseudo, есть h)."""
-    mask: np.ndarray = (
-        m["status"].astype(bool)
-        & ~m["is_pseudo"].astype(bool)
-        & np.isin(m["measurement_type"], list(DETECTABLE_KINDS))
-        & np.isfinite(m["estimated_si"])
-    )
-    return mask
+    return meas_mask(m, kinds=DETECTABLE_KINDS, pseudo=False, finite_estimate=True)
 
 
 def classify_bad_data(

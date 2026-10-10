@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from gridstate.bounds import is_sentinel
+from gridstate._arrays import id_value_map
+from gridstate.bounds import SENTINEL_VALUE, is_sentinel
 from gridstate.utils import id_to_pos_map
 
 
@@ -24,9 +25,7 @@ def _apply_generator_status_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str
     ``gens_arr[i]["status"]=False`` для активных генераторов на off-узлах.
     Возвращает ``{"applied_off": N, "missing_node": N}``.
     """
-    node_status = {
-        int(i): bool(s) for i, s in zip(nodes_arr["id"], nodes_arr["status"], strict=True)
-    }
+    node_status = id_value_map(nodes_arr, "status", bool)
 
     stats = {"applied_off": 0, "missing_node": 0}
     for i in range(len(gens_arr)):
@@ -167,14 +166,14 @@ def _aggregate_generators_on_arrays(nodes_arr: Any, gens_arr: Any) -> dict[str, 
         nodes_arr[i]["generation_p"] = agg["p"]
         nodes_arr[i]["generation_q"] = agg["q"]
         if nid in p_unknown:
-            nodes_arr[i]["generation_p_min"] = -9999.0
-            nodes_arr[i]["generation_p_max"] = 9999.0
+            nodes_arr[i]["generation_p_min"] = -SENTINEL_VALUE
+            nodes_arr[i]["generation_p_max"] = SENTINEL_VALUE
         else:
             nodes_arr[i]["generation_p_min"] = agg["p_min"]
             nodes_arr[i]["generation_p_max"] = agg["p_max"]
         if nid in q_unknown:
-            nodes_arr[i]["generation_q_min"] = -9999.0
-            nodes_arr[i]["generation_q_max"] = 9999.0
+            nodes_arr[i]["generation_q_min"] = -SENTINEL_VALUE
+            nodes_arr[i]["generation_q_max"] = SENTINEL_VALUE
         else:
             nodes_arr[i]["generation_q_min"] = agg["q_min"]
             nodes_arr[i]["generation_q_max"] = agg["q_max"]
