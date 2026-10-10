@@ -1,11 +1,11 @@
-"""Юнит-тесты ``gridstate.v_mirror`` + шаг пайплайна.
+"""Unit tests for ``gridstate.v_mirror`` + the pipeline step.
 
-Классификация на синтетике (с проставленным ``voltage_magnitude`` = «решение
-первого прохода»): слепой узел (без real-TM, flat pseudo-V), систематически
-ниже границы СВОЕГО класса → в план со значением ``pu·Vnom``. Гейты режут:
-граница другого класса (АТ), узел уже-на-уровне (lift), мусорная граница
-(max_pu_dev), не-flat приор. Шаг ``v_mirror`` в ``run()`` проверяется e2e на
-no-op (модель без слепых узлов → решение бит-в-бит).
+Classification on synthetic data (with ``voltage_magnitude`` set to the "first-pass
+solution"): a blind node (no real telemetry, flat pseudo-V) systematically
+below the bound of ITS OWN class -> goes into the plan with value ``pu*Vnom``. The gates cut:
+a bound of another class (autotransformer), a node already at level (lift), a junk bound
+(max_pu_dev), a non-flat prior. The ``v_mirror`` step in ``run()`` is checked end to end on
+a no-op (a model without blind nodes -> solution bit-identical).
 """
 
 from __future__ import annotations
@@ -32,17 +32,17 @@ from test_pipeline_idempotent import _make_model_with_reactor
 
 
 # ---------------------------------------------------------------------------
-# Сборка синтетики: узел-граница (real-V) + слепой узел (flat pseudo-V)
+# Synthetic builder: bound node (real V) + blind node (flat pseudo-V)
 # ---------------------------------------------------------------------------
 
 
 def _build(
     *,
     boundary_vn: float = 110.0,
-    boundary_vmag: float = 121.0,  # граница решена на pu 1.10
+    boundary_vmag: float = 121.0,  # bound solved at pu 1.10
     blind_vn: float = 110.0,
-    blind_vmag: float = 110.9,  # слепой решён на pu 1.008 → lift 0.092
-    blind_pseudo_value: float = 110.0,  # flat-плейсхолдер == Vnom
+    blind_vmag: float = 110.9,  # blind node solved at pu 1.008 -> lift 0.092
+    blind_pseudo_value: float = 110.0,  # flat placeholder == Vnom
     branch_type: int = int(BranchType.LINE),
     tap_ratio: float = 1.0,
 ) -> Working:
@@ -79,7 +79,7 @@ def _build(
             "branch_type": branch_type,
         }
     )
-    # real V-мера на границе (узел 1) → узел 1 measured, узел 2 слепой
+    # real V measurement at the bound (node 1) -> node 1 measured, node 2 blind
     m.measurements.add(
         {
             "id": 1,
@@ -92,7 +92,7 @@ def _build(
             "is_pseudo": False,
         }
     )
-    # flat pseudo-V на слепом узле 2
+    # flat pseudo-V at the blind node 2
     m.measurements.add(
         {
             "id": 2,
@@ -124,31 +124,31 @@ def _classify(m: Working, *, max_pu_dev: float = 0.25, min_lift: float = 0.01) -
 
 
 def test_blind_node_lifted_to_boundary():
-    """Слепой узел ниже границы своего класса → value = pu·Vnom."""
+    """A blind node below the bound of its class -> value = pu*Vnom."""
     plan = _classify(_build())
     assert plan.n_clusters == 1
     assert len(plan.new_values) == 1
     nid, val = plan.new_values[0]
     assert nid == 2
-    assert abs(val - 121.0) < 1e-6  # pu границы 1.10 × Vnom 110
+    assert abs(val - 121.0) < 1e-6  # bound pu 1.10 * Vnom 110
 
 
 def test_boundary_other_class_ignored():
-    """Граница другого класса (слепой 110 за АТ от 220) → не трогаем."""
+    """A bound of another class (blind 110 behind an autotransformer from 220) -> left alone."""
     plan = _classify(_build(boundary_vn=220.0, boundary_vmag=242.0))
     assert plan.empty
 
 
 def test_cross_at_mirrors_via_transformer():
-    """Q2: слепой 110 за АТ (branch_type=1) от 220-границы → cross_at=True
-    переносит pu решённой trafo-границы (pu-инвариант к идеальному tap)."""
+    """A blind 110 behind an autotransformer (branch_type=1) from a 220 bound -> cross_at=True
+    carries over the pu of the solved trafo bound (pu is invariant to an ideal tap)."""
     m = _build(
         boundary_vn=220.0,
         boundary_vmag=242.0,  # pu 1.10
         branch_type=int(BranchType.TRANSFORMER),
         tap_ratio=2.0,
     )
-    # cross_at=False (default) → same-class границы нет → пусто.
+    # cross_at=False (default) -> no same-class bound -> empty.
     assert classify_v_mirror(
         m.measurements.to_numpy(),
         m.branches.to_numpy(),
@@ -156,7 +156,7 @@ def test_cross_at_mirrors_via_transformer():
         max_pu_dev=0.25,
         min_lift=0.01,
     ).empty
-    # cross_at=True → pu(220-границы)=1.10 → value = 1.10·110 = 121.
+    # cross_at=True -> pu(220 bound)=1.10 -> value = 1.10*110 = 121.
     plan = classify_v_mirror(
         m.measurements.to_numpy(),
         m.branches.to_numpy(),
@@ -172,8 +172,8 @@ def test_cross_at_mirrors_via_transformer():
 
 
 def test_cross_at_skips_below_110kv():
-    """Q2: на LV-стороне (слепой 10 кВ за АТ от 110) cross_at НЕ срабатывает —
-    pu-инвариант через gen-step-up грубо нарушается (порог ≥110 кВ)."""
+    """On the LV side (blind 10 kV behind an autotransformer from 110) cross_at does NOT fire --
+    pu invariance across a generator step-up is grossly violated (threshold >= 110 kV)."""
     m = _build(
         boundary_vn=110.0,
         boundary_vmag=121.0,
@@ -191,40 +191,40 @@ def test_cross_at_skips_below_110kv():
         min_lift=0.01,
         cross_at=True,
     )
-    assert plan.empty  # blind_vn=10 < 110 → cross-AT фолбэк не активируется
+    assert plan.empty  # blind_vn=10 < 110 -> the cross-autotransformer fallback is not activated
 
 
 def test_node_at_level_ignored():
-    """Узел уже на уровне границы (lift ≤ min_lift) → не трогаем (нет push)."""
-    plan = _classify(_build(blind_vmag=120.9))  # pu 1.099 ≈ граница 1.10
+    """A node already at the bound level (lift <= min_lift) -> left alone (no push)."""
+    plan = _classify(_build(blind_vmag=120.9))  # pu 1.099 ~ bound 1.10
     assert plan.empty
 
 
 def test_non_flat_pseudo_ignored():
-    """Pseudo-V с осмысленной рабочей точкой (value ≠ Vnom) — заякорен, не трогаем."""
+    """A pseudo-V with a meaningful operating point (value != Vnom) is anchored, left alone."""
     plan = _classify(_build(blind_pseudo_value=115.0))
     assert plan.empty
 
 
 def test_measured_node_not_blind():
-    """Узел с real-V (не pseudo) — наблюдаем, не слепой → вне плана."""
+    """A node with real V (not pseudo) is observed, not blind -> outside the plan."""
     m = _build()
     arr = m.measurements.to_numpy()
-    arr["is_pseudo"][arr["id"] == 2] = False  # узел 2 теперь с real-V
+    arr["is_pseudo"][arr["id"] == 2] = False  # node 2 now has real V
     m.measurements.update_from_array(arr)
     plan = _classify(m)
     assert plan.empty
 
 
 def test_max_pu_dev_gate():
-    """Дикая граница (pu вне [1±max_pu_dev]) → отбрасывается."""
+    """A wild bound (pu outside [1 +/- max_pu_dev]) -> discarded."""
     plan = _classify(_build(boundary_vmag=176.0), max_pu_dev=0.25)  # pu 1.6
     assert plan.empty
 
 
 def test_lift_gate_just_below():
-    """Узел чуть ниже порога lift (pu 1.091 при границе 1.10, lift 0.009 < 0.01)
-    → не трогаем."""
+    """A node slightly below the lift threshold (pu 1.091 at bound 1.10, lift 0.009 < 0.01)
+    -> left alone."""
     plan = _classify(_build(blind_vmag=120.0), min_lift=0.01)
     assert plan.empty
 
@@ -239,8 +239,8 @@ def test_apply_sets_pseudo_value():
     plan = VMirrorPlan(new_values=((2, 121.0),), n_clusters=1)
     stats = apply_v_mirror_plan(m, plan)
     me = {int(r["id"]): r for r in m.measurements.to_numpy()}
-    assert float(me[2]["value"]) == 121.0  # pseudo-V переставлена
-    assert float(me[1]["value"]) == 121.0  # real-V границы не тронута (совпадение)
+    assert float(me[2]["value"]) == 121.0  # pseudo-V moved
+    assert float(me[1]["value"]) == 121.0  # real V of the bound untouched (coincidence)
     assert stats == {"clusters": 1, "nodes": 1}
 
 
@@ -250,16 +250,16 @@ def test_apply_empty_noop():
     stats = apply_v_mirror_plan(m, plan)
     assert stats == {"clusters": 0, "nodes": 0}
     me = {int(r["id"]): r for r in m.measurements.to_numpy()}
-    assert float(me[2]["value"]) == 110.0  # не тронута
+    assert float(me[2]["value"]) == 110.0  # untouched
 
 
 # ---------------------------------------------------------------------------
-# Шаг пайплайна
+# Pipeline step
 # ---------------------------------------------------------------------------
 
 
 def test_step_skips_on_unusable_solution():
-    """success=False → классификация не зовётся (уровень границы ненадёжен)."""
+    """success=False -> classification is not called (the bound level is unreliable)."""
     ctx = _Ctx(model=None, cfg=PipelineConfig(v_mirror=True))
     ctx.result = SimpleNamespace(success=False)
     stats = _s_v_mirror(ctx)
@@ -267,8 +267,8 @@ def test_step_skips_on_unusable_solution():
 
 
 def test_run_noop_without_blind_nodes_bit_exact():
-    """Модель, где все активные узлы наблюдаемы (нет слепых кластеров): план
-    v_mirror пуст → решение бит-в-бит с v_mirror=False, re-solve не вызывается."""
+    """A model where all active nodes are observable (no blind clusters): the
+    v_mirror plan is empty -> solution bit-identical to v_mirror=False, no re-solve."""
     m = _make_model_with_reactor(susceptance_uS=0.0)
     r_off = run(m, config=PipelineConfig(algorithm="wls"))
 

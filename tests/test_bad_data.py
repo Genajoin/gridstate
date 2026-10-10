@@ -1,12 +1,12 @@
-"""Тесты обнаружения и удаления плохих данных.
+"""Tests for bad-data detection and removal.
 
-Покрывает ``gridstate.validation.chi2_test`` и ``gridstate.validation.bad_data``.
+Covers ``gridstate.validation.chi2_test`` and ``gridstate.validation.bad_data``.
 
-Сценарии:
-    1. Чистые данные → χ²-тест не срабатывает;
-    2. Инъекция большого выброса → ``chi2_analysis.bad_data_present == True``,
-       ``remove_bad_data`` помечает именно это измерение как BAD;
-    3. После удаления плохого измерения χ²-тест проходит.
+Scenarios:
+    1. Clean data -> the chi-square test does not fire;
+    2. A large injected outlier -> ``chi2_analysis.bad_data_present == True``,
+       ``remove_bad_data`` flags exactly this measurement as BAD;
+    3. After the bad measurement is removed the chi-square test passes.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from gridstate.z_vector import (
 
 # ----------------------------------------------------------- helpers
 def _three_bus_with_clean_measurements():
-    """Та же 3-узловая сеть, что в test_wls; меры из истинного состояния."""
+    """The same 3-node network as in test_wls; measurements taken from the true state."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
@@ -117,7 +117,7 @@ def _three_bus_with_clean_measurements():
             "ti_q_to": 3004,
         }
     )
-    # «Истинное» состояние: фиксируем небольшие нерасплющенные значения.
+    # "True" state: fix small, non-degenerate values.
     delta_true = np.array([0.0, -0.04, -0.06])
     v_true = np.array([1.0, 0.98, 0.97])
     _add_synthetic_measurements(m, delta_true, v_true)
@@ -137,7 +137,7 @@ def _add_synthetic_measurements(model, delta_true, v_true):
     Sf = V[pu.from_idx] * np.conj(If)
 
     next_id = 1
-    # V на всех узлах
+    # V at all nodes
     for pos, node_id in enumerate(pu.bus_ids.tolist()):
         v_kv = float(v_true[pos] * pu.bus_vn_kv[pos])
         model.measurements.add(
@@ -153,7 +153,7 @@ def _add_synthetic_measurements(model, delta_true, v_true):
             }
         )
         next_id += 1
-    # P_inj/Q_inj на всех узлах
+    # P_inj/Q_inj at all nodes
     for pos, node_id in enumerate(pu.bus_ids.tolist()):
         model.measurements.add(
             {
@@ -181,7 +181,7 @@ def _add_synthetic_measurements(model, delta_true, v_true):
             }
         )
         next_id += 1
-    # P/Q «from» каждой ветви + ti_*_from
+    # P/Q at the "from" end of each branch + ti_*_from
     branches_arr = model.branches.to_numpy()
     for i, b in enumerate(branches_arr):
         if not b["status"]:
@@ -226,7 +226,7 @@ def _add_synthetic_measurements(model, delta_true, v_true):
 
 # ------------------------------------------------------------- chi2 tests
 def test_chi2_passes_on_clean_data() -> None:
-    """Без шума и без выбросов: J ≈ 0 → bad_data_present == False."""
+    """No noise and no outliers: J ~ 0 -> bad_data_present == False."""
     m, _, _ = _three_bus_with_clean_measurements()
     estimate(m, tolerance=1e-10)
     res = chi2_analysis(m)
@@ -237,9 +237,9 @@ def test_chi2_passes_on_clean_data() -> None:
 
 
 def test_chi2_detects_large_outlier() -> None:
-    """Один V-выброс на узле → χ² ловит."""
+    """A single V outlier at a node -> the chi-square test catches it."""
     m, _, _ = _three_bus_with_clean_measurements()
-    # Подменяем одно V на 130 кВ (вместо ~108) — гигантский выброс.
+    # Replace one V with 130 kV (instead of ~108) -- a gigantic outlier.
     m.measurements.get_by_id(2).value = 130.0
     estimate(m, tolerance=1e-10)
     res = chi2_analysis(m, chi2_prob_false=0.01)
@@ -255,7 +255,7 @@ def test_chi2_invalid_alpha_raises() -> None:
 
 
 def test_chi2_warns_when_df_nonpositive(caplog) -> None:
-    """Когда m == n−1, df<0 → возвращаем bad_data_present=False с warning."""
+    """When m == n-1, df<0 -> return bad_data_present=False with a warning."""
     from gridstate.constants import NodeType
     from gridstate.working import Working
 
@@ -280,7 +280,7 @@ def test_chi2_warns_when_df_nonpositive(caplog) -> None:
             "node_type": int(NodeType.PQ),
         }
     )
-    # Только одно измерение → m=1, n_state=3, df=−2
+    # Only one measurement -> m=1, n_state=3, df=-2
     m.measurements.add(
         {
             "id": 1,
@@ -302,10 +302,10 @@ def test_chi2_warns_when_df_nonpositive(caplog) -> None:
 
 # ------------------------------------------------------------- bad_data tests
 def test_remove_bad_data_marks_outlier_as_bad() -> None:
-    """5σ-выброс на P-инъекции узла 2 должен быть удалён."""
+    """A 5-sigma outlier on the P injection of node 2 must be removed."""
     m, _, _ = _three_bus_with_clean_measurements()
-    # Найдём id измерения P_INJ для node 2: это второе сгенерированное P_inj.
-    # Смотрим в коллекции по object_id и measurement_type.
+    # Find the id of the P_INJ measurement for node 2: it is the second generated P_inj.
+    # Look it up in the collection by object_id and measurement_type.
     bad_meas = next(
         meas
         for meas in m.measurements
@@ -314,19 +314,19 @@ def test_remove_bad_data_marks_outlier_as_bad() -> None:
         and int(meas.measurement_type) == KIND_POWER_INJECTION_P
     )
     bad_id = int(bad_meas.id)
-    bad_meas.value = float(bad_meas.value) + 50.0  # ~70σ выброс при σ²=0.5
+    bad_meas.value = float(bad_meas.value) + 50.0  # ~70 sigma outlier at sigma^2=0.5
 
     result = remove_bad_data(m, rn_max_threshold=3.0, max_iterations=5)
     assert result.converged
     assert bad_id in result.removed_meas_ids
-    # Соответствующее измерение должно быть BAD/inactive.
+    # The corresponding measurement must be BAD/inactive.
     flagged = m.measurements.get_by_id(bad_id)
     assert flagged.status is False or bool(flagged.status) is False
     assert int(flagged.quality) == QUALITY_BAD
 
 
 def test_remove_bad_data_clean_data_no_removals() -> None:
-    """На чистых данных rn_max-тест проходит сразу, ничего не удаляется."""
+    """On clean data the rn_max test passes at once, nothing is removed."""
     m, _, _ = _three_bus_with_clean_measurements()
     result = remove_bad_data(m)
     assert result.converged
@@ -336,7 +336,7 @@ def test_remove_bad_data_clean_data_no_removals() -> None:
 
 
 def test_chi2_passes_after_bad_data_removal() -> None:
-    """После удаления выброса χ² должен снова пройти."""
+    """After the outlier is removed the chi-square test must pass again."""
     m, _, _ = _three_bus_with_clean_measurements()
     bad_meas = next(
         meas

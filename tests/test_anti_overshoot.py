@@ -1,12 +1,12 @@
-"""Юнит-тесты ``gridstate.post_processing.refine_anti_overshoot``.
+"""Unit tests for ``gridstate.post_processing.refine_anti_overshoot``.
 
-Проверяют логику anti-overshoot уточнения со само-валидацией БЕЗ полного solve:
-``resolve``-callback подменяется фейком, который мутирует ``voltage_magnitude``
-(имитирует пере-решение). Так детерминированно тестируем три ветки:
-  * accept — refine снизил max(V/Vnom) → принят (refined-result, V снижен, добавлены
-    tight P/Q-инжекц-pseudo);
-  * revert — refine НЕ снизил max(V/Vnom) → откат (base-result, V восстановлен);
-  * no-op — нет узла > ceiling → ничего не добавлено, base-result.
+Check the self-validating anti-overshoot refinement logic WITHOUT a full solve:
+the ``resolve`` callback is replaced by a fake that mutates ``voltage_magnitude``
+(imitating a re-solve). This tests three branches deterministically:
+  * accept -- refine lowered max(V/Vnom) -> accepted (refined result, V lowered, tight
+    P/Q injection pseudo-measurements added);
+  * revert -- refine did NOT lower max(V/Vnom) -> rollback (base result, V restored);
+  * no-op -- no node > ceiling -> nothing added, base result.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ _REFINED = SimpleNamespace(success=True)
 
 
 def _build_model(*, overshoot_pu: float = 1.30):
-    """2 узла: slack (real-V, 1.0pu) + PQ-узел с overshoot V и БЕЗ real-V-меры."""
+    """2 nodes: slack (real V, 1.0 pu) + a PQ node with V overshoot and NO real V measurement."""
     m = Working.empty()
     m.nodes.add(
         {
@@ -54,7 +54,7 @@ def _build_model(*, overshoot_pu: float = 1.30):
             "generation_q": 0.0,
         }
     )
-    # real V-мера ТОЛЬКО на slack — узел 2 «ненаблюдаем по V» (кандидат рычага).
+    # real V measurement ONLY on the slack -- node 2 is "V-unobservable" (a lever candidate).
     m.measurements.add(
         {
             "id": 1,
@@ -84,11 +84,11 @@ def _count_pseudo_inj(model) -> int:
 
 
 def test_anti_overshoot_accept_lowers_v():
-    """resolve снижает V узла 2 → max-V падает → refine принят."""
+    """resolve lowers V of node 2 -> max V drops -> refine accepted."""
     m = _build_model(overshoot_pu=1.30)
 
     def resolve():
-        # имитируем эффект tight-инжекции: V садится к физ-уровню 1.05pu
+        # imitate the effect of a tight injection: V settles to the physical level 1.05 pu
         m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.05})
         return _REFINED
 
@@ -98,31 +98,31 @@ def test_anti_overshoot_accept_lowers_v():
     assert stats["accepted"] is True
     assert stats["tightened"] == 1
     assert stats["max_ratio_before"] > stats["max_ratio_after"]
-    # узел 2 остался сниженным
+    # node 2 stays lowered
     assert abs(_max_voltage_ratio(m) - 1.05) < 1e-6
-    # добавлены P_inj и Q_inj pseudo на overshoot-узел
+    # P_inj and Q_inj pseudo-measurements added on the overshoot node
     assert _count_pseudo_inj(m) == 2
 
 
 def test_anti_overshoot_revert_when_not_improved():
-    """resolve НЕ снижает V (даже повышает) → max-V не упал → откат к base."""
+    """resolve does NOT lower V (even raises it) -> max V did not drop -> rollback to base."""
     m = _build_model(overshoot_pu=1.30)
 
     def resolve():
-        m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.35})  # стало хуже
+        m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.35})  # got worse
         return _REFINED
 
     result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
 
-    assert result == "BASE"  # откат
+    assert result == "BASE"  # rollback
     assert stats["accepted"] is False
-    # V узла 2 восстановлен к исходному overshoot 1.30 (откат снимка)
+    # V of node 2 restored to the original overshoot 1.30 (snapshot rollback)
     assert abs(_max_voltage_ratio(m) - 1.30) < 1e-6
 
 
 def test_anti_overshoot_stops_after_round_that_did_not_help():
-    """Проход не снизил max-V ниже базы, но поднял новый узел выше потолка —
-    второй проход не делается, итог — откат."""
+    """The pass did not lower max V below the base but raised a new node above the ceiling --
+    no second pass is made, the outcome is a rollback."""
     m = _build_model(overshoot_pu=1.30)
     m.nodes.add(
         {
@@ -139,7 +139,7 @@ def test_anti_overshoot_stops_after_round_that_did_not_help():
     def resolve():
         calls.append(1)
         m.nodes.update(2, {"voltage_magnitude": 110.0 * 1.10})
-        m.nodes.update(3, {"voltage_magnitude": 110.0 * 1.40})  # новый overshoot
+        m.nodes.update(3, {"voltage_magnitude": 110.0 * 1.40})  # new overshoot
         return _REFINED
 
     result, stats = refine_anti_overshoot(m, "BASE", resolve, ceiling=1.15)
@@ -151,8 +151,8 @@ def test_anti_overshoot_stops_after_round_that_did_not_help():
 
 
 def test_anti_overshoot_noop_when_no_overshoot():
-    """Нет узла > ceiling → resolve не зовётся, ничего не добавлено."""
-    m = _build_model(overshoot_pu=1.05)  # в пределах нормы
+    """No node > ceiling -> resolve is not called, nothing is added."""
+    m = _build_model(overshoot_pu=1.05)  # within the norm
     calls = {"n": 0}
 
     def resolve():
@@ -164,14 +164,14 @@ def test_anti_overshoot_noop_when_no_overshoot():
     assert result == "BASE"
     assert stats["tightened"] == 0
     assert stats["accepted"] is False
-    assert calls["n"] == 0  # resolve не вызывался
+    assert calls["n"] == 0  # resolve was not called
     assert _count_pseudo_inj(m) == 0
 
 
 def test_anti_overshoot_skips_node_with_real_v():
-    """Узел с real-V-мерой НЕ трогаем даже при overshoot (наблюдаем — не артефакт)."""
+    """A node with a real V measurement is NOT touched even on overshoot (observed -- not an artefact)."""
     m = _build_model(overshoot_pu=1.30)
-    # дать узлу 2 real-V-меру → исключён из кандидатов
+    # give node 2 a real V measurement -> excluded from candidates
     m.measurements.add(
         {
             "id": 2,
