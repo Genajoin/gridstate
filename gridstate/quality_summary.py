@@ -1,19 +1,20 @@
-"""Сводка качества SE для ``SEResult``.
+"""Quality summary of the state estimate for ``SEResult``.
 
-После сходимости ``estimate()`` собирает:
+After ``estimate()`` converges it collects:
 
-* ``Chi2Summary`` — ``J = Σ(r²/σ²)`` + df + порог χ² + ``passes``;
-* ``worst_residuals`` — top-N измерений по ``|r_N| = |r|/√diag(Ω)``;
-* ``worst_imbalance`` — top-N узлов по ``|imbalance_p|`` из ``model.nodes``;
-* ``observability_warnings`` — ID узлов с нулевыми столбцами ``H``.
+* ``Chi2Summary`` — ``J = Σ(r²/σ²)`` + df + χ² threshold + ``passes``;
+* ``worst_residuals`` — top-N measurements by ``|r_N| = |r|/√diag(Ω)``;
+* ``worst_imbalance`` — top-N nodes by ``|imbalance_p|`` from ``model.nodes``;
+* ``observability_warnings`` — IDs of nodes with zero ``H`` columns.
 
-Используется ровно один проход по ``H``/``R⁻¹``: ``Ω = R − H G⁻¹ Hᵀ``
-считается разреженным CHOLMOD с разреженными правыми частями (без cvxopt —
-плотный Cholesky + блочная треугольная подстановка). Плотная алгебра на
-крупных моделях (десятки тысяч мер) доминировала во времени всего SE. The
-``r_N`` computation lives in :mod:`gridstate.algebra.normalized_residuals`,
-shared with the bad-data test (``gridstate.validation.bad_data``). Summary
-можно отключить через ``include_quality_summary=False``.
+Exactly one pass over ``H``/``R⁻¹`` is used: ``Ω = R − H G⁻¹ Hᵀ`` is
+computed with sparse CHOLMOD and sparse right-hand sides (no cvxopt —
+dense Cholesky + block triangular substitution). Dense algebra on large
+models (tens of thousands of measurements) dominated the whole state
+estimation time. The ``r_N`` computation lives in
+:mod:`gridstate.algebra.normalized_residuals`, shared with the bad-data test
+(``gridstate.validation.bad_data``). The summary can be disabled via
+``include_quality_summary=False``.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ def compute_chi2(
     n_state: int,
     alpha: float = 0.05,
 ) -> Chi2Summary:
-    """Посчитать ``J = Σ(r²/σ²)`` и сравнить с χ²(df, 1−α)."""
+    """Compute ``J = Σ(r²/σ²)`` and compare it with χ²(df, 1−α)."""
     m = int(r.shape[0])
     if m == 0:
         return Chi2Summary(value=0.0, dof=0, threshold=float("nan"), passes=True)
@@ -80,26 +81,27 @@ def top_worst_residuals(
     is_pseudo: np.ndarray | None = None,
     scope: str = "real",
 ) -> list[ResidualRow]:
-    """Топ-``n`` измерений по ``|r_N|`` (десятками; default 10).
+    """Top-``n`` measurements by ``|r_N|`` (default 10).
 
-    ``r`` и ``z`` берутся в ``p.u.`` (как build_z_and_r их и возвращает) —
-    исходные единицы измерений недоступны из ``MeasurementIndex``, поэтому
-    в ``ResidualRow.value/expected/residual`` записываются p.u.-значения.
-    Для исходных единиц следует смотреть ``model.measurements[id].value``
-    и ``estimated_si`` (заполнены ``write_measurement_estimates``).
+    ``r`` and ``z`` are taken in ``p.u.`` (as build_z_and_r returns them) —
+    the original measurement units are not available from ``MeasurementIndex``,
+    so ``ResidualRow.value/expected/residual`` hold p.u. values.
+    For the original units look at ``model.measurements[id].value``
+    and ``estimated_si`` (filled by ``write_measurement_estimates``).
 
     Args:
-        network_pu: если задан — ``object_pos`` из ``meas_index``
-            разрешается в ``id`` объекта (``bus_ids``/``branch_ids``) для
+        network_pu: if given, ``object_pos`` from ``meas_index`` is
+            resolved to the object ``id`` (``bus_ids``/``branch_ids``) for
             ``ResidualRow.object_id``.
-        is_pseudo: (m,) bool в z-порядке — пометка псевдо-приоров.
-        scope: ``"real"`` (default) — в топ идут только реальные измерения
-            (телеметрия); псевдо-приоры (инжекц-prior, pseudo-V) исключены —
-            иначе они вытесняют телеметрию (на крупных моделях 8/10 топа —
-            наши же приоры с r_N до сотен). Заодно дешевле: блочная
-            подстановка идёт только по real-строкам (m падает в ~2.5×).
-            ``"all"`` — прежняя семантика (все строки z-вектора).
-            Без ``is_pseudo`` scope="real" эквивалентен "all".
+        is_pseudo: (m,) bool in z order — marks pseudo-priors.
+        scope: ``"real"`` (default) — only real measurements (telemetry)
+            enter the top; pseudo-priors (injection prior, pseudo-V) are
+            excluded — otherwise they crowd out telemetry (on large models
+            8 of the top 10 are our own priors with r_N up to hundreds).
+            It is also cheaper: the block substitution runs over real rows
+            only (m drops ~2.5x).
+            ``"all"`` — the previous semantics (all z-vector rows).
+            Without ``is_pseudo`` scope="real" is equivalent to "all".
     """
     if r.size == 0:
         return []
@@ -149,10 +151,10 @@ def top_worst_residuals(
 
 
 def top_worst_imbalance(model: Working, n: int = 10) -> list[ImbalanceRow]:
-    """Топ-``n`` узлов по ``|imbalance_p|`` после ``write_results_to_model``.
+    """Top-``n`` nodes by ``|imbalance_p|`` after ``write_results_to_model``.
 
-    ``imbalance_p/q`` уже посчитаны в МВт/МВАр (см. ``gridstate/units.py::
-    write_results_to_model``). Берутся только узлы с ``status=True``.
+    ``imbalance_p/q`` are already computed in MW/MVAr (see ``gridstate/units.py::
+    write_results_to_model``). Only nodes with ``status=True`` are considered.
     """
     nodes_arr = model.nodes.to_numpy()
     if len(nodes_arr) == 0:
@@ -185,25 +187,25 @@ def observability_warnings_from_H(
     non_slack_idx: np.ndarray,
     col_norm_tol: float = 1e-10,
 ) -> list[int]:
-    """ID узлов, чьи столбцы в ``H`` пусты — недонаблюдаемые δ или V.
+    """IDs of nodes whose ``H`` columns are empty — unobservable δ or V.
 
-    Аналог ``gridstate.validation.observability`` но дёшево: реиспользуем
-    уже посчитанную ``H``, не пересобираем её для flat-старта.
+    An analogue of ``gridstate.validation.observability`` but cheap: reuse the
+    already computed ``H`` instead of rebuilding it for a flat start.
 
-    Раскладка столбцов ``H`` (WLS) — ``[δ_non_slack, V]`` длиной
-    ``2·n_bus − 1``. Для IPM-расширенного state дополнительные столбцы
-    (Pgen/Qgen/Pnag/Qnag) игнорируются — это box-vars, не узлы.
+    The ``H`` column layout (WLS) is ``[δ_non_slack, V]`` of length
+    ``2·n_bus − 1``. For the IPM-extended state the additional columns
+    (Pgen/Qgen/Pnag/Qnag) are ignored — they are box vars, not nodes.
     """
     if H.shape[0] == 0 or H.shape[1] == 0:
         return []
     if hasattr(H, "multiply"):
-        # sparse: нормы столбцов без материализации плотной (m×n)
+        # sparse: column norms without materialising a dense (m×n)
         col_norms = np.sqrt(np.asarray(H.multiply(H).sum(axis=0)).ravel())
     else:
         col_norms = np.linalg.norm(np.asarray(H), axis=0)
     n_state_wls = 2 * n_bus - 1
-    # Ограничиваем анализ первыми n_state_wls столбцами — остальные
-    # (если есть) это IPM box-vars и не имеют 1-к-1 mapping на узел.
+    # Restrict the analysis to the first n_state_wls columns — the rest
+    # (if any) are IPM box vars and have no 1-to-1 mapping to a node.
     col_norms = col_norms[:n_state_wls]
     zero_cols = np.where(col_norms < col_norm_tol)[0]
     if zero_cols.size == 0:
