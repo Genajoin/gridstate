@@ -105,6 +105,13 @@ cut by tagging the merged main commit; the version is derived from that tag.
   factor scales the whole Newton step, so a generation/load box variable that
   has to move far no longer shrinks the V/δ step; boxes stay protected by
   fraction-to-boundary. Opt-in for A/B evaluation (#59)
+- Near-critical report of the quality summary: `SEResult.near_critical_measurements`
+  lists (`NearCriticalRow`) the measurements whose `Ω_ii / σ²_i` is below
+  `PipelineConfig.near_critical_threshold` (default `1e-4`; also
+  `estimate(quality_summary_near_critical=...)`), where `Ω_ii` is a small
+  difference of nearly equal numbers and `r_N` is numerically unreliable.
+  `compute_normalized_residuals` returns that ratio with `r_N`. Reported only:
+  `r_N` values are unchanged (#60)
 
 ### Fix
 
@@ -150,6 +157,15 @@ cut by tagging the merged main commit; the version is derived from that tag.
   `NUMBA_CACHE_DIR`, `GRIDSTATE_NUMBA=0` and
   `kkt_solver.numba_gram_available()` for warm-up (about -36 % wall time on the
   largest benchmark) (#49)
+- Opt-in `PipelineConfig.normalized_residuals_method="selected_inversion"`
+  (also `estimate(quality_summary_rn_method=...)`): `diag(H G⁻¹ Hᵀ)` of the
+  normalized residuals from the selected inverse of the sparse Cholesky factor
+  (Takahashi recurrence; CHOLMOD factor, or scipy SuperLU without cvxopt)
+  instead of one triangular solve per measurement. Needs the `numba` extra
+  (otherwise, and with `GRIDSTATE_NUMBA=0`, the default `"solve"` is used).
+  The quality summary of a 3000-bus synthetic network drops from 1.4 s to
+  0.07 s; `r_N` agrees to ~1e-12 except on near-critical measurements. The
+  default stays bit-identical (#60)
 
 ### Refactor
 
