@@ -450,7 +450,9 @@ class PipelineConfig:
         help="A measurement with Ω_ii/σ²_i below this value is listed in "
         "near_critical_measurements of the quality summary: Ω_ii = σ²_i − (H G⁻¹ Hᵀ)_ii "
         "is a small difference of nearly equal numbers, so its r_N carries the rounding "
-        "amplified by σ²/Ω. Reported only, r_N values are not changed. 0 lists none.",
+        "amplified by σ²/Ω. Such measurements are left out of worst_residuals. Reporting "
+        "only: r_N values and the bad-data test are not changed. 0 lists none and ranks "
+        "every finite r_N.",
     )
 
     # --- IPM ---

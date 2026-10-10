@@ -58,6 +58,12 @@ What the library provides:
 - **Quality summary.** χ² summary, worst normalized residuals (telemetry only
   by default, `scope="all"` includes priors) and worst nodal imbalances, in
   `SEResult`; `populate_quality_summary` fills it for a result you hold.
+  Nearly critical measurements (`Ω_ii/σ²_i` below
+  `PipelineConfig.near_critical_threshold`, default `1e-4`), whose normalized
+  residual is numerically unreliable, are left out of the worst-residual
+  ranking and listed in `near_critical_measurements` (ascending ratio, with
+  the ratio, `r_N` and the measured object); a threshold of `0` ranks every
+  finite `r_N`. Reporting only: bad-data rejection is not affected.
 - **Losses.** `compute_system_losses` splits active and reactive losses into
   series, charging and shunt parts per branch and node, in the standard sign
   convention (capacitive elements give negative reactive "losses").
@@ -119,7 +125,8 @@ Notes on the numba path:
   faster than the default per-measurement solves on large models. It is
   opt-in because it is not bit-identical: the two methods agree to rounding,
   except on nearly critical measurements (`Ω_ii/σ²_i` tiny), which the
-  quality summary lists in `near_critical_measurements` with either method.
+  quality summary lists in `near_critical_measurements` (and leaves out of the
+  worst-residual ranking) with either method.
   Without numba (or with `GRIDSTATE_NUMBA=0`) the default method is used.
 
 ## Quick start

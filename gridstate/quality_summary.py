@@ -4,10 +4,14 @@ After ``estimate()`` converges it collects:
 
 * ``Chi2Summary`` — ``J = Σ(r²/σ²)`` + df + χ² threshold + ``passes``;
 * ``worst_residuals`` — top-N measurements by ``|r_N| = |r|/√diag(Ω)``;
+  critical (``r_N = inf``) and nearly critical measurements are left out;
 * ``worst_imbalance`` — top-N nodes by ``|imbalance_p|`` from ``model.nodes``;
 * ``observability_warnings`` — IDs of nodes with zero ``H`` columns;
 * ``near_critical_measurements`` — measurements with ``Ω_ii / σ²_i`` below a
-  threshold, whose ``r_N`` is numerically unreliable (reported only).
+  threshold, whose ``r_N`` is numerically unreliable: listed here instead of
+  in ``worst_residuals`` (a threshold of ``0`` lists none and ranks them all,
+  as before). Reporting only: the values of ``r_N`` and the bad-data test are
+  not affected.
 
 Exactly one pass over ``H``/``R⁻¹`` is used: ``Ω = R − H G⁻¹ Hᵀ`` is
 computed with sparse CHOLMOD and sparse right-hand sides (no cvxopt —
@@ -31,9 +35,11 @@ from scipy.sparse import csr_matrix
 from scipy.stats import chi2 as _chi2_dist
 
 from gridstate.algebra.normalized_residuals import (
+    NEAR_CRITICAL_THRESHOLD,
     SELINV_REFINE_BELOW,
     NormalizedResiduals,
     compute_normalized_residuals,
+    near_critical_mask,
 )
 from gridstate.constants import MeasurementObjectType
 from gridstate.result import (
@@ -78,12 +84,6 @@ def compute_chi2(
     )
 
 
-#: Default ``Ω_ii / σ²_i`` below which a measurement is reported as nearly
-#: critical (its ``r_N`` carries the rounding of ``(H G⁻¹ Hᵀ)_ii`` amplified
-#: by more than 10⁴).
-NEAR_CRITICAL_THRESHOLD = 1e-4
-
-
 def residual_scope_mask(scope: str, is_pseudo: np.ndarray | None) -> np.ndarray | None:
     """Rows of the residual ranking: ``None`` — all rows (see ``top_worst_residuals``)."""
     if scope == "real" and is_pseudo is not None:
@@ -105,8 +105,15 @@ def top_worst_residuals(
     rn_method: str = "solve",
     normalized: NormalizedResiduals | None = None,
     rn_refine_below: float = SELINV_REFINE_BELOW,
+    near_critical: float = NEAR_CRITICAL_THRESHOLD,
 ) -> list[ResidualRow]:
     """Top-``n`` measurements by ``|r_N|`` (default 10).
+
+    Critical measurements (``r_N = inf``) and nearly critical ones
+    (``Ω_ii / σ²_i < near_critical``) are left out of the ranking: their
+    ``r_N`` is undefined or dominated by rounding, and a handful of them can
+    fill the whole list. They are reported by
+    :func:`near_critical_measurements` instead.
 
     ``r`` and ``z`` are taken in ``p.u.`` (as build_z_and_r returns them) —
     the original measurement units are not available from ``MeasurementIndex``,
@@ -134,6 +141,9 @@ def top_worst_residuals(
             (``rn_method`` and ``rn_refine_below`` are then ignored).
         rn_refine_below: ``"selected_inversion"`` refinement threshold (see
             :func:`gridstate.algebra.normalized_residuals.normalized_residuals`).
+        near_critical: ``Ω_ii / σ²_i`` below which a measurement is left out
+            of the ranking (:data:`NEAR_CRITICAL_THRESHOLD` by default).
+            ``0`` leaves out none: the plain ranking by ``r_N``.
     """
     if r.size == 0:
         return []
@@ -145,27 +155,20 @@ def top_worst_residuals(
             r, H, sigma2, rows_mask=rows_mask, method=rn_method, refine_below=rn_refine_below
         )
     rn = normalized.rn
-    finite_mask = np.isfinite(rn)
-    if not finite_mask.any():
+    ranked_mask = np.isfinite(rn) & ~near_critical_mask(normalized.omega_ratio, near_critical)
+    if not ranked_mask.any():
         return []
-    rn_sortable = np.where(finite_mask, rn, -np.inf)
+    rn_sortable = np.where(ranked_mask, rn, -np.inf)
     order = np.argsort(-rn_sortable)
     rows: list[ResidualRow] = []
     for pos in order[:n]:
-        if not finite_mask[pos]:
+        if not ranked_mask[pos]:
             break
         kind_code = int(meas_index.kind[pos])
         z_val = float(z[pos])
         r_val = float(r[pos])
         h_val = z_val - r_val
-        obj_kind = int(meas_index.object_kind[pos])
-        obj_pos = int(meas_index.object_pos[pos])
-        obj_id = 0
-        if network_pu is not None:
-            if obj_kind == MeasurementObjectType.NODE and 0 <= obj_pos < network_pu.n_bus:
-                obj_id = int(network_pu.bus_ids[obj_pos])
-            elif obj_kind == MeasurementObjectType.BRANCH and 0 <= obj_pos < network_pu.n_branch:
-                obj_id = int(network_pu.branch_ids[obj_pos])
+        obj_kind, obj_id = _object_binding(meas_index, int(pos), network_pu)
         rows.append(
             ResidualRow(
                 measurement_id=int(meas_index.meas_id[pos]),
@@ -184,36 +187,62 @@ def top_worst_residuals(
     return rows
 
 
+def _object_binding(
+    meas_index: MeasurementIndex, pos: int, network_pu: NetworkPU | None
+) -> tuple[int, int]:
+    """``(object_kind, object_id)`` of row ``pos``; ``object_id`` is ``0`` if unresolved."""
+    obj_kind = int(meas_index.object_kind[pos])
+    obj_pos = int(meas_index.object_pos[pos])
+    obj_id = 0
+    if network_pu is not None:
+        if obj_kind == MeasurementObjectType.NODE and 0 <= obj_pos < network_pu.n_bus:
+            obj_id = int(network_pu.bus_ids[obj_pos])
+        elif obj_kind == MeasurementObjectType.BRANCH and 0 <= obj_pos < network_pu.n_branch:
+            obj_id = int(network_pu.branch_ids[obj_pos])
+    return obj_kind, obj_id
+
+
 def near_critical_measurements(
     normalized: NormalizedResiduals,
     meas_index: MeasurementIndex,
     *,
     threshold: float = NEAR_CRITICAL_THRESHOLD,
     is_pseudo: np.ndarray | None = None,
+    network_pu: NetworkPU | None = None,
 ) -> list[NearCriticalRow]:
     """Measurements with ``Ω_ii / σ²_i < threshold``, ascending by that ratio.
 
-    Only rows for which the ratio was computed take part (the scope of
-    ``normalized``). Critical measurements (``Ω_ii`` numerically
-    non-positive, ``r_N = inf``) are included: their ratio is below any
-    positive threshold. ``threshold <= 0`` reports nothing.
+    The complement of :func:`top_worst_residuals` with the same threshold:
+    these rows are left out of the ranking and listed here. Ascending ratio
+    puts the least reliable ``r_N`` first (the rounding is amplified by
+    ``1 / ratio``). Critical measurements (``Ω_ii`` numerically
+    non-positive, ``r_N = inf``) are included: their ratio is practically
+    zero, so they normally lead the list. Only rows for which the ratio was
+    computed take part (the scope of ``normalized``). ``threshold <= 0``
+    reports nothing. ``network_pu`` resolves ``object_id`` as in
+    :func:`top_worst_residuals`.
     """
     ratio = normalized.omega_ratio
-    if ratio.size == 0 or threshold <= 0.0:
+    if ratio.size == 0:
         return []
-    with np.errstate(invalid="ignore"):
-        flagged = np.where(ratio < threshold)[0]
+    flagged = np.where(near_critical_mask(ratio, threshold))[0]
     order = flagged[np.argsort(ratio[flagged], kind="stable")]
-    return [
-        NearCriticalRow(
-            measurement_id=int(meas_index.meas_id[pos]),
-            kind=label_for_kind(int(meas_index.kind[pos])),
-            omega_ratio=float(ratio[pos]),
-            normalized_residual=float(normalized.rn[pos]),
-            is_pseudo=bool(is_pseudo[pos]) if is_pseudo is not None else False,
+    rows: list[NearCriticalRow] = []
+    for pos in order:
+        obj_kind, obj_id = _object_binding(meas_index, int(pos), network_pu)
+        rows.append(
+            NearCriticalRow(
+                measurement_id=int(meas_index.meas_id[pos]),
+                kind=label_for_kind(int(meas_index.kind[pos])),
+                omega_ratio=float(ratio[pos]),
+                normalized_residual=float(normalized.rn[pos]),
+                is_pseudo=bool(is_pseudo[pos]) if is_pseudo is not None else False,
+                object_kind=obj_kind,
+                object_id=obj_id,
+                branch_side=int(meas_index.branch_side[pos]),
+            )
         )
-        for pos in order
-    ]
+    return rows
 
 
 def top_worst_imbalance(model: Working, n: int = 10) -> list[ImbalanceRow]:
