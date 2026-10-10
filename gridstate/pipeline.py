@@ -283,6 +283,18 @@ class PipelineConfig:
         label="Калибровка σ² V ген-узлов",
         help="apply_voltage_meas_calibration_for_gen_nodes.",
     )
+    gen_v_calibration_mode: str = _param(
+        "absolute",
+        group=_G_XML,
+        label="Режим калибровки σ² V ген-узлов",
+        control="select",
+        choices=["absolute", "tighten"],
+        help="absolute: variance GOOD V-мер ген-узлов := sigma2 (0.1 кВ²); у шин 6-16 кВ "
+        "телеметрийная variance меньше (~0.01-0.025), так что режим их ОСЛАБЛЯЕТ до ×10 "
+        "и затирает прежнее масштабирование. tighten: variance := min(текущая, sigma2), "
+        "никогда не ослабляет.",
+        depends={"apply_gen_v_calibration": True},
+    )
     flow_sigma_floor_kv_frac: float | None = _param(
         None,
         group=_G_XML,
@@ -1018,7 +1030,13 @@ def _s_widen_generation_only_injections(ctx: _Ctx) -> dict:
 
 
 def _s_gen_v_calibration(ctx: _Ctx) -> dict:
-    return dict(apply_voltage_meas_calibration_for_gen_nodes(ctx.model) or {})
+    return dict(
+        apply_voltage_meas_calibration_for_gen_nodes(
+            ctx.model,
+            mode=ctx.cfg.gen_v_calibration_mode,  # type: ignore[arg-type]
+        )
+        or {}
+    )
 
 
 def _s_deactivate_orphan_measurements(ctx: _Ctx) -> dict:
