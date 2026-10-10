@@ -72,12 +72,12 @@ def _real_v(mid: int, node_id: int, value: float, variance: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Ядро на голых контрактных массивах
+# Kernel on bare contract arrays
 # ---------------------------------------------------------------------------
 
 
 def test_mirror_core_copies_real_v_both_directions():
-    # Узлы: 1(real V), 2(голый), 5(голый), 6(real V), плюс off-узел 4.
+    # Nodes: 1 (real V), 2 (bare), 5 (bare), 6 (real V), plus off node 4.
     nodes = _nodes(
         [
             {"id": 1, "status": True},
@@ -95,7 +95,7 @@ def test_mirror_core_copies_real_v_both_directions():
     )
     branches = _branches(
         [
-            # A: trafo tap≈1, from(1 realV)→to(2 bare) → зеркалим на 2
+            # A: trafo tap≈1, from (1 realV) -> to (2 bare) -> mirror onto 2
             {
                 "id": 100,
                 "from_node": 1,
@@ -104,7 +104,7 @@ def test_mirror_core_copies_real_v_both_directions():
                 "tap_ratio": 1.0,
                 "status": True,
             },
-            # B: trafo tap≈1, from(5 bare)→to(6 realV) → зеркалим на 5 (обратное направление)
+            # B: trafo tap≈1, from (5 bare) -> to (6 realV) -> mirror onto 5 (reverse direction)
             {
                 "id": 200,
                 "from_node": 5,
@@ -117,7 +117,7 @@ def test_mirror_core_copies_real_v_both_directions():
     )
     rows = _mirror_voltage_on_arrays(nodes, branches, meas, mid_start=_MID)
     assert len(rows) == 2
-    # branch A первый в порядке массива → id=_MID, копия V узла 1 на узел 2
+    # branch A is first in array order -> id=_MID, copy of node 1 V onto node 2
     assert rows[0]["id"] == _MID
     assert rows[0]["object_id"] == 2
     assert rows[0]["value"] == 115.0
@@ -125,7 +125,7 @@ def test_mirror_core_copies_real_v_both_directions():
     assert rows[0]["is_pseudo"] is True
     assert rows[0]["branch_side"] == -1
     assert rows[0]["source_code"] == "mirror_unit_tap"
-    # branch B → id=_MID+1, копия V узла 6 на узел 5
+    # branch B -> id=_MID+1, copy of node 6 V onto node 5
     assert rows[1]["id"] == _MID + 1
     assert rows[1]["object_id"] == 5
     assert rows[1]["value"] == 121.0
@@ -138,13 +138,13 @@ def test_mirror_core_gates_no_spurious_rows():
             {"id": 1, "status": True},
             {"id": 2, "status": True},
             {"id": 3, "status": True},
-            {"id": 4, "status": False},  # off-узел
+            {"id": 4, "status": False},  # off node
         ]
     )
     meas = _meas([_real_v(10, 1, 115.0, 0.5)])
     branches = _branches(
         [
-            # tap≠1 → пропуск
+            # tap≠1 -> skipped
             {
                 "id": 100,
                 "from_node": 1,
@@ -153,7 +153,7 @@ def test_mirror_core_gates_no_spurious_rows():
                 "tap_ratio": 1.05,
                 "status": True,
             },
-            # off-ветвь → пропуск
+            # off branch -> skipped
             {
                 "id": 200,
                 "from_node": 1,
@@ -162,7 +162,7 @@ def test_mirror_core_gates_no_spurious_rows():
                 "tap_ratio": 1.0,
                 "status": False,
             },
-            # не трансформатор (LINE) → пропуск
+            # not a transformer (LINE) -> skipped
             {
                 "id": 300,
                 "from_node": 1,
@@ -171,7 +171,7 @@ def test_mirror_core_gates_no_spurious_rows():
                 "tap_ratio": 1.0,
                 "status": True,
             },
-            # конец на off-узле 4 → пропуск
+            # end on off node 4 -> skipped
             {
                 "id": 400,
                 "from_node": 1,
@@ -186,8 +186,8 @@ def test_mirror_core_gates_no_spurious_rows():
 
 
 def test_mirror_core_does_not_chain_through_mirrored():
-    # 1 имеет real V; 1→2 зеркалит на 2 (any_v, НЕ real); 2→3 НЕ должен зеркалить
-    # (источник 2 — не real_v_by_node, только any_v_by_node).
+    # 1 has real V; 1->2 mirrors onto 2 (any_v, NOT real); 2->3 must NOT mirror
+    # (source 2 is not in real_v_by_node, only in any_v_by_node).
     nodes = _nodes(
         [{"id": 1, "status": True}, {"id": 2, "status": True}, {"id": 3, "status": True}]
     )
@@ -218,7 +218,7 @@ def test_mirror_core_does_not_chain_through_mirrored():
 
 
 def test_mirror_core_skips_node_with_existing_pseudo_v():
-    # У узла 2 уже есть pseudo V (any_v) → не зеркалим, хотя real V нет.
+    # Node 2 already has a pseudo V (any_v) -> no mirroring, although there is no real V.
     nodes = _nodes([{"id": 1, "status": True}, {"id": 2, "status": True}])
     meas = _meas(
         [
@@ -231,7 +231,7 @@ def test_mirror_core_skips_node_with_existing_pseudo_v():
                 "value": 110.0,
                 "variance": 9.0,
                 "status": True,
-                "is_pseudo": True,  # pseudo → попадает в any_v_by_node
+                "is_pseudo": True,  # pseudo -> goes into any_v_by_node
             },
         ]
     )
@@ -251,10 +251,10 @@ def test_mirror_core_skips_node_with_existing_pseudo_v():
 
 
 def test_mirror_core_free_id_collision_skip():
-    # Существующее измерение занимает сам mid_start → раздача начинается с mid_start+1
-    # (дословная collision-skip-семантика оригинала; защита собственного диапазона 200M).
+    # An existing measurement occupies mid_start itself -> allocation starts at mid_start+1
+    # (verbatim collision-skip semantics; protects the own 200M id range).
     nodes = _nodes([{"id": 1, "status": True}, {"id": 2, "status": True}])
-    meas = _meas([_real_v(_MID, 1, 115.0, 0.5)])  # real V на узле 1, но id == mid_start
+    meas = _meas([_real_v(_MID, 1, 115.0, 0.5)])  # real V on node 1, but id == mid_start
     branches = _branches(
         [
             {
@@ -269,12 +269,12 @@ def test_mirror_core_free_id_collision_skip():
     )
     rows = _mirror_voltage_on_arrays(nodes, branches, meas, mid_start=_MID)
     assert len(rows) == 1
-    assert rows[0]["id"] == _MID + 1  # _MID занят → следующий свободный
+    assert rows[0]["id"] == _MID + 1  # _MID is taken -> next free id
     assert rows[0]["object_id"] == 2
 
 
 # ---------------------------------------------------------------------------
-# План ядра == эффект адаптера на модели
+# Kernel plan == adapter effect on the model
 # ---------------------------------------------------------------------------
 
 
@@ -346,7 +346,7 @@ def _build_model():
 
 
 def test_adapter_effect_matches_core_plan():
-    """Адаптер добавляет ровно те строки (id, object_id, value, variance), что вернуло ядро."""
+    """The adapter adds exactly the rows (id, object_id, value, variance) that the kernel returned."""
     m = _build_model()
 
     plan = _mirror_voltage_on_arrays(
@@ -370,12 +370,12 @@ def test_adapter_effect_matches_core_plan():
 
 
 # ---------------------------------------------------------------------------
-# add_pseudo_measurements: ядро на голых массивах
+# add_pseudo_measurements: kernel on bare arrays
 # ---------------------------------------------------------------------------
 
 
 def test_add_pseudo_core_v_and_injection_priors():
-    # Узел 1: активный, без замеров, vn=110 vm=115, pg=10 pn=4 → p_inj=6.
+    # Node 1: active, no measurements, vn=110 vm=115, pg=10 pn=4 -> p_inj=6.
     nodes = _nodes(
         [
             {
@@ -399,12 +399,12 @@ def test_add_pseudo_core_v_and_injection_priors():
     assert stats["v_priors_added"] == 1
     assert stats["zero_inj_added"] == 1
     assert len(rows) == 3  # V + P_inj + Q_inj
-    # V-приор: value=vm=115, σ=(0.05·110)²=30.25
+    # V prior: value=vm=115, σ=(0.05·110)²=30.25
     assert rows[0]["measurement_type"] == KIND_VOLTAGE
     assert rows[0]["value"] == 115.0
     assert rows[0]["variance"] == (0.05 * 110.0) ** 2
     assert rows[0]["id"] == 300_000_000
-    # P_inj=pg-pn=6, не транзит → var=zero_inj·load_loose=100·10=1000
+    # P_inj=pg-pn=6, not a transit node -> var=zero_inj·load_loose=100·10=1000
     assert rows[1]["measurement_type"] == KIND_POWER_INJECTION_P
     assert rows[1]["value"] == 6.0
     assert rows[1]["variance"] == 1000.0
@@ -416,7 +416,7 @@ def test_add_pseudo_core_v_and_injection_priors():
 
 
 def test_add_pseudo_core_transit_node_tight_prior():
-    # Транзитный узел (pg=pn=qg=qn=0, нет node_load_props) → var=zero_inj (tight, не loose).
+    # Transit node (pg=pn=qg=qn=0, no node_load_props) -> var=zero_inj (tight, not loose).
     nodes = _nodes(
         [
             {
@@ -426,7 +426,7 @@ def test_add_pseudo_core_transit_node_tight_prior():
                 "voltage_nominal": 110.0,
                 "voltage_magnitude": 0.0,
             },
-            # ещё один загруженный узел, чтобы модель НЕ считалась empty
+            # another loaded node so that the model is NOT considered empty
             {
                 "id": 2,
                 "status": True,
@@ -438,12 +438,12 @@ def test_add_pseudo_core_transit_node_tight_prior():
         ]
     )
     rows, stats = _add_pseudo_measurements_on_arrays(nodes, _branches([]), _meas([]), None)
-    # узел 1: V=vn (vm=0 → fallback), P_inj=0 var=100 (transit); узел 2: V=110, P_inj=50 var=1000
+    # node 1: V=vn (vm=0 -> fallback), P_inj=0 var=100 (transit); node 2: V=110, P_inj=50 var=1000
     inj1 = [
         r for r in rows if r["object_id"] == 1 and r["measurement_type"] == KIND_POWER_INJECTION_P
     ]
-    assert inj1[0]["variance"] == 100.0  # транзит → tight
+    assert inj1[0]["variance"] == 100.0  # transit -> tight
     assert inj1[0]["value"] == 0.0
     v1 = [r for r in rows if r["object_id"] == 1 and r["measurement_type"] == KIND_VOLTAGE]
-    assert v1[0]["value"] == 110.0  # vm=0 → fallback к vn
+    assert v1[0]["value"] == 110.0  # vm=0 -> fallback to vn
     assert stats["v_priors_added"] == 2

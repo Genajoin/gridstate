@@ -1,4 +1,4 @@
-"""Тесты для gridstate.telemetry.quality."""
+"""Tests for gridstate.telemetry.quality."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from gridstate.telemetry import (
 
 
 class TestPassthroughClassifier:
-    """passthrough_classifier — опция «отключить фильтр»: всё → GOOD."""
+    """passthrough_classifier - the "disable the filter" option: everything -> GOOD."""
 
     def test_returns_good_for_zero(self) -> None:
         assert passthrough_classifier("0x0") == QUALITY_GOOD
@@ -34,21 +34,21 @@ class TestStrictClassifier:
         assert strict_classifier("0x0") == QUALITY_BAD
 
     def test_lower_bits_10_is_good(self) -> None:
-        # (qCode & 3) == 2 → достоверное значение
+        # (qCode & 3) == 2 -> reliable value
         assert strict_classifier("0x70000002") == QUALITY_GOOD
         assert strict_classifier("0x10000002") == QUALITY_GOOD
         assert strict_classifier("0x80000002") == QUALITY_GOOD
 
     def test_manual_input_bit_is_still_good(self) -> None:
-        # Бит 16 (0x10000) — «ручной ввод с блокировкой». Не отменяет
-        # базовую проверку (& 3 == 2): manual + good_bits → GOOD.
+        # Bit 16 (0x10000) is "manual entry with blocking". It does not override
+        # the base check (& 3 == 2): manual + good_bits -> GOOD.
         assert strict_classifier("0x10002") == QUALITY_GOOD
 
     def test_lower_bits_other_is_questionable(self) -> None:
-        # (qCode & 3) ∈ {0, 1, 3} (но qCode != 0) → QUESTIONABLE.
+        # (qCode & 3) ∈ {0, 1, 3} (but qCode != 0) -> QUESTIONABLE.
         assert strict_classifier("0x1") == QUALITY_QUESTIONABLE  # & 3 == 1
         assert strict_classifier("0x3") == QUALITY_QUESTIONABLE  # & 3 == 3
-        assert strict_classifier("0x10000") == QUALITY_QUESTIONABLE  # manual без good_bits
+        assert strict_classifier("0x10000") == QUALITY_QUESTIONABLE  # manual without good_bits
         assert strict_classifier("0x70000000") == QUALITY_QUESTIONABLE  # & 3 == 0
 
     def test_empty_or_invalid_is_bad(self) -> None:
@@ -58,7 +58,7 @@ class TestStrictClassifier:
 
 class TestInverseClassifier:
     def test_zero_is_good(self) -> None:
-        # Эмпирика для Кольского-подобных снимков (qCode==0 преобладает).
+        # Empirical rule for snapshots where qCode==0 predominates.
         assert inverse_classifier("0x0") == QUALITY_GOOD
 
     def test_nonzero_is_questionable(self) -> None:
@@ -74,24 +74,24 @@ class TestAggregateQualities:
         assert aggregate_qualities([QUALITY_GOOD, QUALITY_GOOD]) == QUALITY_GOOD
 
     def test_one_questionable(self) -> None:
-        # worst-case: один QUESTIONABLE опускает класс до QUESTIONABLE.
+        # worst case: a single QUESTIONABLE lowers the class to QUESTIONABLE.
         assert (
             aggregate_qualities([QUALITY_GOOD, QUALITY_GOOD, QUALITY_QUESTIONABLE])
             == QUALITY_QUESTIONABLE
         )
 
     def test_one_bad(self) -> None:
-        # Любой BAD → BAD.
+        # Any BAD -> BAD.
         assert aggregate_qualities([QUALITY_GOOD, QUALITY_QUESTIONABLE, QUALITY_BAD]) == QUALITY_BAD
 
     def test_empty_list_returns_good(self) -> None:
-        # Нет ARG → нечего ухудшать → GOOD (default-точка).
+        # No ARG -> nothing to degrade -> GOOD (default point).
         assert aggregate_qualities([]) == QUALITY_GOOD
 
 
 @dataclass
 class _TM:
-    """Минимальный stand-in для ``TmValue`` в histogram-тестах."""
+    """Minimal stand-in for ``TmValue`` in histogram tests."""
 
     tm_code: str
 
@@ -134,7 +134,7 @@ class TestTmCodeHistogram:
         }
 
     def test_default_classifier_is_strict(self) -> None:
-        # Default histogram-классификатор — strict_classifier.
+        # The default histogram classifier is strict_classifier.
         # 0x70000002 (& 3 == 2) → GOOD; 0x0 → BAD.
         snapshot = {"g1": _TM("0x70000002"), "g2": _TM("0x0")}
         result = tm_code_histogram(snapshot)

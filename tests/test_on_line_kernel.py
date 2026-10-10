@@ -70,7 +70,7 @@ def test_topo_core_generator_status_write():
 
 
 def test_topo_core_reactor_tag_skipped_no_object():
-    # Тег REACTOR больше не имеет целевого массива → дефолтная ветка → skipped_no_object.
+    # The REACTOR tag no longer has a target array -> default branch -> skipped_no_object.
     stats = _apply_topology_on_arrays(
         _nodes([]), _branches([]), _gens([]), [("REACTOR", 9, True, None)]
     )
@@ -82,7 +82,7 @@ def test_topo_core_skipped_no_object_unknown_id():
     nodes = _nodes([1])
     stats = _apply_topology_on_arrays(nodes, _branches([]), _gens([]), [("NODE", 999, True, None)])
     assert stats["skipped_no_object"] == 1
-    assert bool(nodes[0]["status"]) is True  # не тронут
+    assert bool(nodes[0]["status"]) is True  # untouched
 
 
 def test_topo_core_unknown_tag_skipped_no_object():
@@ -93,7 +93,7 @@ def test_topo_core_unknown_tag_skipped_no_object():
 
 
 def test_topo_core_eval_skip_counters_routed():
-    # status=None с разными eval_skip → соответствующий счётчик, без записи.
+    # status=None with different eval_skip -> the matching counter, no write.
     nodes = _nodes([1, 2, 3])
     resolved = [
         ("NODE", 1, None, "skipped_no_value"),
@@ -105,11 +105,11 @@ def test_topo_core_eval_skip_counters_routed():
     assert stats["skipped_partial_args"] == 1
     assert stats["skipped_formula_error"] == 1
     assert stats["applied_on"] == 0 and stats["applied_off"] == 0
-    assert all(bool(nodes[i]["status"]) for i in range(3))  # никого не тронули
+    assert all(bool(nodes[i]["status"]) for i in range(3))  # nobody touched
 
 
 def test_topo_core_no_object_precedes_eval_skip():
-    # Несуществующий объект со status=None → skipped_no_object (объект-чек первичен).
+    # Non-existent object with status=None -> skipped_no_object (the object check comes first).
     stats = _apply_topology_on_arrays(
         _nodes([1]), _branches([]), _gens([]), [("NODE", 42, None, "skipped_no_value")]
     )

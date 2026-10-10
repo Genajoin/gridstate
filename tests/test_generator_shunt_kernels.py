@@ -57,10 +57,10 @@ def test_generator_status_core_cascade_off():
     nodes = _nodes([{"id": 1, "status": True}, {"id": 2, "status": False}])
     gens = _gens(
         [
-            {"id": 10, "node_id": 1, "status": True},  # узел on → не трогаем
-            {"id": 11, "node_id": 2, "status": True},  # узел off → гасим
-            {"id": 12, "node_id": 2, "status": False},  # уже off → не считаем
-            {"id": 13, "node_id": 99, "status": True},  # узла нет → missing
+            {"id": 10, "node_id": 1, "status": True},  # node on -> leave alone
+            {"id": 11, "node_id": 2, "status": True},  # node off -> switch off
+            {"id": 12, "node_id": 2, "status": False},  # already off -> not counted
+            {"id": 13, "node_id": 99, "status": True},  # node absent -> missing
         ]
     )
     stats = _apply_generator_status_on_arrays(nodes, gens)
@@ -68,11 +68,11 @@ def test_generator_status_core_cascade_off():
     assert bool(gens[0]["status"]) is True
     assert bool(gens[1]["status"]) is False
     assert bool(gens[2]["status"]) is False
-    assert bool(gens[3]["status"]) is True  # missing-node ген не трогается
+    assert bool(gens[3]["status"]) is True  # generator on a missing node is left untouched
 
 
 # ---------------------------------------------------------------------------
-# aggregate_generators: сумма active-генов по узлу, off исключены
+# aggregate_generators: sum of active generators per node, off ones excluded
 # ---------------------------------------------------------------------------
 
 
@@ -109,8 +109,8 @@ def test_aggregate_generators_core_sums_active_only():
                 "power_output": 100.0,
                 "reactive_output": 50.0,
                 "power_max": 999.0,
-            },  # off → исключён
-            {"id": 13, "node_id": 99, "status": True, "power_output": 5.0},  # узла нет
+            },  # off -> excluded
+            {"id": 13, "node_id": 99, "status": True, "power_output": 5.0},  # node absent
         ]
     )
     stats = _aggregate_generators_on_arrays(nodes, gens)
@@ -124,17 +124,17 @@ def test_aggregate_generators_core_sums_active_only():
         "exist_gen_raised": 1,
         "closed_nodes": 0,
     }
-    assert float(nodes[0]["generation_p"]) == 30.0  # 10+20, off-100 исключён
+    assert float(nodes[0]["generation_p"]) == 30.0  # 10+20, off-100 excluded
     assert float(nodes[0]["generation_q"]) == 3.0
     assert float(nodes[0]["generation_p_max"]) == 40.0  # 15+25
     assert float(nodes[0]["generation_q_min"]) == -12.0
-    assert float(nodes[1]["generation_p"]) == 0.0  # узел 2 без генов
+    assert float(nodes[1]["generation_p"]) == 0.0  # node 2 has no generators
 
 
 def test_aggregate_generators_closes_node_whose_generators_are_all_off():
-    """Узел с каталогом генераторов, где все машины выключены, генерации не имеет.
+    """A node with a generator catalogue where all machines are off has no generation.
 
-    Узел 3 без каталога сохраняет генерацию, объявленную на самом узле.
+    Node 3 without a catalogue keeps the generation declared on the node itself.
     """
     nodes = _nodes([{"id": 1}, {"id": 3}])
     for i in range(2):
@@ -153,7 +153,7 @@ def test_aggregate_generators_closes_node_whose_generators_are_all_off():
 
 
 # ---------------------------------------------------------------------------
-# normalize_breaker_reactance: сентинел (R=0, X=1.0 Ом) → X_pu=eps_pu
+# normalize_breaker_reactance: sentinel (R=0, X=1.0 Ohm) -> X_pu=eps_pu
 # ---------------------------------------------------------------------------
 
 
@@ -161,7 +161,7 @@ def test_normalize_breaker_core_volt_aware():
     nodes = _nodes([{"id": 1, "voltage_nominal": 10.5}, {"id": 2, "voltage_nominal": 0.0}])
     branches = _branches(
         [
-            # сентинел на 10.5 кВ → нормализуем
+            # sentinel at 10.5 kV -> normalise
             {
                 "id": 1,
                 "from_node": 1,
@@ -169,9 +169,9 @@ def test_normalize_breaker_core_volt_aware():
                 "resistance": 0.0,
                 "reactance": BREAKER_X_SENTINEL_OHM,
             },
-            # реальная ветвь (R>0) → не трогаем
+            # real branch (R>0) -> leave alone
             {"id": 2, "from_node": 1, "to_node": 2, "resistance": 6.05, "reactance": 30.25},
-            # сентинел, но Vn недоступен (узел 2 vn=0, fallback на to=2 тоже 0) → пропуск
+            # sentinel, but Vn unavailable (node 2 vn=0, fallback to to=2 also 0) -> skipped
             {
                 "id": 3,
                 "from_node": 2,
@@ -185,12 +185,12 @@ def test_normalize_breaker_core_volt_aware():
     n = _normalize_breaker_reactance_on_arrays(branches, nodes, eps_pu=eps)
     assert n == 1
     assert float(branches[0]["reactance"]) == eps * (10.5 * 10.5 / BASE_MVA)
-    assert float(branches[1]["reactance"]) == 30.25  # реальная не тронута
-    assert float(branches[2]["reactance"]) == BREAKER_X_SENTINEL_OHM  # Vn=0 пропуск
+    assert float(branches[1]["reactance"]) == 30.25  # real branch untouched
+    assert float(branches[2]["reactance"]) == BREAKER_X_SENTINEL_OHM  # Vn=0 skipped
 
 
 def test_normalize_breaker_core_fallback_to_node():
-    # from-узел vn=0, to-узел vn=110 → берём vn=110 из to.
+    # from-node vn=0, to-node vn=110 -> take vn=110 from the to-node.
     nodes = _nodes([{"id": 1, "voltage_nominal": 0.0}, {"id": 2, "voltage_nominal": 110.0}])
     branches = _branches(
         [

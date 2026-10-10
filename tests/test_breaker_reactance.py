@@ -1,10 +1,10 @@
-"""Тесты `normalize_breaker_reactance`.
+"""Tests for `normalize_breaker_reactance`.
 
-Загрузчик подменяет ветви-«короткозамыкатели» (R=X=0: секции, выключатели,
-блок-связи) на R=0, X=1.0 Ом — ФИКСИРОВАННО в Омах. После model_to_pu это
-даёт X_pu, зависящий от класса напряжения: на 10.5 кВ X_pu≈0.9 (катастрофа
-для блочных ген-шин), на 500 кВ X_pu≈4e-5 (норма). `normalize_breaker_reactance`
-приводит X к volt-aware значению X_pu=eps_pu на любом классе.
+The loader replaces "short-circuit" branches (R=X=0: bus sections, breakers,
+tie links) with R=0, X=1.0 Ohm, FIXED in Ohms. After model_to_pu this
+gives an X_pu that depends on the voltage class: at 10.5 kV X_pu≈0.9 (a disaster
+for unit generator buses), at 500 kV X_pu≈4e-5 (fine). `normalize_breaker_reactance`
+brings X to a voltage-aware value X_pu=eps_pu on every class.
 """
 
 from __future__ import annotations
@@ -49,56 +49,56 @@ def _toy_model_with_breakers():
         )
 
     S = BREAKER_X_SENTINEL_OHM
-    _br(100, 1, 2, 0.0, S)  # LV-сентинел → нормализуется
-    _br(200, 3, 4, 0.0, S)  # HV-сентинел → нормализуется
-    _br(300, 2, 3, 6.05, 30.25)  # реальная ВЛ → НЕ трогаем (R>0)
-    _br(400, 5, 6, 0.0, S)  # сентинел, но Vn недоступен → пропуск
-    _br(500, 7, 3, 0.0, S)  # from Vn=0 → fallback на to (500 кВ)
+    _br(100, 1, 2, 0.0, S)  # LV sentinel -> normalised
+    _br(200, 3, 4, 0.0, S)  # HV sentinel -> normalised
+    _br(300, 2, 3, 6.05, 30.25)  # real overhead line -> NOT touched (R>0)
+    _br(400, 5, 6, 0.0, S)  # sentinel, but Vn unavailable -> skipped
+    _br(500, 7, 3, 0.0, S)  # from Vn=0 -> fallback to the to-node (500 kV)
     return m
 
 
 def test_normalize_breaker_reactance_synthetic():
-    """Сентинелы R=0,X=1.0 → X_pu=eps_pu на каждом классе; остальное не трогаем."""
+    """Sentinels R=0,X=1.0 -> X_pu=eps_pu on every class; everything else is left alone."""
     m = _toy_model_with_breakers()
     eps = 1e-3
 
     stats = normalize_breaker_reactance(m, eps_pu=eps)
 
-    # Нормализованы: B100 (LV), B200 (HV), B500 (fallback на to). B400 — пропуск
-    # (нет Vn), B300 — реальная ветвь (R>0).
+    # Normalised: B100 (LV), B200 (HV), B500 (fallback to the to-node). B400 is skipped
+    # (no Vn), B300 is a real branch (R>0).
     assert stats["normalized"] == 3, stats
     assert stats["eps_pu"] == eps
 
     by_id = {int(b["id"]): b for b in m.branches.to_numpy()}
 
-    # LV-сентинел: X = eps·(10.5²/100); X_pu = X/(Vn²/Sbase) == eps.
+    # LV sentinel: X = eps·(10.5²/100); X_pu = X/(Vn²/Sbase) == eps.
     x100 = float(by_id[100]["reactance"])
     assert x100 == pytest.approx(eps * (10.5**2 / BASE_MVA))
     assert x100 / (10.5**2 / BASE_MVA) == pytest.approx(eps)
 
-    # HV-сентинел.
+    # HV sentinel.
     x200 = float(by_id[200]["reactance"])
     assert x200 == pytest.approx(eps * (500.0**2 / BASE_MVA))
     assert x200 / (500.0**2 / BASE_MVA) == pytest.approx(eps)
 
-    # fallback на to-узел (500 кВ).
+    # fallback to the to-node (500 kV).
     x500 = float(by_id[500]["reactance"])
     assert x500 == pytest.approx(eps * (500.0**2 / BASE_MVA))
 
-    # Реальная ВЛ (R>0) не тронута.
+    # The real overhead line (R>0) is untouched.
     assert float(by_id[300]["resistance"]) == pytest.approx(6.05)
     assert float(by_id[300]["reactance"]) == pytest.approx(30.25)
 
-    # Сентинел без Vn — оставлен как есть.
+    # Sentinel without Vn is left as is.
     assert float(by_id[400]["reactance"]) == pytest.approx(BREAKER_X_SENTINEL_OHM)
 
-    # R=0 у нормализованных сохранён.
+    # R=0 is preserved on the normalised branches.
     assert float(by_id[100]["resistance"]) == 0.0
     assert float(by_id[200]["resistance"]) == 0.0
 
 
 def test_normalize_breaker_reactance_idempotent():
-    """Повторный вызов — no-op (после нормализации X≠1.0 Ом, сентинел не совпадает)."""
+    """A repeated call is a no-op (after normalisation X≠1.0 Ohm, so the sentinel no longer matches)."""
     m = _toy_model_with_breakers()
     normalize_breaker_reactance(m)
     stats2 = normalize_breaker_reactance(m)
@@ -106,7 +106,7 @@ def test_normalize_breaker_reactance_idempotent():
 
 
 def test_normalize_breaker_reactance_no_branches():
-    """Модель без ветвей → 0 нормализаций, без падения."""
+    """Model without branches -> 0 normalisations, no crash."""
     from gridstate.working import Working
 
     m = Working.empty()

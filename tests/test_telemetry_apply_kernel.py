@@ -57,8 +57,8 @@ def _branches(rows: list[dict]) -> np.ndarray:
     return arr
 
 
-# Дефолтные kwargs ядра — все авто-фильтры (sign/q-loss) выключены, чтобы
-# конкретный кейс тестировался изолированно; отдельные тесты их включают.
+# Default kernel kwargs: all auto-filters (sign/q-loss) are off so that
+# each case is tested in isolation; individual tests switch them on.
 CORE_KW = {
     "questionable_sigma2_multiplier": 100.0,
     "branch_p_sigma_frac": 0.02,
@@ -110,7 +110,7 @@ def test_branch_p_activation_and_variance():
 
 
 def test_branch_q_activation_charging_variance():
-    # vn=750, B=2e-3 См → charging = |B|·vn² = 1125 МВАр; σ_charge=0.10·1125=112.5.
+    # vn=750, B=2e-3 S -> charging = |B|·vn² = 1125 MVAr; σ_charge=0.10·1125=112.5.
     nodes = _nodes([{"id": 1, "voltage_nominal": 750.0}])
     branches = _branches([{"id": 7, "from_node": 1, "status": True, "susceptance": 2e-3}])
     meas = _meas(
@@ -187,7 +187,7 @@ def test_bad_quality_skip_branch():
 
 
 def test_sign_inconsistency_drops_all_four():
-    # PBEG=+200, PEND=+150 → |sum|=350 ≥ 100 → ветвь inconsistent, все 4 меры skip.
+    # PBEG=+200, PEND=+150 → |sum|=350 ≥ 100 -> branch inconsistent, all 4 measurements skipped.
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([{"id": 7, "from_node": 1, "status": True}])
     meas = _meas(
@@ -237,7 +237,7 @@ def test_sign_inconsistency_drops_all_four():
 
 
 def test_sign_consistency_keeps_meas():
-    # PBEG=+200, PEND=-198 → |sum|=2 < 100 → consistent, активируются.
+    # PBEG=+200, PEND=-198 → |sum|=2 < 100 -> consistent, activated.
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([{"id": 7, "from_node": 1, "status": True}])
     meas = _meas(
@@ -313,7 +313,7 @@ def test_node_inj_id_assignment_multiple():
 
 
 def test_repeated_accumulation_into_one_meas():
-    # Два arg-key с одинаковым (ot,mt,side,oid) → += в ту же строку.
+    # Two arg keys with the same (ot,mt,side,oid) -> += into the same row.
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([{"id": 7, "from_node": 1, "status": True}])
     meas = _meas(
@@ -327,13 +327,12 @@ def test_repeated_accumulation_into_one_meas():
             }
         ]
     )
-    # Оба PBEG-вида маппятся на (1,0,0,7). PG_G... отдельный путь — здесь
-    # имитируем повторное попадание через два формальных PBEG-ключа невозможно
-    # (dict-ключи уникальны), поэтому используем PBEG + сам-же повтор через
-    # отдельный объект невозможно — берём value=400 одной мерой и проверяем += при
-    # повторном arg_key. dict не даёт дублей ключа, поэтому используем
-    # QUESTIONABLE-worst-case через две меры на тот же индекс невозможно.
-    # Вместо этого проверяем += семантику напрямую: одна мера, статус уже True.
+    # Both PBEG kinds map to (1,0,0,7). PG_G... is a separate path. Hitting the
+    # same row twice via two formal PBEG keys is impossible here (dict keys are
+    # unique), and a repeat via a separate object is impossible as well. A
+    # worst-case with two measurements on the same index is likewise not
+    # expressible. Instead the += semantics is checked directly: one
+    # measurement, status already True.
     meas[0]["status"] = False
     resolved = {(7, "PBEG"): (400.0, 1, "g", QUALITY_GOOD)}
     _run(meas, nodes, branches, resolved)
@@ -341,9 +340,9 @@ def test_repeated_accumulation_into_one_meas():
 
 
 def test_accumulation_branch_already_active_preset():
-    # Предзаполненная активная мера: ядро сбрасывает все status=False в начале,
-    # затем активирует заново — значение перезаписывается (не +=), т.к. status
-    # сброшен. Проверяем что pre-existing value не «утекает».
+    # Pre-filled active measurement: the kernel resets every status to False
+    # first, then re-activates, so the value is overwritten (not +=) because
+    # status was reset. Checks that the pre-existing value does not "leak".
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([{"id": 7, "from_node": 1, "status": True}])
     meas = _meas(
@@ -361,7 +360,7 @@ def test_accumulation_branch_already_active_preset():
     )
     resolved = {(7, "PBEG"): (150.0, 1, "g", QUALITY_GOOD)}
     _run(meas, nodes, branches, resolved)
-    assert float(meas[0]["value"]) == pytest.approx(150.0)  # перезапись, не 999+150
+    assert float(meas[0]["value"]) == pytest.approx(150.0)  # overwritten, not 999+150
 
 
 # ---------------------------------------------------------------- (7) branch-off skip
@@ -416,7 +415,7 @@ def test_questionable_variance_multiplier():
 
 
 def test_v_sigma2_scale_by_node_applied():
-    # Узел из плана: variance V-меры ×factor (0.1 = усиление доверия ×10).
+    # Node from the plan: V-measurement variance ×factor (0.1 = trust boosted ×10).
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([])
     meas = _meas([{"id": 10, "object_type": OT_NODE, "object_id": 1, "measurement_type": MT_V}])
@@ -429,8 +428,8 @@ def test_v_sigma2_scale_by_node_applied():
 
 
 def test_flow_sigma2_scale_by_branch_applied():
-    # (branch_id, kind) из плана: variance потоковой меры ×factor (100 = ослабление);
-    # другой kind той же ветви не трогается.
+    # (branch_id, kind) from the plan: flow-measurement variance ×factor (100 = down-weighting);
+    # a different kind on the same branch is not touched.
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([{"id": 7, "from_node": 1, "status": True}])
     meas = _meas(
@@ -465,7 +464,7 @@ def test_flow_sigma2_scale_by_branch_applied():
 
 
 def test_v_sigma2_scale_by_node_ignores_other_nodes_and_kinds():
-    # Узел вне плана и не-V меры не масштабируются.
+    # A node outside the plan and non-V measurements are not scaled.
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}, {"id": 2, "voltage_nominal": 220.0}])
     branches = _branches([{"id": 7, "from_node": 1, "status": True}])
     meas = _meas(
@@ -500,7 +499,7 @@ def test_questionable_node_inj_multiplier():
     sigma = max(0.05 * 300.0, 0.5)
     base = sigma * sigma + 1.0
     assert new_rows[0]["variance"] == pytest.approx(base * 100.0)
-    assert new_rows[0]["id"] == 1  # пустой meas_arr → next_id=1
+    assert new_rows[0]["id"] == 1  # empty meas_arr -> next_id=1
 
 
 # ---------------------------------------------------------------- misc coverage
@@ -509,7 +508,7 @@ def test_questionable_node_inj_multiplier():
 def test_skipped_no_value_and_no_meas():
     nodes = _nodes([{"id": 1, "voltage_nominal": 220.0}])
     branches = _branches([{"id": 7, "from_node": 1, "status": True}])
-    # value=None c n_res=0 → skipped_no_value; формула-ошибка n_res>0 → skipped_formula_error.
+    # value=None with n_res=0 -> skipped_no_value; formula error n_res>0 -> skipped_formula_error.
     meas = _meas(
         [
             {
@@ -523,11 +522,11 @@ def test_skipped_no_value_and_no_meas():
     )
     resolved = {
         (7, "PBEG"): (None, 0, "", 0),  # skipped_no_value
-        (8, "PEND"): (None, 2, "", 0),  # skipped_formula_error (но (1,0,1,8) нет меры)
+        (8, "PEND"): (None, 2, "", 0),  # skipped_formula_error (but (1,0,1,8) has no measurement)
     }
     stats, _ = _run(meas, nodes, branches, resolved)
-    # PBEG: idx найден, value None, n_res 0 → skipped_no_value.
+    # PBEG: idx found, value None, n_res 0 -> skipped_no_value.
     assert stats["skipped_no_value"] == 1
-    # PEND obj 8: idx не найден (нет меры) → skipped_no_meas раньше eval? Нет:
-    # ядро проверяет meas_idx до распаковки value. branch 8 нет status → off-skip.
+    # PEND obj 8: idx not found (no measurement) -> skipped_no_meas before eval? No:
+    # the kernel checks meas_idx before unpacking value. Branch 8 has no status -> off-skip.
     assert stats["skipped_branch_off"] == 1

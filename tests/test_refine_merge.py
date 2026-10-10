@@ -1,4 +1,4 @@
-"""Юнит-тесты перф-флага ``refine_merge`` (слитый refine-re-solve)."""
+"""Unit tests for the performance flag ``refine_merge`` (merged refine re-solve)."""
 
 from __future__ import annotations
 

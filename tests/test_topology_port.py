@@ -1,4 +1,4 @@
-"""Топология на gridstate-контейнере.
+"""Topology on the gridstate container.
 
 A functional guard of ``gridstate.topology``: running the topology functions
 on a gridstate model gives the expected node statuses and types, branch
@@ -11,22 +11,22 @@ import gridstate.topology as cs
 
 
 def _build_model():
-    """Модель, триггерящая все 5 топо-функций (multi-slack, gen→PV, orphan,
+    """Model that triggers all 5 topology functions (multi-slack, gen->PV, orphan,
     disconnected island, isolated node)."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
     m = Working.empty()
     nodes = [
-        (1, NodeType.SLACK, 1, True),  # выбранный slack (min bp)
-        (2, NodeType.SLACK, 2, True),  # демотируется в PQ
+        (1, NodeType.SLACK, 1, True),  # selected slack (min bp)
+        (2, NodeType.SLACK, 2, True),  # demoted to PQ
         (3, NodeType.PQ, 0, True),
-        (4, NodeType.PQ, 0, True),  # имеет генератор → PV
-        (5, NodeType.PQ, 0, True),  # изолированный (ветвь b7 off)
-        (6, NodeType.PQ, 0, True),  # disconnected pair с 7
+        (4, NodeType.PQ, 0, True),  # has a generator -> PV
+        (5, NodeType.PQ, 0, True),  # isolated (branch b7 off)
+        (6, NodeType.PQ, 0, True),  # disconnected pair with 7
         (7, NodeType.PQ, 0, True),
-        (8, NodeType.PQ, 0, True),  # в главном острове, источник orphan
-        (9, NodeType.PQ, 0, False),  # off-узел, цель orphan-ветви
+        (8, NodeType.PQ, 0, True),  # in the main island, source of the orphan branch
+        (9, NodeType.PQ, 0, False),  # off node, target of the orphan branch
     ]
     for nid, ntype, bp, st in nodes:
         m.nodes.add(
@@ -47,7 +47,7 @@ def _build_model():
         (104, 6, 7, True),  # disconnected island
         (105, 8, 3, True),
         (106, 8, 9, True),  # orphan (9 off)
-        (107, 5, 3, False),  # off → узел 5 изолирован
+        (107, 5, 3, False),  # off -> node 5 isolated
     ]
     for bid, fr, to, st in branches:
         m.branches.add(
@@ -87,28 +87,28 @@ def test_topology_sequence_runs_clean():
     ]
     for name in steps:
         ra = getattr(cs, name)(a)
-        assert isinstance(ra, dict), f"{name}: возврат не dict ({ra!r})"
-        assert all(isinstance(v, int) for v in ra.values()), f"{name}: значения не int ({ra!r})"
+        assert isinstance(ra, dict), f"{name}: return value is not a dict ({ra!r})"
+        assert all(isinstance(v, int) for v in ra.values()), f"{name}: values are not int ({ra!r})"
 
     node_state = _node_state(a)
     branch_state = _branch_state(a)
 
-    # multi-slack: узел 1 остаётся SLACK (min bp), узел 2 демотируется в PQ
+    # multi-slack: node 1 stays SLACK (min bp), node 2 is demoted to PQ
     assert node_state[1][1] == int(NodeType.SLACK)
     assert node_state[2][1] == int(NodeType.PQ)
-    # узел 4 имеет ген → PV
+    # node 4 has a generator -> PV
     assert node_state[4][1] == int(NodeType.PV)
-    # orphan-ветвь 106 (9 off) отключена
+    # orphan branch 106 (9 off) is disabled
     assert branch_state[106] is False
-    # disconnected island 6-7 отключена от главного острова (узлы гасятся)
+    # disconnected island 6-7 is cut off from the main island (nodes are switched off)
     assert node_state[6][0] is False
     assert node_state[7][0] is False
-    # изолированный узел 5 (ветвь 107 off) отключён
+    # isolated node 5 (branch 107 off) is disabled
     assert node_state[5][0] is False
 
 
 def test_no_slack_disconnected_noop():
-    # Без slack disable_disconnected_components → 0.
+    # Without a slack, disable_disconnected_components -> 0.
     from gridstate.working import Working
 
     def _no_slack():
