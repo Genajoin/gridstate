@@ -25,6 +25,7 @@ from gridstate.pipeline import PipelineConfig
 from gridstate.resolve_pass import (
     REVERT_REASON_NOT_CONVERGED,
     ResolveGuard,
+    ResolvePass,
     ResolveSnapshot,
     resolve_regressed,
 )
@@ -301,3 +302,32 @@ def test_guard_arm_is_idempotent_and_required():
     assert guard.settle(SimpleNamespace(success=False), stats) is guard.base  # type: ignore[arg-type]
     assert stats["reverted"] is True
     assert np.array_equal(model.nodes.to_numpy()["voltage_magnitude"], v0)
+
+
+def test_resolve_pass_guard_revert_and_former_name():
+    model = _load().model
+    assert ResolveGuard is ResolvePass
+    assert ResolvePass(model, SimpleNamespace(success=True)).usable  # type: ignore[arg-type]
+    assert not ResolvePass(model, SimpleNamespace(success=False)).usable  # type: ignore[arg-type]
+    rp = ResolvePass(model, SimpleNamespace(success=True))  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError):
+        rp.revert()
+    v0 = model.nodes.to_numpy()["voltage_magnitude"].copy()
+    rp.arm()
+    nid = int(model.nodes.to_numpy()["id"][0])
+    model.nodes.get_by_id(nid).voltage_magnitude = -1.0
+    assert rp.revert() is rp.base
+    assert np.array_equal(model.nodes.to_numpy()["voltage_magnitude"], v0)
+
+
+def test_both_refine_paths_share_the_stage_objects():
+    """The merged step runs the very stages of the sequential steps, gated by
+    the toggles of those steps."""
+    stages = passes_mod.MERGED_STAGES
+    assert stages == (
+        passes_mod.V_REFINE_STAGE,
+        passes_mod.V_MIRROR_STAGE,
+        passes_mod.V_MIRROR_CHAIN_STAGE,
+    )
+    cfg = PipelineConfig()
+    assert all(isinstance(getattr(cfg, s.name), bool) for s in stages)

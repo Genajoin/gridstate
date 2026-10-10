@@ -13,8 +13,12 @@ This module holds the shared part of that shape:
   measurements: the edited values/variances/statuses, added priors and
   ``estimated_si``), restorable without aliasing;
 * :func:`resolve_regressed` — the uniform acceptance rule;
-* :class:`ResolveGuard` — the snapshot/settle pair a pass wraps around its
-  edits and re-solve.
+* :class:`ResolvePass` — one pass over a working model: the guard on the
+  base solution (:attr:`ResolvePass.usable`), the snapshot taken right
+  before the first edit (:meth:`ResolvePass.arm`), and the accept/revert
+  decision (:meth:`ResolvePass.settle` with the uniform rule, or
+  :meth:`ResolvePass.revert` for a pass with its own acceptance criterion).
+  ``ResolveGuard`` is its former name.
 
 Acceptance rule: a re-solve that did not converge while the solution it
 started from did is rejected — the snapshot (measurement edits and V/δ) and
@@ -75,18 +79,27 @@ def resolve_regressed(before: SEResult, after: SEResult) -> bool:
     return bool(before.success) and not bool(after.success)
 
 
-class ResolveGuard:
-    """Snapshot/settle pair around one re-solve pass.
+class ResolvePass:
+    """One re-solve pass over a working model: guard → snapshot → apply →
+    re-solve → accept | revert.
 
     Usage::
 
-        guard = ResolveGuard(model, base_result)
-        guard.arm()              # before the first edit of the model
-        ...apply edits, re-solve...
-        current = guard.settle(resolved, stats)
+        rp = ResolvePass(model, base_result)
+        if not rp.usable:                      # guard
+            ...skip the pass...
+        rp.arm()                               # snapshot, before the first edit
+        stats = edit(model)                    # apply
+        resolved = resolve()                   # re-solve on the edited model
+        current = rp.settle(resolved, stats)   # accept | revert
 
-    :meth:`arm` is idempotent, so a pass applying several plans can call it
-    before each of them and only the state before the first edit is kept.
+    The snapshot is taken lazily, right before the first edit: classifying
+    on the model is read-only, and a pass whose plans turn out empty never
+    pays for the copy. :meth:`arm` is idempotent, so a pass applying
+    several plans can arm before each of them and keeps the
+    state before the first of them. A pass with its own acceptance
+    criterion arms eagerly, reads :attr:`snapshot` and calls :meth:`revert`
+    instead of :meth:`settle`.
     """
 
     def __init__(self, model: Working, base: SEResult) -> None:
@@ -94,21 +107,45 @@ class ResolveGuard:
         self.base = base
         self._snapshot: ResolveSnapshot | None = None
 
+    @property
+    def usable(self) -> bool:
+        """Guard: residuals of a non-converged base solution are unreliable."""
+        return bool(self.base.success)
+
     def arm(self) -> None:
+        """Take the snapshot unless it is already taken."""
+        _ = self.snapshot
+
+    @property
+    def snapshot(self) -> ResolveSnapshot:
+        """The snapshot (taken now when the pass is not armed yet)."""
         if self._snapshot is None:
             self._snapshot = ResolveSnapshot.capture(self._model)
+        return self._snapshot
+
+    def revert(self) -> SEResult:
+        """Restore the snapshot and return the base result."""
+        if self._snapshot is None:
+            raise RuntimeError(f"{type(self).__name__}.revert() called before arm()")
+        self._snapshot.restore(self._model)
+        return self.base
 
     def settle(self, resolved: SEResult, stats: dict[str, Any]) -> SEResult:
         """Accept ``resolved`` or revert to the snapshot; return the current result.
 
-        On revert the stats gain ``reverted=True`` and ``revert_reason``; on
-        acceptance they are left untouched.
+        Uniform rule (:func:`resolve_regressed`). On revert the stats gain
+        ``reverted=True`` and ``revert_reason``; on acceptance they are left
+        untouched.
         """
         if not resolve_regressed(self.base, resolved):
             return resolved
         if self._snapshot is None:
-            raise RuntimeError("ResolveGuard.settle() called before arm()")
+            raise RuntimeError(f"{type(self).__name__}.settle() called before arm()")
         self._snapshot.restore(self._model)
         stats["reverted"] = True
         stats["revert_reason"] = REVERT_REASON_NOT_CONVERGED
         return self.base
+
+
+#: Former name of :class:`ResolvePass`.
+ResolveGuard = ResolvePass

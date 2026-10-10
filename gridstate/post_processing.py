@@ -36,7 +36,7 @@ from gridstate.algebra.base import (
 from gridstate.bounds import is_reactive_only_generation, resolve_bounds
 from gridstate.measurement_ids import ANTI_OVERSHOOT_ID_BASE, IdAllocator
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
-from gridstate.resolve_pass import REVERT_REASON_NOT_CONVERGED, ResolveSnapshot
+from gridstate.resolve_pass import REVERT_REASON_NOT_CONVERGED, ResolvePass
 from gridstate.units import BASE_MVA, NetworkPU
 from gridstate.utils import id_to_pos_map
 from gridstate.working import table_copy, table_replace
@@ -750,10 +750,13 @@ def refine_anti_overshoot(
     # модели меры и branch/measurement-оценки от отвергнутого решения —
     # несогласованные с базовыми V/δ (это ломало бы и post-hoc quality
     # summary, и bad-data re-pass, читающие estimated_si).
-    snapshot = ResolveSnapshot.capture(model)
+    # The pass is armed eagerly: the real-V set is read from the snapshot, and
+    # the acceptance criterion is its own (revert() instead of settle()).
+    rp = ResolvePass(model, result)
+    rp.arm()
     maxr0 = _max_voltage_ratio(model)
 
-    me = snapshot.measurements
+    me = rp.snapshot.measurements
     real_v: set[int] = {
         int(x)
         for x in me["object_id"][
@@ -812,5 +815,4 @@ def refine_anti_overshoot(
         return refined, stats
     # Полный откат к базе: V/δ + branch-потоки + меры (удаляются добавленные
     # tight-priors, estimated_si возвращаются к базовому решению).
-    snapshot.restore(model)
-    return result, stats
+    return rp.revert(), stats

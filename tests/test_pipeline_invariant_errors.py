@@ -10,7 +10,13 @@ import pytest
 
 from gridstate.contract.derived import DerivedInputs
 from gridstate.pipeline import PipelineConfig
-from gridstate.pipeline.passes import _refine_two_pass, _s_anti_overshoot, _s_refine_merged
+from gridstate.pipeline.passes import (
+    BAD_DATA_STAGE,
+    MERGED_STAGES,
+    _refine_two_pass,
+    _s_anti_overshoot,
+    _s_refine_merged,
+)
 from gridstate.pipeline.preparation import (
     _s_release_load_only_injections,
     _s_telemetry,
@@ -52,14 +58,9 @@ def test_post_solve_steps_without_a_solution_raise() -> None:
         _s_anti_overshoot(_ctx())
     with pytest.raises(RuntimeError, match="'refine_merged' needs a solution"):
         _s_refine_merged(_ctx(cfg=PipelineConfig(refine_merge=True)))
-    with pytest.raises(RuntimeError, match="needs a solution"):
-        _refine_two_pass(
-            _ctx(),
-            classify=lambda c: None,
-            apply=lambda c, p: {},
-            empty_stats=lambda p: {},
-            unusable_reason="",
-        )
+    for stage in (BAD_DATA_STAGE, *MERGED_STAGES):
+        with pytest.raises(RuntimeError, match="'two-pass refine' needs a solution"):
+            _refine_two_pass(_ctx(), stage)
 
 
 def test_invariants_hold_under_optimized_python() -> None:
