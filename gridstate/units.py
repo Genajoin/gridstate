@@ -39,6 +39,11 @@ if TYPE_CHECKING:
     from gridstate.working import Working
 
 
+#: Largest admissible ``|voltage_angle|`` of an active node, radians. The
+#: p.u. conversion rejects a table beyond it (the angle is then most likely
+#: given in degrees); the re-solve acceptance rejects a solved state beyond it.
+MAX_ABS_VOLTAGE_ANGLE = 2 * math.pi
+
 BASE_MVA: float = 100.0
 """Base power of SE (fixed, 3-phase)."""
 
@@ -169,7 +174,7 @@ def network_pu_from_tables(nodes_arr: np.ndarray, branches_arr: np.ndarray) -> N
 
     # Angles — already in radians per NODE_DTYPE; we numerically check the range.
     voltage_angle = active_nodes["voltage_angle"].astype(np.float64)
-    if np.any(np.abs(voltage_angle) > 2 * math.pi):
+    if np.any(np.abs(voltage_angle) > MAX_ABS_VOLTAGE_ANGLE):
         raise ValueError(
             "voltage_angle is outside the range [−2π, +2π] — the model may store the angle in "
             "degrees. NODE_DTYPE requires radians."
