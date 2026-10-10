@@ -209,6 +209,25 @@ def test_branch_flows_match_the_power_flow(name: str) -> None:
         np.testing.assert_allclose(s_to[n_line:].imag, net.res_trafo.q_lv_mvar, atol=1e-8)
 
 
+@pytest.mark.parametrize("trafo_model", ["t", "pi"])
+def test_trafo_flows_match_the_power_flow_with_taps_and_magnetising(trafo_model: str) -> None:
+    """Both ends of transformers with off-nominal taps and a magnetising branch:
+    pandapower puts the from-end shunt behind the ideal transformer, gridstate
+    at the from node, so this checks the |t|^2 conversion of the adapter on the
+    branch flows, not only on the Y-bus sum."""
+    net = _run(_synthetic_net(), trafo_model=trafo_model)
+    pu = model_to_pu(from_pandapower(net).model)
+    _, yf, yt = build_ybus(pu)
+    v = _pf_voltage(net, pu)
+    order = np.argsort(pu.branch_ids)
+    s_from = (v[pu.from_idx] * np.conj(yf @ v) * 100.0)[order][len(net.line) :]
+    s_to = (v[pu.to_idx] * np.conj(yt @ v) * 100.0)[order][len(net.line) :]
+    np.testing.assert_allclose(s_from.real, net.res_trafo.p_hv_mw, atol=1e-8)
+    np.testing.assert_allclose(s_from.imag, net.res_trafo.q_hv_mvar, atol=1e-8)
+    np.testing.assert_allclose(s_to.real, net.res_trafo.p_lv_mw, atol=1e-8)
+    np.testing.assert_allclose(s_to.imag, net.res_trafo.q_lv_mvar, atol=1e-8)
+
+
 @pytest.mark.parametrize("name", ["case14", "case30"])
 def test_nodal_injections_match_the_power_flow(name: str) -> None:
     """P at every bus except the slack, Q at buses without a voltage-controlled

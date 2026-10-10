@@ -16,7 +16,9 @@ Conventions:
   computed in p.u. by reusing ``model_to_pu`` + ``build_ybus`` (the same Y-bus
   as SE).
 * For a transformer *all* of g+jb is usually placed on the "from" side via
-  ``conductance_from`` / ``susceptance_from`` (``branch_g/b`` stay zero).
+  ``conductance_from`` / ``susceptance_from`` (``branch_g/b`` stay zero). The
+  "from" shunt is connected at the "from" node, before the ideal transformer,
+  and does not depend on the tap (see ``gridstate.ybus``).
 * Node shunts are ``node.shunt_g + j*node.shunt_b`` (S). Reactors folded into
   the node shunt by ``apply_reactors_to_node_shunt`` are already part of
   ``node.shunt_b`` and are not summed separately.

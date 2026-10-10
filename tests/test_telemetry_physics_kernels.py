@@ -241,36 +241,43 @@ def test_apply_rpn_without_tap_steps_is_a_noop() -> None:
     assert apply_rpn_resolved(_NoDomainTables()) == {"applied": 0, "shunt_recalc": 0}  # type: ignore[arg-type]
 
 
-def test_apply_rpn_keeps_the_tap_referred_from_shunt_invariant() -> None:
-    """Y-bus effect of a tap change 1.0 -> 1.05 with ``shunt_factor = 1.05^2``.
+def test_apply_rpn_tap_change_leaves_the_from_shunt_in_place() -> None:
+    """Y-bus effect of a tap change 1.0 -> 1.05.
 
-    In ``build_ybus`` the from-shunt enters ``Yff`` divided by ``|t|^2`` and the
-    series admittance referred to the from side is ``Ysf = 1/(r+jx)``:
-    ``Yff = Ysf + Yc_from/|t|^2``, ``Yft = -Ysf*t``, ``Ytt = Ysf*|t|^2``. With the
-    shunt rescaled by ``|t|^2`` the shunt part of ``Yff`` stays the same.
+    In ``build_ybus`` the whole from-shunt sits at the from node, before the
+    ideal transformer, and the series admittance referred to the from side is
+    ``Ysf = 1/(r+jx)``: ``Yff = Ysf + Yc_from``, ``Yft = -Ysf*t``,
+    ``Ytt = Ysf*|t|^2``. With ``shunt_factor = 1`` the shunt part of ``Yff``
+    does not change with the tap; a factor other than 1 is the producer's
+    choice and is applied as given.
     """
     b_from = -4e-5  # S, magnetising susceptance on the from side
-    m = _transformer_model(susceptance_from=b_from)
-    y0 = build_ybus(model_to_pu(m))[0].toarray()
-
-    m.tap_steps.add(_tap_step(7, 1.05, 0.0, 1.05**2))
-    stats = apply_rpn_resolved(m)
-    assert stats == {"applied": 1, "shunt_recalc": 1}
-    row = m.branches.get_by_id(7)
-    assert row is not None
-    assert row.tap_ratio == 1.05
-    assert row.susceptance_from == pytest.approx(b_from * 1.1025)
-
-    y1 = build_ybus(model_to_pu(m))[0].toarray()
     z_base = 110.0**2 / 100.0
     ysf = z_base / (2.0 + 40.0j)
     yc_from_pu = 1j * b_from * z_base
     t = 1.05
+
+    m = _transformer_model(susceptance_from=b_from)
+    y0 = build_ybus(model_to_pu(m))[0].toarray()
+    m.tap_steps.add(_tap_step(7, t, 0.0, 1.0))
+    assert apply_rpn_resolved(m) == {"applied": 1, "shunt_recalc": 0}
+    row = m.branches.get_by_id(7)
+    assert row is not None
+    assert row.tap_ratio == t
+    assert row.susceptance_from == b_from
+
+    y1 = build_ybus(model_to_pu(m))[0].toarray()
     assert y0[0, 0] == pytest.approx(ysf + yc_from_pu, rel=1e-12)
-    assert y1[0, 0] == pytest.approx(ysf + yc_from_pu, rel=1e-12)  # invariant
+    assert y1[0, 0] == pytest.approx(ysf + yc_from_pu, rel=1e-12)  # tap-independent
     assert y1[0, 1] == pytest.approx(-ysf * t, rel=1e-12)
     assert y1[1, 0] == pytest.approx(-ysf * t, rel=1e-12)
     assert y1[1, 1] == pytest.approx(ysf * t * t, rel=1e-12)
+
+    scaled = _transformer_model(susceptance_from=b_from)
+    scaled.tap_steps.add(_tap_step(7, t, 0.0, 1.1))
+    assert apply_rpn_resolved(scaled) == {"applied": 1, "shunt_recalc": 1}
+    y2 = build_ybus(model_to_pu(scaled))[0].toarray()
+    assert y2[0, 0] == pytest.approx(ysf + 1.1 * yc_from_pu, rel=1e-12)
 
 
 # ---------------------------------------------------------------------------

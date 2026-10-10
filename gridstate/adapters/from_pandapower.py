@@ -432,13 +432,14 @@ def _build_branches(net: Any, f_hz: float, trafo_model: str = "t") -> np.ndarray
         # Contract units. The impedance goes to the from (HV) side by the actual
         # ratio: build_ybus uses Ys = |t|^2 / z_from (see gridstate.ybus). The
         # shunts are in S of the from-side base, the one model_to_pu converts
-        # every branch quantity with. build_ybus divides the from-end shunt by
-        # |t|^2 exactly like pandapower does, so it is written without a tap
-        # correction; where the from-end shunt of a transformer belongs with
-        # respect to the ideal transformer is open in #52.
+        # every branch quantity with. pandapower places the from-end shunt
+        # behind the ideal transformer (Yff = (Ys + y_from) / |t|^2), while
+        # build_ybus connects it at the from node, before the ideal
+        # transformer (Yff = Ys / |t|^2 + Yc_from): refer it to the from side
+        # by dividing by |t|^2. The to-end shunt needs no conversion.
         z_base_hv = vn_hv_bus * vn_hv_bus / BASE_MVA
         z_from = z_series * tap_pu * tap_pu * z_base_hv
-        y_from /= z_base_hv
+        y_from /= tap_pu * tap_pu * z_base_hv
         y_to /= z_base_hv
 
         shift = float(tr.shift_degree) if not pd.isna(tr.shift_degree) else 0.0

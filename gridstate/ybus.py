@@ -14,15 +14,21 @@ Formulas of each branch (``from`` → ``to``) referred to the "from" side:
     t       = tap_ratio · exp(j·phase_shift)        # complex ratio
     Ys      = Ysf · |t|²               # see below on the impedance side
 
-    Yff = (Ys + Yc_from) / (t · conj(t))  = Ysf + Yc_from / |t|²
+    Yff = Ys / (t · conj(t)) + Yc_from    = Ysf + Yc_from
     Yft = − Ys / conj(t)                  = − Ysf · t
     Ytf = − Ys / t                        = − Ysf · conj(t)
     Ytt = Ys + Yc_to                      = Ysf · |t|² + Yc_to
 
+Branch layout. A branch is the series impedance at its "from" end followed by
+the ideal transformer ``t : 1`` at its "to" end::
+
+    from ──┬── r + j·x ──( t : 1 )──┬── to
+         Yc_from                   Yc_to
+
 Impedance side. In the input format the ``resistance``/``reactance``
 of a transformer are Ohms on the "from" side: the impedance is placed at the start of the branch,
-the ideal transformer at its end. The formulas above are written for an impedance
-located behind the ideal transformer (the ``makeYbus`` form), so they
+the ideal transformer at its end. The ``makeYbus``-form expressions above are
+written for an impedance located behind the ideal transformer, so they
 use the admittance referred to the "to" side by the actual (not the
 nominal) ratio: ``Ys = Ysf·|t|²``. Referring by the nominal
 ratio would distort the effective impedance by a factor of ``1/|t|²``
@@ -30,9 +36,14 @@ ratio would distort the effective impedance by a factor of ``1/|t|²``
 would change together with the on-load tap changer position. For lines and transformers with the nominal
 ratio ``|t| = 1`` there is no referral: ``Ys = Ysf``.
 
-The "from" shunt is divided by ``|t|²`` (its dependence on the tap
-is accounted for by the shunt recomputation when the tap changer is applied,
-``telemetry.rpn._apply_tap_steps_on_arrays``).
+Shunt side. The whole "from" shunt ``Yc_from`` is connected at the "from"
+node, in the "from"-side base, *before* the ideal transformer: it is neither
+divided by ``|t|²`` nor otherwise dependent on the tap position. The "to"
+shunt ``Yc_to`` is connected at the "to" node, behind the ideal transformer.
+A source model that places a shunt behind the ideal transformer on the "from"
+side (for example the ``makeYbus`` form ``(Ys + Yc)/|t|²``) has to be
+converted by its adapter, by dividing that shunt by ``|t|²``; see
+``adapters.from_pandapower``.
 
 Nodal shunts are added to the ``Ybus`` diagonal; parallel branches
 are summed automatically through the ``coo_matrix`` assembly with identical
@@ -120,7 +131,9 @@ def build_ybus(
     # transformer by the actual ratio, see the module docstring.
     ys = series_admittance(network_pu)
 
-    yff = (ys + yc_from) / (tap * np.conj(tap))
+    # The "from" shunt sits at the "from" node before the ideal transformer:
+    # no division by |t|^2 (see the module docstring).
+    yff = ys / (tap * np.conj(tap)) + yc_from
     yft = -ys / np.conj(tap)
     ytf = -ys / tap
     ytt = ys + yc_to
