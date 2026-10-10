@@ -1,36 +1,36 @@
-"""Топологические операции над моделью сети — перенесены в gridstate.
+"""Topological operations on the network model — ported into gridstate.
 
-Топологическая чистка реализована полностью внутри gridstate, без внешних
-зависимостей (страж эквивалентности — ``tests/test_topology_port.py``).
+The topological clean-up is implemented entirely inside gridstate, without external
+dependencies (the equivalence guard is ``tests/test_topology_port.py``).
 
-**Решающее ядро над контрактными массивами.** Каждая функция расщеплена на:
+**Decision kernel over contract arrays.** Each function is split into:
 
-* ``_*`` **чистое ядро** — принимает контрактные numpy-массивы
-  (``model.nodes.to_numpy()`` и т.п., либо «голые» массивы ``SE_INPUT.*.
-  input_dtype()``), читает ТОЛЬКО контрактные колонки и возвращает **план** —
-  список ``id`` объектов, которым надо сменить статус/тип. Ядро не зависит от
-  ``Working`` и от способа записи;
-* публичная функция-**адаптер** — материализует массивы из модели, зовёт ядро,
-  применяет план существующим объектным ``model.{coll}.update(id, {...})``
-  (write-путь прежний), возвращает счётчик.
+* ``_*`` **pure kernel** — takes contract numpy arrays
+  (``model.nodes.to_numpy()`` etc., or "bare" arrays ``SE_INPUT.*.
+  input_dtype()``), reads ONLY contract columns and returns a **plan** —
+  a list of object ``id``s whose status/type must be changed. The kernel does not depend on
+  ``Working`` or on the way of writing;
+* public **adapter** function — materializes the arrays from the model, calls the kernel,
+  applies the plan with the existing object-level ``model.{coll}.update(id, {...})``
+  (the write path is unchanged), and returns a counter.
 
-Разделение «чистое ядро ↔ адаптер» позволяет менять способ применения плана
-(объектный ``model.update`` или присваивание в рабочий массив), не трогая логику
-самого ядра.
+The "pure kernel ↔ adapter" split makes it possible to change the way the plan is applied
+(object-level ``model.update`` or assignment into the working array) without touching the logic
+of the kernel itself.
 
-Семейства:
+Families:
 
-1. ``disable_*`` — отключение узлов/ветвей по топологическим признакам
-   (orphan, disconnected, isolated). Универсальны для любого формата.
-2. ``refine_*`` — приведение типов узлов к семантике решателей
-   (множественный SLACK→один; promote PQ→PV по наличию генераторов).
+1. ``disable_*`` — switching off nodes/branches by topological criteria
+   (orphan, disconnected, isolated). Universal for any format.
+2. ``refine_*`` — bringing node types to the semantics of the solvers
+   (multiple SLACK→one; promote PQ→PV by the presence of generators).
 
-Контрактные колонки (см. ``gridstate.contract.tables``, роль WORKING): ядра читают
+Contract columns (see ``gridstate.contract.tables``, role WORKING): the kernels read
 ``node.{id,status,node_type,balance_priority}``, ``branch.{id,status,from_node,
-to_node}``, ``generator.{status,node_id}``; адаптеры пишут ``node.{status,
+to_node}``, ``generator.{status,node_id}``; the adapters write ``node.{status,
 node_type}``, ``branch.status``.
 
-Типичный порядок подготовки модели к численному решению::
+Typical order of preparing a model for the numerical solution::
 
     refine_slack_to_one(model)
     refine_node_types_from_generators(model)
@@ -55,16 +55,16 @@ _PV_NODE_TYPE = int(NodeType.PV)
 
 
 # ---------------------------------------------------------------------------
-# Чистые ядра над контрактными массивами (возвращают план id)
+# Pure kernels over contract arrays (return an id plan)
 # ---------------------------------------------------------------------------
 
 
 def _orphan_branches_to_disable(nodes_arr: Any, branches_arr: Any) -> list[int]:
-    """Ветви, ссылающиеся на отсутствующий/отключённый узел → план отключения.
+    """Branches referring to a missing/disabled node → a disable plan.
 
-    Читает ``node.{id,status}`` и ``branch.{id,status,from_node,to_node}``.
-    Возвращает ``id`` active-ветвей, у которых хоть один конец не в наборе
-    active-узлов (порядок — как в ``branches_arr``).
+    Reads ``node.{id,status}`` and ``branch.{id,status,from_node,to_node}``.
+    Returns the ``id``s of active branches with at least one end not in the set of
+    active nodes (order — as in ``branches_arr``).
     """
     valid_node_ids = active_ids(nodes_arr)
 
@@ -80,10 +80,10 @@ def _orphan_branches_to_disable(nodes_arr: Any, branches_arr: Any) -> list[int]:
 
 
 def _disconnected_nodes_to_disable(nodes_arr: Any, branches_arr: Any) -> list[int]:
-    """Узлы без active-пути к slack → план отключения (BFS от slack-узлов).
+    """Nodes without an active path to slack → a disable plan (BFS from the slack nodes).
 
-    Читает ``node.{id,status,node_type}`` и ``branch.{status,from_node,to_node}``.
-    Если slack-узлов нет — возвращает ``[]`` (как оригинал: 0 без модификаций).
+    Reads ``node.{id,status,node_type}`` and ``branch.{status,from_node,to_node}``.
+    If there are no slack nodes — returns ``[]`` (as the original: 0 without modifications).
     """
     active_node_ids: set[int] = set()
     adj: dict[int, list[int]] = {}
@@ -122,9 +122,9 @@ def _disconnected_nodes_to_disable(nodes_arr: Any, branches_arr: Any) -> list[in
 
 
 def _isolated_nodes_to_disable(nodes_arr: Any, branches_arr: Any) -> list[int]:
-    """Active-узлы без единой active-ветви → план отключения (slack не трогаем).
+    """Active nodes without a single active branch → a disable plan (slack is not touched).
 
-    Читает ``node.{id,status,node_type}`` и ``branch.{status,from_node,to_node}``.
+    Reads ``node.{id,status,node_type}`` and ``branch.{status,from_node,to_node}``.
     """
     has_active_branch = nodes_with_active_branch(branches_arr)
 
@@ -141,12 +141,12 @@ def _isolated_nodes_to_disable(nodes_arr: Any, branches_arr: Any) -> list[int]:
 
 
 def _slack_nodes_to_demote(nodes_arr: Any, branches_arr: Any) -> list[int]:
-    """Свести множество SLACK к одному → план понижения остальных в PQ.
+    """Reduce the set of SLACK nodes to one → a plan to demote the rest to PQ.
 
-    Читает ``node.{id,status,node_type,balance_priority}`` и
-    ``branch.{status,from_node,to_node}``. Кандидаты — active SLACK с
-    ``balance_priority>0`` и active-branch; оставляем min priority (ties → min
-    id), остальные SLACK → PQ. Без валидных кандидатов — ``[]``.
+    Reads ``node.{id,status,node_type,balance_priority}`` and
+    ``branch.{status,from_node,to_node}``. Candidates — active SLACK with
+    ``balance_priority>0`` and an active branch; keep the min priority (ties → min
+    id), the rest SLACK → PQ. With no valid candidates — ``[]``.
 
     The slack picked by ``units.network_pu_from_tables`` when several remain
     follows a different rule (any balance_priority, no branch check, ties to
@@ -169,7 +169,7 @@ def _slack_nodes_to_demote(nodes_arr: Any, branches_arr: Any) -> list[int]:
         candidates.append((bp, nid))
 
     if not candidates:
-        return []  # ничего не понижаем — нет валидных кандидатов
+        return []  # nothing is demoted — no valid candidates
 
     candidates.sort()  # min priority first; ties → min id
     chosen_slack = candidates[0][1]
@@ -187,10 +187,10 @@ def _slack_nodes_to_demote(nodes_arr: Any, branches_arr: Any) -> list[int]:
 
 
 def _gen_nodes_to_promote(nodes_arr: Any, generators_arr: Any) -> list[int]:
-    """Узлы c active-генератором → план PQ→PV.
+    """Nodes with an active generator → a PQ→PV plan.
 
-    Читает ``generator.{status,node_id}`` и ``node.{id,status,node_type}``:
-    любой PQ-узел с active-генератором.
+    Reads ``generator.{status,node_id}`` and ``node.{id,status,node_type}``:
+    any PQ node with an active generator.
     """
     has_active_gen: set[int] = set()
     for r in generators_arr:
@@ -204,19 +204,19 @@ def _gen_nodes_to_promote(nodes_arr: Any, generators_arr: Any) -> list[int]:
         nid = int(r["id"])
         if nid not in has_active_gen:
             continue
-        # SLACK не понижаем до PV; только PQ → PV.
+        # SLACK is not demoted to PV; only PQ → PV.
         if int(r["node_type"]) == _PQ_NODE_TYPE:
             to_promote.append(nid)
     return to_promote
 
 
 def _gen_nodes_to_demote(nodes_arr: Any, generators_arr: Any) -> list[int]:
-    """PV-узлы, у которых генераторы есть, но ни один не активен → план PV→PQ.
+    """PV nodes that have generators but none of them active → a PV→PQ plan.
 
-    Пара к :func:`_gen_nodes_to_promote`: первый проход типов идёт до каскада
-    ``node off ⇒ gen off`` и повышает узел по генератору, который затем
-    гаснет. Понижаем только узлы с записями генераторов — PV, пришедший из
-    входа без каталога генераторов, не трогаем.
+    A pair to :func:`_gen_nodes_to_promote`: the first pass over types runs before the
+    ``node off ⇒ gen off`` cascade and promotes a node by a generator that then
+    goes dark. We demote only nodes with generator records — a PV that came from an
+    input without a generator catalogue is not touched.
     """
     has_gen: set[int] = set()
     has_active_gen: set[int] = set()
@@ -235,27 +235,27 @@ def _gen_nodes_to_demote(nodes_arr: Any, generators_arr: Any) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
-# Публичные адаптеры: массивы из модели → ядро → применить план через .update()
+# Public adapters: arrays from the model → kernel → apply the plan via .update()
 # ---------------------------------------------------------------------------
 
 
 def disable_orphan_branches(model: Any) -> dict[str, int]:
-    """Отключить ветви, ссылающиеся на отсутствующие или отключённые узлы.
+    """Disable branches referring to missing or disabled nodes.
 
-    На реальных тестовых моделях встречаются ветви с ``from_node`` или ``to_node``,
-    которых нет в node-таблице (модель экспортирована по региону без вычистки
-    пограничных ветвей). Такая ветвь формально ``status=True``, но один из её
-    концов недоступен — это «висящая в воздухе» ветвь, нарушающая топологию.
+    Real test models contain branches whose ``from_node`` or ``to_node``
+    is not in the node table (the model was exported for a sub-area without cleaning out
+    the boundary branches). Such a branch is formally ``status=True``, but one of its
+    ends is unavailable — it is a "dangling" branch that breaks the topology.
 
-    Алгоритм: для каждой active-ветви проверяется, оба ли её узла есть в наборе
-    active-узлов. Если хотя бы один отсутствует или отключён — ветвь отключается.
+    Algorithm: for each active branch it is checked whether both of its nodes are in the set of
+    active nodes. If at least one is missing or disabled, the branch is disabled.
 
     Returns:
-        Статистика шага ``{"disabled": <число отключённых ветвей>}``.
+        Step statistics ``{"disabled": <number of disabled branches>}``.
 
     Note:
-        Применять **до** ``disable_isolated_nodes``, иначе узлы-соседи
-        orphan-ветвей будут считаться подключёнными.
+        Apply **before** ``disable_isolated_nodes``, otherwise the neighbour nodes of
+        orphan branches would be considered connected.
     """
     to_disable = _orphan_branches_to_disable(model.nodes.to_numpy(), model.branches.to_numpy())
     for bid in to_disable:
@@ -264,24 +264,24 @@ def disable_orphan_branches(model: Any) -> dict[str, int]:
 
 
 def disable_disconnected_components(model: Any) -> dict[str, int]:
-    """Отключить узлы, не связанные со slack через активные ветви.
+    """Disable nodes not connected to slack through active branches.
 
-    Из набора active-узлов и active-ветвей выполняется BFS от всех slack-узлов
-    (``node_type == 2``). Узлы, не достигнутые BFS, отключаются.
+    From the set of active nodes and active branches a BFS is run from all slack nodes
+    (``node_type == 2``). Nodes not reached by the BFS are disabled.
 
-    Зачем нужно: ``disable_isolated_nodes`` находит узлы **без** активных ветвей.
-    Но остаются **изолированные подсети** — узлы связаны друг с другом активной
-    ветвью, но не имеют активного пути к slack. Их δ-углы — свободные степени
-    свободы H, что даёт ранг-дефицит матрицы Якоби SE / Power Flow.
+    Why it is needed: ``disable_isolated_nodes`` finds nodes **without** active branches.
+    But **isolated subnetworks** remain — nodes connected to each other by an active
+    branch but without an active path to slack. Their δ angles are free degrees of
+    freedom of H, which gives a rank deficiency of the SE / Power Flow Jacobian.
 
     Returns:
-        Статистика шага ``{"disabled": <число отключённых узлов>}``.
+        Step statistics ``{"disabled": <number of disabled nodes>}``.
 
     Note:
-        - Применять **после** ``disable_orphan_branches`` и **до**
+        - Apply **after** ``disable_orphan_branches`` and **before**
           ``disable_isolated_nodes``.
-        - Если slack-узлов нет, функция возвращает 0 без модификаций.
-        - Slack-узлов может быть несколько (по одному на остров) — все стартовые.
+        - If there are no slack nodes, the function returns 0 without modifications.
+        - There may be several slack nodes (one per island) — all are starting points.
     """
     to_disable = _disconnected_nodes_to_disable(model.nodes.to_numpy(), model.branches.to_numpy())
     for nid in to_disable:
@@ -290,20 +290,20 @@ def disable_disconnected_components(model: Any) -> dict[str, int]:
 
 
 def disable_isolated_nodes(model: Any) -> dict[str, int]:
-    """Отключить узлы, оставшиеся без активных ветвей.
+    """Disable nodes left without active branches.
 
-    На реальной TM некоторые узлы помечены ``status=True``, но **все**
-    инцидентные ветви ``status=False``. Такой узел — изолированный остров: его
-    угол δ не наблюдаем, что делает H-матрицу сингулярной.
+    In real models some nodes are marked ``status=True`` but **all**
+    incident branches have ``status=False``. Such a node is an isolated island: its
+    angle δ is unobservable, which makes the H matrix singular.
 
-    Slack-узлы (``node_type == 2``) **не отключаются**, даже если изолированы —
-    это сигнал об ошибке топологии, не молчаливое «исправление».
+    Slack nodes (``node_type == 2``) are **not disabled**, even if isolated —
+    this is a signal of a topology error, not a silent "fix".
 
     Returns:
-        Статистика шага ``{"disabled": <число отключённых узлов>}``.
+        Step statistics ``{"disabled": <number of disabled nodes>}``.
 
     Note:
-        Перед вызовом рекомендуется ``disable_orphan_branches``.
+        It is recommended to call ``disable_orphan_branches`` first.
     """
     to_disable = _isolated_nodes_to_disable(model.nodes.to_numpy(), model.branches.to_numpy())
     for nid in to_disable:
@@ -312,23 +312,23 @@ def disable_isolated_nodes(model: Any) -> dict[str, int]:
 
 
 def refine_slack_to_one(model: Any) -> dict[str, int]:
-    """Свести множество SLACK-узлов к одному через ``balance_priority``.
+    """Reduce the set of SLACK nodes to one via ``balance_priority``.
 
     The input may flag several nodes as balancing (typically 5-15 in a production
     model). A solver that picks its own slack tolerates that, but for a typical
     PF/SE several slacks mean several islands with independent δ, and convergence
     breaks.
 
-    Алгоритм:
-    1. Кандидаты — active SLACK (``node_type=2``) с ``balance_priority>0`` и
+    Algorithm:
+    1. Candidates — active SLACK (``node_type=2``) with ``balance_priority>0`` and
        active-branch.
-    2. Оставляем slack с минимальным ``balance_priority`` (ties → min id).
-    3. Остальные slack понижаются до PQ.
+    2. Keep the slack with the minimal ``balance_priority`` (ties → min id).
+    3. The remaining slack nodes are demoted to PQ.
 
-    Применять **сразу после загрузки**, ДО ``refine_node_types_from_generators``.
+    Apply **right after loading**, BEFORE ``refine_node_types_from_generators``.
 
     Returns:
-        Статистика шага ``{"demoted": <число узлов SLACK→PQ>}``.
+        Step statistics ``{"demoted": <number of SLACK→PQ nodes>}``.
     """
     to_demote = _slack_nodes_to_demote(model.nodes.to_numpy(), model.branches.to_numpy())
     for nid in to_demote:
@@ -337,19 +337,19 @@ def refine_slack_to_one(model: Any) -> dict[str, int]:
 
 
 def refine_node_types_from_generators(model: Any) -> dict[str, int]:
-    """Пометить узлы с активными генераторами как PV (``node_type=1``).
+    """Mark nodes with active generators as PV (``node_type=1``).
 
-    Узел, у которого все генераторы выключены, из PV возвращается в PQ —
-    иначе тип зависел бы от того, выключены машины во входе или каскадом
-    пайплайна после первого прохода.
+    A node all of whose generators are switched off returns from PV to PQ —
+    otherwise the type would depend on whether the machines are off in the input or were switched off by the
+    pipeline cascade after the first pass.
 
-    Входной формат **не классифицирует PV-узлы** — все кроме SLACK помечены PQ;
-    PV-узлом становится любой PQ-узел с активным генератором.
+    The input format does **not classify PV nodes** — all except SLACK are marked PQ;
+    any PQ node with an active generator becomes a PV node.
 
-    Применять **после** ``refine_slack_to_one``.
+    Apply **after** ``refine_slack_to_one``.
 
     Returns:
-        Статистика шага ``{"promoted": <PQ→PV>, "demoted": <PV→PQ>}``.
+        Step statistics ``{"promoted": <PQ→PV>, "demoted": <PV→PQ>}``.
     """
     nodes_arr = model.nodes.to_numpy()
     gens_arr = model.generators.to_numpy()

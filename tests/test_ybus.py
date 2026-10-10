@@ -203,7 +203,7 @@ class TestParallelBranches:
 class TestErrors:
     def test_zero_impedance_rejected(self) -> None:
         net = _toy_two_bus(r=0.0, x=0.0)
-        with pytest.raises(ValueError, match="нулевым импедансом"):
+        with pytest.raises(ValueError, match="zero impedance"):
             build_ybus(net)
 
     def test_no_branches_only_shunts(self) -> None:

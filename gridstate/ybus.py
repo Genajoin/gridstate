@@ -1,42 +1,42 @@
-"""Построение матриц проводимостей в p.u. для SE.
+"""Construction of the admittance matrices in p.u. for SE.
 
-``Ybus`` — комплексная разреженная матрица узловых проводимостей размерности
-``n_bus × n_bus``; ``Yf`` / ``Yt`` — матрицы (n_branch × n_bus), такие что
-``Ifrom = Yf · V`` и ``Ito = Yt · V`` (всё в p.u.).
+``Ybus`` is the complex sparse nodal admittance matrix of dimension
+``n_bus × n_bus``; ``Yf`` / ``Yt`` are (n_branch × n_bus) matrices such that
+``Ifrom = Yf · V`` and ``Ito = Yt · V`` (all in p.u.).
 
-Формулы каждой ветви (``from`` → ``to``) с приведением к стороне «от»:
+Formulas of each branch (``from`` → ``to``) referred to the "from" side:
 
 .. code::
 
-    Ysf = 1 / (r + j·x)                # последовательная проводимость, p.u.
-    Yc_from = (g_from + j·b_from) + (g + j·b)/2     # суммарный шунт «от»
-    Yc_to   = (g_to   + j·b_to  ) + (g + j·b)/2     # суммарный шунт «до»
-    t       = tap_ratio · exp(j·phase_shift)        # комплексный коэф.
-    Ys      = Ysf · |t|²               # см. ниже про сторону сопротивления
+    Ysf = 1 / (r + j·x)                # series admittance, p.u.
+    Yc_from = (g_from + j·b_from) + (g + j·b)/2     # total "from" shunt
+    Yc_to   = (g_to   + j·b_to  ) + (g + j·b)/2     # total "to" shunt
+    t       = tap_ratio · exp(j·phase_shift)        # complex ratio
+    Ys      = Ysf · |t|²               # see below on the impedance side
 
     Yff = (Ys + Yc_from) / (t · conj(t))  = Ysf + Yc_from / |t|²
     Yft = − Ys / conj(t)                  = − Ysf · t
     Ytf = − Ys / t                        = − Ysf · conj(t)
     Ytt = Ys + Yc_to                      = Ysf · |t|² + Yc_to
 
-Сторона сопротивления. Во входном формате ``resistance``/``reactance``
-трансформатора — Омы на стороне «от»: сопротивление включено у начала ветви,
-идеальный трансформатор — у конца. Формулы выше записаны для сопротивления,
-стоящего за идеальным трансформатором (вид ``makeYbus``), поэтому в них
-подставлена проводимость, приведённая к стороне «до» фактическим (а не
-номинальным) коэффициентом: ``Ys = Ysf·|t|²``. Приведение номинальным
-коэффициентом искажало бы эффективное сопротивление в ``1/|t|²`` раз
-(``t`` — коэффициент в p.u., см. ``units.model_to_pu``), причём ошибка
-менялась бы вместе с отпайкой РПН. У линий и трансформаторов с номинальным
-коэффициентом ``|t| = 1`` приведения нет: ``Ys = Ysf``.
+Impedance side. In the input format the ``resistance``/``reactance``
+of a transformer are Ohms on the "from" side: the impedance is placed at the start of the branch,
+the ideal transformer at its end. The formulas above are written for an impedance
+located behind the ideal transformer (the ``makeYbus`` form), so they
+use the admittance referred to the "to" side by the actual (not the
+nominal) ratio: ``Ys = Ysf·|t|²``. Referring by the nominal
+ratio would distort the effective impedance by a factor of ``1/|t|²``
+(``t`` is the ratio in p.u., see ``units.model_to_pu``), and the error
+would change together with the on-load tap changer position. For lines and transformers with the nominal
+ratio ``|t| = 1`` there is no referral: ``Ys = Ysf``.
 
-Шунт «от» делится на ``|t|²`` (его зависимость от отпайки
-учитывает пересчёт шунта при применении РПН,
+The "from" shunt is divided by ``|t|²`` (its dependence on the tap
+is accounted for by the shunt recomputation when the tap changer is applied,
 ``telemetry.rpn._apply_tap_steps_on_arrays``).
 
-Шунты узлов добавляются на диагональ ``Ybus``; параллельные ветви
-суммируются автоматически через ``coo_matrix``-сборку с одинаковыми
-индексами.
+Nodal shunts are added to the ``Ybus`` diagonal; parallel branches
+are summed automatically through the ``coo_matrix`` assembly with identical
+indices.
 """
 
 from __future__ import annotations
@@ -52,11 +52,11 @@ if TYPE_CHECKING:
 
 
 def series_admittance(network_pu: NetworkPU) -> np.ndarray:
-    """Последовательная проводимость ветвей за идеальным трансформатором, p.u.
+    """Series admittance of branches behind the ideal transformer, p.u.
 
-    ``Ys = |t|² / (r + j·x)``: сопротивление задано на стороне «от» и
-    приводится к стороне «до» фактическим коэффициентом ``|t| = tap_ratio``
-    (p.u.). У ветвей с ``|t| = 1`` — просто ``1 / (r + j·x)``.
+    ``Ys = |t|² / (r + j·x)``: the impedance is given on the "from" side and
+    is referred to the "to" side by the actual ratio ``|t| = tap_ratio``
+    (p.u.). For branches with ``|t| = 1`` it is simply ``1 / (r + j·x)``.
     """
     z = network_pu.branch_r + 1j * network_pu.branch_x
     return cast("np.ndarray", network_pu.tap_ratio**2 / z)
@@ -65,27 +65,27 @@ def series_admittance(network_pu: NetworkPU) -> np.ndarray:
 def build_ybus(
     network_pu: NetworkPU,
 ) -> tuple[csr_matrix, csr_matrix, csr_matrix]:
-    """Построить ``(Ybus, Yf, Yt)`` в p.u.
+    """Build ``(Ybus, Yf, Yt)`` in p.u.
 
     Args:
-        network_pu: p.u.-представление сети.
+        network_pu: p.u. representation of the network.
 
     Returns:
-        (Ybus, Yf, Yt) — три CSR-матрицы с complex128:
+        (Ybus, Yf, Yt) — three CSR matrices with complex128:
             - ``Ybus``: ``(n_bus × n_bus)``;
             - ``Yf``:   ``(n_branch × n_bus)``;
             - ``Yt``:   ``(n_branch × n_bus)``.
 
     Raises:
-        ValueError: если у ветви ``r = x = 0`` (сингулярность последовательной
-            проводимости — несоединённая ветвь должна быть исключена ещё в
-            ``model_to_pu`` через ``status=False``).
+        ValueError: if a branch has ``r = x = 0`` (singular series
+            admittance — a disconnected branch must be excluded already in
+            ``model_to_pu`` via ``status=False``).
     """
     n_bus = network_pu.n_bus
     n_branch = network_pu.n_branch
 
     if n_branch == 0:
-        # Только узловые шунты.
+        # Nodal shunts only.
         ysh = network_pu.bus_g_shunt + 1j * network_pu.bus_b_shunt
         ybus = csr_matrix(
             (ysh.astype(np.complex128), (np.arange(n_bus), np.arange(n_bus))),
@@ -95,13 +95,13 @@ def build_ybus(
         empty = csr_matrix((0, n_bus), dtype=np.complex128)
         return cast("csr_matrix", ybus), cast("csr_matrix", empty), cast("csr_matrix", empty)
 
-    # ---- Параметры ветвей ----
+    # ---- Branch parameters ----
     z = network_pu.branch_r + 1j * network_pu.branch_x
     if np.any(z == 0):
         bad = network_pu.branch_ids[z == 0].tolist()
         raise ValueError(
-            f"Ветви с нулевым импедансом (R=X=0) недопустимы: branch_ids={bad}. "
-            "Исключите их через status=False или замените малым R/X."
+            f"Branches with zero impedance (R=X=0) are not allowed: branch_ids={bad}. "
+            "Exclude them via status=False or replace them with a small R/X."
         )
 
     yc_from = (
@@ -116,8 +116,8 @@ def build_ybus(
     )
 
     tap = network_pu.tap_ratio * np.exp(1j * network_pu.phase_shift)
-    # Сопротивление задано на стороне «от»: приводим его за идеальный
-    # трансформатор фактическим коэффициентом, см. docstring модуля.
+    # The impedance is given on the "from" side: refer it behind the ideal
+    # transformer by the actual ratio, see the module docstring.
     ys = series_admittance(network_pu)
 
     yff = (ys + yc_from) / (tap * np.conj(tap))
@@ -129,8 +129,8 @@ def build_ybus(
     t = network_pu.to_idx
     rng = np.arange(n_branch, dtype=np.int64)
 
-    # Yf: (n_branch × n_bus). Row k имеет Yff[k] в столбце from_idx[k] и
-    # Yft[k] в столбце to_idx[k].
+    # Yf: (n_branch × n_bus). Row k has Yff[k] in column from_idx[k] and
+    # Yft[k] in column to_idx[k].
     yf = coo_matrix(
         (np.concatenate([yff, yft]), (np.concatenate([rng, rng]), np.concatenate([f, t]))),
         shape=(n_branch, n_bus),
@@ -144,13 +144,13 @@ def build_ybus(
     ).tocsr()
 
     # Ybus = Cf^T · Yf + Ct^T · Yt + diag(Y_shunt).
-    # Здесь компактнее напрямую через COO: для каждой ветви добавляем 4 элемента,
-    # параллельные ветви и встречные пары суммируются sum_duplicates'ом.
+    # Here it is more compact directly via COO: for each branch we add 4 entries,
+    # parallel branches and opposite pairs are summed by sum_duplicates.
     ybus_rows = np.concatenate([f, f, t, t])
     ybus_cols = np.concatenate([f, t, f, t])
     ybus_vals = np.concatenate([yff, yft, ytf, ytt])
 
-    # Узловые шунты — на диагональ.
+    # Nodal shunts — onto the diagonal.
     bus_idx = np.arange(n_bus, dtype=np.int64)
     bus_ysh = (network_pu.bus_g_shunt + 1j * network_pu.bus_b_shunt).astype(np.complex128)
 
