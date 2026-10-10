@@ -390,12 +390,54 @@ BRANCHES = TableSchema(
         ColumnSpec(
             "reactance", "f8", Role.WORKING, doc="X, Ohm. Mutated by normalize_breaker_reactance."
         ),
-        ColumnSpec("conductance", "f8", Role.WORKING, doc="Series G, S. Recomputed on tap change."),
-        ColumnSpec("susceptance", "f8", Role.WORKING, doc="Series B, S. Recomputed on tap change."),
-        ColumnSpec("conductance_from", "f8", Role.WORKING, doc="Shunt G at the from end, S."),
-        ColumnSpec("susceptance_from", "f8", Role.WORKING, doc="Shunt B at the from end, S."),
-        ColumnSpec("conductance_to", "f8", Role.WORKING, doc="Shunt G at the to end, S."),
-        ColumnSpec("susceptance_to", "f8", Role.WORKING, doc="Shunt B at the to end, S."),
+        ColumnSpec(
+            "conductance",
+            "f8",
+            Role.WORKING,
+            doc=(
+                "Total pi-model shunt G, S in the from-side base; half of it is added to "
+                "each end shunt. Rescaled by tap_steps.shunt_factor."
+            ),
+        ),
+        ColumnSpec(
+            "susceptance",
+            "f8",
+            Role.WORKING,
+            doc=(
+                "Total pi-model shunt B, S in the from-side base; half of it is added to "
+                "each end shunt. Rescaled by tap_steps.shunt_factor."
+            ),
+        ),
+        ColumnSpec(
+            "conductance_from",
+            "f8",
+            Role.WORKING,
+            doc=(
+                "Shunt G at the from node, S in the from-side base. On a transformer it is "
+                "connected before the ideal transformer and does not depend on the tap."
+            ),
+        ),
+        ColumnSpec(
+            "susceptance_from",
+            "f8",
+            Role.WORKING,
+            doc=(
+                "Shunt B at the from node, S in the from-side base. On a transformer it is "
+                "connected before the ideal transformer and does not depend on the tap."
+            ),
+        ),
+        ColumnSpec(
+            "conductance_to",
+            "f8",
+            Role.WORKING,
+            doc="Shunt G at the to node (behind the ideal transformer), S in the from-side base.",
+        ),
+        ColumnSpec(
+            "susceptance_to",
+            "f8",
+            Role.WORKING,
+            doc="Shunt B at the to node (behind the ideal transformer), S in the from-side base.",
+        ),
         ColumnSpec(
             "tap_ratio", "f8", Role.WORKING, doc="Transformation ratio. Mutated by apply_rpn."
         ),
@@ -597,7 +639,10 @@ TAP_STEPS = TableSchema(
             "shunt_factor",
             "f8",
             Role.INPUT,
-            doc="(tap_new/tap_old)², the branch shunt rescaling factor; 1.0 means no rescaling.",
+            doc=(
+                "Multiplier applied to the branch shunt fields; 1.0 means no rescaling. "
+                "Branch shunts do not depend on the tap in the core model."
+            ),
         ),
     ),
 )

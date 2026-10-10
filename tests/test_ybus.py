@@ -253,11 +253,12 @@ class TestYfYtConsistency:
         i_from = yf @ v
         i_to = yt @ v
 
-        # Direct calculation: impedance on the "from" side, "from" shunt / |t|².
+        # Direct calculation: impedance on the "from" side, the whole "from"
+        # shunt at the "from" node (no division by |t|²).
         ysf = 1 / (0.0 + 0.5j)
         yc_from = 0.05j  # b_from
         tap_c = 1.5 * np.exp(0.1j)
-        yff = ysf + yc_from / (tap_c * np.conj(tap_c))
+        yff = ysf + yc_from
         yft = -ysf * tap_c
         ytf = -ysf * np.conj(tap_c)
         ytt = ysf * abs(tap_c) ** 2 + 0.0  # no to-side shunt
