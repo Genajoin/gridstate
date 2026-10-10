@@ -40,3 +40,8 @@ class Step:
     # runs to materialize the solved network without an SE run (one network
     # for SE and power flow).
     network: bool = False
+    # Order invariant: names of the steps whose effect this step relies on, so
+    # they must come EARLIER in the registry (a permutation would silently
+    # change the numbers). Checked by steps.check_step_order() when the
+    # registry is built; a network step may only rely on network steps.
+    after: tuple[str, ...] = ()

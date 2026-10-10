@@ -117,7 +117,7 @@ from gridstate.pipeline.runner import (
     prepare_network,
     run,
 )
-from gridstate.pipeline.steps import STEPS
+from gridstate.pipeline.steps import STEPS, check_step_order
 
 
 __all__ = [
@@ -125,6 +125,7 @@ __all__ = [
     "DerivedInputs",
     "PipelineConfig",
     "Step",
+    "check_step_order",
     "manifest",
     "prepare_network",
     "run",
