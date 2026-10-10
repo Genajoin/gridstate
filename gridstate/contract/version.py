@@ -1,25 +1,25 @@
-"""Версия контракта данных SE (``SEInput`` / ``SEOutput``).
+"""Version of the SE data contract (``SEInput`` / ``SEOutput``).
 
-Контракт данных — публичный API gridstate: формализованный набор именованных
-таблиц с зафиксированными колонками и типами (см. :mod:`gridstate.contract.tables`).
-Его **версия** — отдельная SemVer-строка, владеемая здесь и версионируемая
-вместе с пакетом gridstate.
+The data contract is the public API of gridstate: a formalised set of named
+tables with fixed columns and types (see :mod:`gridstate.contract.tables`).
+Its **version** is a separate SemVer string, owned here and versioned
+together with the gridstate package.
 
-Политика версий (SemVer для схемы данных):
+Version policy (SemVer for the data schema):
 
-* **MAJOR** — ломающее изменение схемы: удаление/переименование обязательной
-  колонки, смена её dtype-семейства, удаление таблицы. Данные, собранные под
-  более старый major, несовместимы.
-* **MINOR** — обратносовместимое (аддитивное) изменение: новая необязательная
-  колонка или таблица. Данные более старого minor по-прежнему читаются.
-* **PATCH** — изменения, не затрагивающие схему (документация, валидаторы,
-  уточнение doc-строк колонок).
+* **MAJOR** — breaking schema change: removing/renaming a required
+  column, changing its dtype family, removing a table. Data built under an
+  older major is incompatible.
+* **MINOR** — backward-compatible (additive) change: a new optional
+  column or table. Data of an older minor is still readable.
+* **PATCH** — changes that do not affect the schema (documentation, validators,
+  clarifying column doc strings).
 
-Версия едет с данными как метаданные (``contract_version`` — см.
-:data:`CONTRACT_VERSION_KEY`); на входе gridstate валидирует совместимость
-(см. :func:`gridstate.contract.validate.validate_input`). Это превращает
-сегодняшнюю *неявную* связанность (мы молча предполагаем поля DTYPE) в
-*явный, проверяемый, версионируемый* интерфейс.
+The version travels with the data as metadata (``contract_version`` — see
+:data:`CONTRACT_VERSION_KEY`); on input gridstate validates compatibility
+(see :func:`gridstate.contract.validate.validate_input`). This turns
+today's *implicit* coupling (we silently assume the DTYPE fields) into an
+*explicit, verifiable, versioned* interface.
 """
 
 from __future__ import annotations
@@ -27,25 +27,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-# Текущая версия контракта данных SE. 2.0.0 — заморозка канонического контракта
-# после G2-чистки (удалены поля formula/source_numer/tip_ti/prv_num/
+# Current version of the SE data contract. 2.0.0 freezes the canonical contract
+# after the field clean-up (removed fields formula/source_numer/tip_ti/prv_num/
 # validity_timeout/guid_measurement, NODES.sxn_id, DerivedInputs.snapshot/
-# rpn_resolved) — ломающее изменение схемы (MAJOR-бамп). Бамп — по политике выше;
-# синхронно обновлять при изменении :mod:`gridstate.contract.tables`.
+# rpn_resolved) — a breaking schema change (MAJOR bump). Bump per the policy above;
+# update in sync whenever :mod:`gridstate.contract.tables` changes.
 CONTRACT_VERSION = "2.0.0"
 
-# Ключ, под которым версия контракта кладётся в метаданные данных
-# (``model.metadata`` / будущий ``SEInput.meta``). Валидатор читает его на входе.
+# Key under which the contract version is stored in the data metadata
+# (``model.metadata`` / future ``SEInput.meta``). The validator reads it on input.
 CONTRACT_VERSION_KEY = "contract_version"
 
 
 @dataclass(frozen=True, order=True)
 class ContractVersion:
-    """Разобранная SemVer-версия контракта (``MAJOR.MINOR.PATCH``).
+    """Parsed SemVer contract version (``MAJOR.MINOR.PATCH``).
 
-    Сравнима как кортеж ``(major, minor, patch)`` (``order=True``), поэтому
-    пригодна для прямых сравнений. Pre-release/build-метаданные не
-    поддерживаются намеренно — контракт версионируется простым SemVer.
+    Comparable as a tuple ``(major, minor, patch)`` (``order=True``), so it is
+    suitable for direct comparisons. Pre-release/build metadata is
+    deliberately unsupported — the contract uses plain SemVer.
     """
 
     major: int
@@ -54,37 +54,35 @@ class ContractVersion:
 
     @classmethod
     def parse(cls, text: str) -> ContractVersion:
-        """Разобрать строку ``"MAJOR.MINOR.PATCH"`` в :class:`ContractVersion`.
+        """Parse a ``"MAJOR.MINOR.PATCH"`` string into a :class:`ContractVersion`.
 
         Raises:
-            ValueError: если формат не ``int.int.int``.
+            ValueError: if the format is not ``int.int.int``.
         """
         parts = str(text).strip().split(".")
         if len(parts) != 3:
-            raise ValueError(
-                f"Версия контракта должна быть 'MAJOR.MINOR.PATCH', получено: {text!r}"
-            )
+            raise ValueError(f"Contract version must be 'MAJOR.MINOR.PATCH', got: {text!r}")
         try:
             major, minor, patch = (int(p) for p in parts)
         except ValueError as exc:
-            raise ValueError(f"Нечисловые компоненты версии контракта: {text!r}") from exc
+            raise ValueError(f"Non-numeric components of the contract version: {text!r}") from exc
         if major < 0 or minor < 0 or patch < 0:
-            raise ValueError(f"Отрицательные компоненты версии контракта: {text!r}")
+            raise ValueError(f"Negative components of the contract version: {text!r}")
         return cls(major, minor, patch)
 
     def __str__(self) -> str:
         return f"{self.major}.{self.minor}.{self.patch}"
 
     def is_compatible_with(self, schema: ContractVersion) -> bool:
-        """Совместимы ли данные этой версии со схемой версии ``schema``.
+        """Whether data of this version is compatible with the schema of version ``schema``.
 
-        Правило (читатель = ``schema``, данные = ``self``):
+        Rule (reader = ``schema``, data = ``self``):
 
-        * **major** должны совпадать — иначе схема изменилась несовместимо;
-        * **minor** данных не должен превышать minor схемы: данные более
-          нового minor могут нести колонки/таблицы, которых нет в более
-          старом читателе (аддитивность гарантируется только «назад»).
-        * **patch** на совместимость не влияет.
+        * **major** must match — otherwise the schema changed incompatibly;
+        * the data's **minor** must not exceed the schema's minor: data of a
+          newer minor may carry columns/tables that an older
+          reader does not have (additivity is guaranteed only "backwards").
+        * **patch** does not affect compatibility.
         """
         if self.major != schema.major:
             return False
@@ -92,7 +90,7 @@ class ContractVersion:
 
 
 def current_version() -> ContractVersion:
-    """Разобранная текущая версия контракта (:data:`CONTRACT_VERSION`)."""
+    """Parsed current contract version (:data:`CONTRACT_VERSION`)."""
     return ContractVersion.parse(CONTRACT_VERSION)
 
 
@@ -112,13 +110,13 @@ def check_compatibility(data_version: str) -> str | None:
     schema_v = current_version()
     if parsed.is_compatible_with(schema_v):
         return None
-    return f"данные версии {parsed} несовместимы с контрактом {schema_v}"
+    return f"data of version {parsed} is incompatible with contract {schema_v}"
 
 
 def is_data_compatible(data_version: str) -> bool:
-    """Совместима ли версия данных ``data_version`` с текущим контрактом.
+    """Whether the data version ``data_version`` is compatible with the current contract.
 
-    Тонкая обёртка над :func:`check_compatibility` для типичного случая
-    «проверить входные данные против встроенного контракта» (bool-результат).
+    A thin wrapper over :func:`check_compatibility` for the typical case
+    "check the input data against the built-in contract" (bool result).
     """
     return check_compatibility(data_version) is None

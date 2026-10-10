@@ -1,6 +1,6 @@
-"""Vnom узлов: применение U_NOM к ``model.nodes.voltage_nominal`` (prep-адаптер).
+"""Node Vnom: apply U_NOM to ``model.nodes.voltage_nominal`` (prep adapter).
 
-``apply_voltage_nominal_resolved`` — применяет готовую карту ``{node_id → vn}`` к узлам.
+``apply_voltage_nominal_resolved`` applies a ready ``{node_id → vn}`` map to the nodes.
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ if TYPE_CHECKING:
 
 
 def apply_voltage_nominal_resolved(model: Working, vn_by_id: dict[int, float]) -> dict[str, int]:
-    """Заполнить ``voltage_nominal=0`` узлов из готовой карты ``vn_by_id``.
+    """Fill nodes with ``voltage_nominal=0`` from the ready ``vn_by_id`` map.
 
-    Контрактное применение: пишет ``voltage_nominal`` только там, где он 0
-    (``already_set`` иначе). ``vn_by_id`` — готовая карта ``{node_id → vn}``.
+    Contract application: writes ``voltage_nominal`` only where it is 0
+    (counted as ``already_set`` otherwise). ``vn_by_id`` is a ready ``{node_id → vn}`` map.
     """
     arr = model.nodes.to_numpy().copy()
     applied = 0

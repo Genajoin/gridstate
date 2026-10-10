@@ -169,7 +169,7 @@ def test_load_npz_raises_on_incompatible_version(tmp_path):
     msg = str(exc.value)
     # Сообщение несёт обе версии и подсказку перегенерировать.
     assert incompatible in msg
-    assert "перегенерируйте" in msg.lower()
+    assert "regenerate" in msg.lower()
 
 
 def test_load_npz_accepts_current_version(tmp_path):

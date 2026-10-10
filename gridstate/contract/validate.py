@@ -1,13 +1,13 @@
-"""Валидация входа против контракта :mod:`gridstate.contract.tables`.
+"""Validation of the input against the :mod:`gridstate.contract.tables` contract.
 
-Проверяет, что источник данных несёт **обязательные** колонки входного слоя
-(роли KEY/INPUT/WORKING) и что его версия контракта совместима со встроенной.
-Это превращает молчаливое предположение «в таблицах есть нужные поля» в явную,
-раннюю и понятную диагностику.
+Checks that the data source carries the **required** columns of the input layer
+(roles KEY/INPUT/WORKING) and that its contract version is compatible with the built-in one.
+This turns the silent assumption "the tables have the necessary fields" into an explicit,
+early and clear diagnostic.
 
-Функция работает и на объекте-модели ``Working`` (через
-``.<table>.to_numpy().dtype``), и на простом ``Mapping[str, np.ndarray]``, чтобы
-внешний адаптер мог её звать на готовых массивах.
+The function works both on a ``Working`` model object (via
+``.<table>.to_numpy().dtype``) and on a plain ``Mapping[str, np.ndarray]``, so that an
+external adapter can call it on ready arrays.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from gridstate.contract.version import CONTRACT_VERSION_KEY, check_compatibility
 
 @dataclass(frozen=True)
 class ValidationIssue:
-    """Одна проблема валидации входа."""
+    """A single input validation problem."""
 
     table: str
     kind: str  # "missing_column" | "missing_table" | "version_incompatible"
@@ -32,7 +32,7 @@ class ValidationIssue:
 
 @dataclass
 class ValidationReport:
-    """Итог валидации: ``ok`` + список проблем."""
+    """Validation outcome: ``ok`` + the list of problems."""
 
     ok: bool = True
     issues: list[ValidationIssue] = field(default_factory=list)
@@ -42,25 +42,25 @@ class ValidationReport:
         self.ok = False
 
     def raise_if_invalid(self) -> None:
-        """Бросить :class:`ContractValidationError`, если есть проблемы."""
+        """Raise :class:`ContractValidationError` if there are problems."""
         if not self.ok:
             raise ContractValidationError(self)
 
 
 class ContractValidationError(ValueError):
-    """Несоответствие входа контракту (см. ``report.issues``)."""
+    """The input does not conform to the contract (see ``report.issues``)."""
 
     def __init__(self, report: ValidationReport) -> None:
         self.report = report
         lines = [f"[{i.table}.{i.column or '*'}] {i.kind}: {i.detail}" for i in report.issues]
-        super().__init__("Вход не соответствует контракту SE:\n" + "\n".join(lines))
+        super().__init__("Input does not conform to the SE contract:\n" + "\n".join(lines))
 
 
 def _available_columns(source: Any, table_name: str) -> set[str] | None:
-    """Имена колонок таблицы ``table_name`` в источнике (или ``None``, если нет).
+    """Column names of table ``table_name`` in the source (or ``None`` if absent).
 
-    Поддерживает ``Working`` (атрибут-коллекция с ``.to_numpy()``) и
-    ``Mapping[str, np.ndarray]`` (structured array по ключу).
+    Supports ``Working`` (a collection attribute with ``.to_numpy()``) and
+    ``Mapping[str, np.ndarray]`` (a structured array by key).
     """
     if isinstance(source, Mapping):
         arr = source.get(table_name)
@@ -76,7 +76,7 @@ def _available_columns(source: Any, table_name: str) -> set[str] | None:
 
 
 def _data_version(source: Any, explicit: str | None) -> str | None:
-    """Версия контракта данных: явная > ``metadata[contract_version]`` > None."""
+    """Data contract version: explicit > ``metadata[contract_version]`` > None."""
     if explicit is not None:
         return explicit
     if isinstance(source, Mapping):
@@ -96,25 +96,25 @@ def validate_input(
     data_version: str | None = None,
     strict: bool = False,
 ) -> ValidationReport:
-    """Проверить источник входных данных против входного контракта.
+    """Check the input data source against the input contract.
 
     Args:
-        source: ``Working`` или ``Mapping[str, np.ndarray]`` с таблицами
-            (плюс опц. ``"metadata"`` и сырые таблицы по ключам).
-        schema: контракт (по умолчанию :data:`gridstate.contract.tables.SE_INPUT`).
-        data_version: версия контракта данных. Если ``None`` — берётся из
-            ``metadata[contract_version]``; если и там нет — проверка версии
-            пропускается (данные «без версии» считаются совместимыми).
-        strict: при ``True`` бросить :class:`ContractValidationError` на проблемах.
+        source: ``Working`` or ``Mapping[str, np.ndarray]`` with the tables
+            (plus optional ``"metadata"`` and raw tables by key).
+        schema: the contract (default :data:`gridstate.contract.tables.SE_INPUT`).
+        data_version: data contract version. If ``None`` — taken from
+            ``metadata[contract_version]``; if absent there too, the version check
+            is skipped (data "without a version" is considered compatible).
+        strict: if ``True``, raise :class:`ContractValidationError` on problems.
 
     Returns:
         :class:`ValidationReport`.
     """
     report = ValidationReport()
 
-    # --- версия контракта ---
-    # Единая проверка совместимости — check_compatibility (contract.version):
-    # возвращает причину-строку либо None; парс-ошибка транслируется в issue.
+    # --- contract version ---
+    # A single compatibility check — check_compatibility (contract.version):
+    # returns a reason string or None; a parse error is translated into an issue.
     dv = _data_version(source, data_version)
     if dv is not None:
         try:
@@ -124,11 +124,13 @@ def validate_input(
         if reason is not None:
             report.add(ValidationIssue("<meta>", "version_incompatible", reason))
 
-    # --- обязательные колонки основных таблиц ---
+    # --- required columns of the main tables ---
     for table in schema.tables():
         available = _available_columns(source, table.name)
         if available is None:
-            report.add(ValidationIssue(table.name, "missing_table", "таблица отсутствует во входе"))
+            report.add(
+                ValidationIssue(table.name, "missing_table", "table is missing from the input")
+            )
             continue
         for col in table.required_names(Role.KEY, Role.INPUT, Role.WORKING):
             if col not in available:
@@ -136,7 +138,7 @@ def validate_input(
                     ValidationIssue(
                         table.name,
                         "missing_column",
-                        "обязательная входная колонка отсутствует",
+                        "required input column is missing",
                         col,
                     )
                 )

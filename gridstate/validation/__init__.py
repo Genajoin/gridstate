@@ -1,3 +1,3 @@
-"""Валидация результатов SE: наблюдаемость, χ²-тест, обнаружение плохих
-данных.
+"""Validation of SE results: observability, χ² test, bad data
+detection.
 """

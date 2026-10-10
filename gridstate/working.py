@@ -1,36 +1,36 @@
-"""gridstate-native ``Working``-контейнер рабочего слоя SE.
+"""gridstate-native ``Working`` container of the SE working layer.
 
-Назначение
+Purpose
 ==========
 
-``Working`` — **самостоятельный numpy-backed контейнер** рабочей модели сети
-поверх контрактных структурированных массивов. Он воспроизводит ровно ту
-поверхность model-API, которую читает/пишет препроцессинг + солвер + сборка
-``SEResult`` — и НИЧЕГО сверх неё. Рантайм-пути контейнера зависят только от
-numpy: никаких внешних библиотек.
+``Working`` is a **self-contained numpy-backed container** of the working network model
+on top of the contract structured arrays. It reproduces exactly the
+model-API surface that preprocessing + the solver + the ``SEResult`` assembly read/write
+— and NOTHING beyond it. The runtime paths of the container depend only on
+numpy: no external libraries.
 
-Поверхность
+Surface
 -----------
 
-Контейнер держит 4 основные коллекции (``nodes`` / ``branches`` /
-``measurements`` / ``generators``) и 3 доменные input-таблицы (``tap_steps`` /
-``load_characteristics`` / ``shunts``) — ровно то, что читает и пишет
-препроцессинг и солвер.
+The container holds 4 main collections (``nodes`` / ``branches`` /
+``measurements`` / ``generators``) and 3 domain input tables (``tap_steps`` /
+``load_characteristics`` / ``shunts``) — exactly what preprocessing and the solver
+read and write.
 
-Каждая коллекция (:class:`_ArrayCollection`) — тонкая обёртка над одним numpy
-structured-массивом (его dtype фиксируется при инициализации — он же контрактный
-dtype соответствующей таблицы) плюс индекс ``id → row``. Объектная итерация и
-``get_by_id`` отдают :class:`_RowProxy` — лёгкий вид на ОДНУ строку backing-
-массива, который читает/пишет колонки напрямую (атрибут == имя колонки).
+Each collection (:class:`_ArrayCollection`) is a thin wrapper over a single numpy
+structured array (its dtype is fixed at initialization — it is also the contract
+dtype of the corresponding table) plus an ``id → row`` index. Object iteration and
+``get_by_id`` return a :class:`_RowProxy` — a light view onto ONE row of the backing
+array that reads/writes the columns directly (attribute == column name).
 
-Семантика ``weight``
+``weight`` semantics
 --------------------
 
-Единственная «производная» колонка — ``weight`` measurements (``1/variance``):
-при ``add`` она материализуется из ``variance`` (см. ``weight_from_variance``).
-ВНИМАНИЕ: если препроцессинг позже меняет ``variance`` через ``update``, колонка
-``weight`` НЕ пересчитывается автоматически — солвер читает ``variance`` (не
-``weight``), см. контракт ``MEASUREMENTS.weight``.
+The only "derived" column is the measurements ``weight`` (``1/variance``):
+on ``add`` it is materialized from ``variance`` (see ``weight_from_variance``).
+NOTE: if preprocessing later changes ``variance`` via ``update``, the ``weight``
+column is NOT recomputed automatically — the solver reads ``variance`` (not
+``weight``), see the contract ``MEASUREMENTS.weight``.
 """
 
 from __future__ import annotations
@@ -42,37 +42,37 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Row-proxy: лёгкий вид на одну строку backing-массива коллекции.
+# Row proxy: a light view onto one row of the collection's backing array.
 # ---------------------------------------------------------------------------
 
 
 class _RowProxy:
-    """Прокси на ОДНУ строку numpy structured-массива коллекции.
+    """Proxy onto ONE row of the numpy structured array of a collection.
 
-    Доступ к колонкам — через атрибуты (имя атрибута == имя колонки контракта):
+    Columns are accessed via attributes (attribute name == contract column name):
 
-    * чтение ``proxy.name`` → python-скаляр из ``arr[idx][name]`` (numpy-скаляр
-      приводится к python-типу: ``int`` для целочисленных, ``bool`` для
-      булевых, ``float`` для вещественных, ``str`` для строковых);
-    * запись ``proxy.name = v`` → пишет в ``arr[idx][name]`` (numpy сам приводит
-      к dtype колонки), мутируя backing-массив на месте.
+    * reading ``proxy.name`` → a python scalar from ``arr[idx][name]`` (the numpy scalar
+      is cast to the python type: ``int`` for integers, ``bool`` for
+      booleans, ``float`` for reals, ``str`` for strings);
+    * writing ``proxy.name = v`` → writes into ``arr[idx][name]`` (numpy itself casts
+      to the column dtype), mutating the backing array in place.
 
-    Прокси НЕ копирует строку: он указывает на ``(arr, idx)``, поэтому записи
-    видны в ``to_numpy()`` и переживают потерю ссылки на сам прокси — ровно как
-    мутация живого объекта, полученного через ``get_by_id``/итерацию.
+    The proxy does NOT copy the row: it points to ``(arr, idx)``, so writes
+    are visible in ``to_numpy()`` and survive losing the reference to the proxy itself — exactly like
+    mutating a live object obtained via ``get_by_id``/iteration.
     """
 
     __slots__ = ("_arr", "_idx")
 
     def __init__(self, arr: np.ndarray, idx: int) -> None:
-        # Через object.__setattr__ — иначе наш __setattr__ перехватит и полезет
-        # в backing-массив за несуществующей колонкой "_arr".
+        # Via object.__setattr__ — otherwise our __setattr__ would intercept and reach
+        # into the backing array for the nonexistent column "_arr".
         object.__setattr__(self, "_arr", arr)
         object.__setattr__(self, "_idx", idx)
 
     def __getattr__(self, name: str) -> Any:
-        # __getattr__ вызывается только если обычный поиск (включая __slots__)
-        # не нашёл атрибут — значит name трактуем как имя колонки.
+        # __getattr__ is called only if the ordinary lookup (including __slots__)
+        # did not find the attribute — so name is treated as a column name.
         arr = object.__getattribute__(self, "_arr")
         idx = object.__getattribute__(self, "_idx")
         try:
@@ -89,7 +89,7 @@ class _RowProxy:
         idx = object.__getattribute__(self, "_idx")
         if name not in (arr.dtype.names or ()):
             raise AttributeError(name)
-        # numpy приводит value к dtype колонки при присваивании в поле строки.
+        # numpy casts value to the column dtype when assigning into a row field.
         arr[idx][name] = value
 
     def __repr__(self) -> str:
@@ -100,11 +100,11 @@ class _RowProxy:
 
 
 def _scalar_to_python(value: Any) -> Any:
-    """numpy-скаляр одной ячейки → нативный python-тип.
+    """numpy scalar of a single cell → native python type.
 
-    Цель — чтобы ``proxy.attr`` имел нативный python-тип
-    (``int``/``float``/``bool``/``str``), а не оставался ``np.int32`` и т.п. Это
-    делает сравнения и ``int(...)``/``float(...)`` в потребителях идентичными.
+    The goal is for ``proxy.attr`` to have a native python type
+    (``int``/``float``/``bool``/``str``) rather than stay ``np.int32`` etc. This
+    makes comparisons and ``int(...)``/``float(...)`` in consumers identical.
     """
     if isinstance(value, np.bool_):
         return bool(value)
@@ -114,18 +114,18 @@ def _scalar_to_python(value: Any) -> Any:
         return float(value)
     if isinstance(value, np.str_):
         return str(value)
-    # numpy строковые поля (U*) уже выдают python str через индексацию строки;
-    # на всякий случай нормализуем bytes/прочее.
+    # numpy string fields (U*) already yield python str via row indexing;
+    # normalize bytes/other just in case.
     if isinstance(value, bytes):
         return value.decode("utf-8", "replace")
     return value
 
 
-# Дефолты конструктора measurement, отличные от нуля dtype (zero-fill даёт 0 /
-# False / "" — этого достаточно для всех ОСТАЛЬНЫХ полей). Контракт владеет
-# дефолтами: variance=0.01, границы достоверности ∓9999, status=True по
-# умолчанию, branch_side=-1 (N/A). ``weight`` считается отдельно как 1/variance,
-# если не задан явно — см. ``weight_from_variance`` ниже.
+# Measurement constructor defaults that differ from the dtype zero (zero-fill gives 0 /
+# False / "" — which is enough for all the OTHER fields). The contract owns the
+# defaults: variance=0.01, plausibility bounds ∓9999, status=True by
+# default, branch_side=-1 (N/A). ``weight`` is computed separately as 1/variance
+# if not set explicitly — see ``weight_from_variance`` below.
 _MEASUREMENT_ADD_DEFAULTS: dict[str, Any] = {
     "variance": 0.01,
     "min_value": -9999.0,
@@ -136,20 +136,20 @@ _MEASUREMENT_ADD_DEFAULTS: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
-# Коллекция: обёртка над одним structured-массивом + индекс id→row.
+# Collection: a wrapper over a single structured array + an id→row index.
 # ---------------------------------------------------------------------------
 
 
 class _ArrayCollection:
-    """numpy-backed коллекция объектов одной таблицы контракта.
+    """numpy-backed collection of the objects of one contract table.
 
-    Предоставляет компактное объектное API, которое использует working-слой SE:
+    Provides the compact object API used by the SE working layer:
     ``to_numpy`` / ``update_from_array`` / ``update`` / ``get_by_id`` / ``add`` /
     ``__iter__`` / ``__len__`` / ``ids`` / ``get_ids``.
 
-    Backing — единственный structured-массив ``self._arr``; его dtype фиксируется
-    при инициализации (из переданного массива) и проверяется при
-    ``update_from_array``/``add``. Порядок строк == порядок объектов.
+    The backing store is a single structured array ``self._arr``; its dtype is fixed
+    at initialization (from the passed array) and checked on
+    ``update_from_array``/``add``. Row order == object order.
     """
 
     def __init__(
@@ -161,13 +161,13 @@ class _ArrayCollection:
     ) -> None:
         self._dtype: np.dtype = array.dtype
         self._arr: np.ndarray = array.copy()
-        # Дефолты для неуказанных колонок в ``add`` (см. _MEASUREMENT_ADD_DEFAULTS)
-        # + computed-default ``weight=1/variance`` для measurements.
+        # Defaults for unspecified columns in ``add`` (see _MEASUREMENT_ADD_DEFAULTS)
+        # + the computed default ``weight=1/variance`` for measurements.
         self._add_defaults: dict[str, Any] = dict(add_defaults) if add_defaults else {}
         self._weight_from_variance: bool = weight_from_variance
         self._rebuild_index()
 
-    # --- внутреннее ---
+    # --- internals ---
 
     def _rebuild_index(self) -> None:
         # The id index is built lazily on first lookup: bulk rewrites
@@ -184,10 +184,10 @@ class _ArrayCollection:
             self._index = index
         return index
 
-    # --- чтение ---
+    # --- reading ---
 
     def to_numpy(self, *, copy: bool = True) -> np.ndarray:
-        """Backing-массив коллекции.
+        """Backing array of the collection.
 
         By default a fresh copy (every call returns a new array the caller
         may mutate freely). ``copy=False`` returns a read-only view of the
@@ -203,32 +203,32 @@ class _ArrayCollection:
         return view
 
     def get_by_id(self, object_id: int) -> _RowProxy | None:
-        """Прокси на строку по ``id`` (или ``None``, если нет такого id)."""
+        """Proxy onto the row by ``id`` (or ``None`` if there is no such id)."""
         idx = self._id_index.get(int(object_id))
         if idx is None:
             return None
         return _RowProxy(self._arr, idx)
 
     def get_ids(self) -> list[int]:
-        """Список ``id`` в порядке строк."""
+        """List of ``id``s in row order."""
         return [int(self._arr[i]["id"]) for i in range(len(self._arr))]
 
     @property
     def ids(self) -> list[int]:
-        """Список ``id`` в порядке строк."""
+        """List of ``id``s in row order."""
         return self.get_ids()
 
     @property
     def dtype(self) -> np.dtype:
         return self._dtype
 
-    # --- запись ---
+    # --- writing ---
 
     def update_from_array(self, array: np.ndarray, *, copy: bool = True) -> None:
-        """Полный rebuild коллекции из массива (dtype-strict, порядок сохранён).
+        """Full rebuild of the collection from an array (dtype-strict, order preserved).
 
-        Массив И ЕСТЬ данные коллекции — копируем его и пересобираем индекс.
-        ``update_from_array`` использует строгую dtype-проверку.
+        The array IS the collection's data — we copy it and rebuild the index.
+        ``update_from_array`` uses a strict dtype check.
 
         ``copy=False`` takes ownership of a writeable ``array`` instead of
         copying it: the caller hands over a private array (typically a fresh
@@ -241,14 +241,14 @@ class _ArrayCollection:
         self._rebuild_index()
 
     def update(self, object_id: int, data: dict | None = None, /, **kwargs: Any) -> None:
-        """Точечно обновить поля строки по ``id``.
+        """Update the fields of a row by ``id`` point-wise.
 
-        Совместимо с обоими вызовами в коде:
+        Compatible with both calls in the code:
 
-        * dict-стиль ``coll.update(id, {"status": False})`` (позиционный dict);
-        * kwargs-стиль ``coll.update(id, status=False)``.
+        * dict style ``coll.update(id, {"status": False})`` (a positional dict);
+        * kwargs style ``coll.update(id, status=False)``.
 
-        Неизвестные ключи (нет такой колонки) тихо игнорируются.
+        Unknown keys (no such column) are silently ignored.
         """
         oid = int(object_id)
         if oid not in self._id_index:
@@ -263,14 +263,14 @@ class _ArrayCollection:
                 self._arr[idx][key] = value
 
     def add(self, row_data: dict) -> int:
-        """Добавить строку в КОНЕЦ; вернуть её ``id`` (порядок добавления сохранён).
+        """Add a row to the END; return its ``id`` (insertion order is preserved).
 
-        ``id`` обязателен и уникален (``ValueError`` при дубле).
-        Неуказанные колонки заполняются дефолтами конструктора объекта:
-        ненулевые — из ``self._add_defaults`` (см. ``_MEASUREMENT_ADD_DEFAULTS``),
-        остальные — нулём dtype (ноль/False/""). ``weight``, если не задан явно
-        и ``weight_from_variance=True``, считается как 1/variance.
-        ``row_data`` может содержать ключи вне dtype — они игнорируются.
+        ``id`` is mandatory and unique (``ValueError`` on a duplicate).
+        Unspecified columns are filled with the object constructor's defaults:
+        non-zero ones from ``self._add_defaults`` (see ``_MEASUREMENT_ADD_DEFAULTS``),
+        the rest with the dtype zero (zero/False/""). ``weight``, if not set explicitly
+        and ``weight_from_variance=True``, is computed as 1/variance.
+        ``row_data`` may contain keys outside the dtype — they are ignored.
         """
         if "id" not in row_data:
             raise ValueError("id is required")
@@ -280,14 +280,14 @@ class _ArrayCollection:
 
         names = self._arr.dtype.names or ()
         new_row = np.zeros(1, dtype=self._dtype)
-        # 1) ненулевые дефолты конструктора, 2) переданные значения (перекрывают).
+        # 1) non-zero constructor defaults, 2) passed values (override them).
         for key, value in self._add_defaults.items():
             if key in names:
                 new_row[0][key] = value
         for key, value in row_data.items():
             if key in names:
                 new_row[0][key] = value
-        # weight = 1/variance, если вес не задан явно.
+        # weight = 1/variance if the weight is not set explicitly.
         if self._weight_from_variance and "weight" in names and "weight" not in row_data:
             var = float(new_row[0]["variance"])
             new_row[0]["weight"] = (1.0 / var) if var > 0 else 1.0
@@ -298,16 +298,16 @@ class _ArrayCollection:
         return new_id
 
     def add_many(self, rows: list[dict]) -> list[int]:
-        """Пакетно добавить строки в КОНЕЦ за ОДНУ конкатенацию массива.
+        """Add rows in bulk to the END with ONE array concatenation.
 
-        Семантика каждой строки идентична :meth:`add` (обязательный уникальный
-        ``id``, дефолты конструктора, ``weight`` = 1/variance, лишние ключи
-        игнорируются). Отличие — ``self._arr`` растёт один раз на весь пакет.
+        The semantics of each row are identical to :meth:`add` (mandatory unique
+        ``id``, constructor defaults, ``weight`` = 1/variance, extra keys
+        ignored). The difference — ``self._arr`` grows once for the whole batch.
 
-        ``add`` делает ``np.append`` (копию всего массива) на КАЖДЫЙ вызов: при
-        вставке ``k`` строк в массив длины ``n`` это O(k·n) — узкое место
-        псевдо-измерений на крупных моделях (десятки секунд → сотни). ``add_many``
-        вставляет за O(n+k).
+        ``add`` does ``np.append`` (a copy of the whole array) on EVERY call: inserting
+        ``k`` rows into an array of length ``n`` is O(k·n) — the bottleneck of
+        pseudo-measurements on large models (tens of seconds → hundreds). ``add_many``
+        inserts in O(n+k).
         """
         if not rows:
             return []
@@ -323,14 +323,14 @@ class _ArrayCollection:
             if new_id in self._id_index or new_id in seen:
                 raise ValueError(f"object with id={new_id} already exists")
             seen.add(new_id)
-            # 1) ненулевые дефолты конструктора, 2) переданные значения (перекрывают).
+            # 1) non-zero constructor defaults, 2) passed values (override them).
             for key, value in self._add_defaults.items():
                 if key in names:
                     block[i][key] = value
             for key, value in row_data.items():
                 if key in names:
                     block[i][key] = value
-            # weight = 1/variance, если вес не задан явно.
+            # weight = 1/variance if the weight is not set explicitly.
             if self._weight_from_variance and "weight" in names and "weight" not in row_data:
                 var = float(block[i]["variance"])
                 block[i]["weight"] = (1.0 / var) if var > 0 else 1.0
@@ -343,9 +343,9 @@ class _ArrayCollection:
         return new_ids
 
     def copy(self) -> _ArrayCollection:
-        """Независимая копия коллекции: массив копируется (в конструкторе),
-        конфиг (``add_defaults`` / ``weight_from_variance``) сохраняется.
-        Мутации копии (``add`` / ``update_from_array``) не доходят до исходной.
+        """Independent copy of the collection: the array is copied (in the constructor),
+        the config (``add_defaults`` / ``weight_from_variance``) is preserved.
+        Mutations of the copy (``add`` / ``update_from_array``) do not reach the original.
         """
         return _ArrayCollection(
             self._arr,
@@ -353,7 +353,7 @@ class _ArrayCollection:
             weight_from_variance=self._weight_from_variance,
         )
 
-    # --- протокол коллекции ---
+    # --- collection protocol ---
 
     def __iter__(self) -> Iterator[_RowProxy]:
         for i in range(len(self._arr)):
@@ -363,7 +363,7 @@ class _ArrayCollection:
         return len(self._arr)
 
     def __getitem__(self, index: int) -> _RowProxy:
-        # Поддержка позиционного доступа по индексу.
+        # Support for positional access by index.
         if index < 0:
             index += len(self._arr)
         if not 0 <= index < len(self._arr):
@@ -414,16 +414,16 @@ def table_replace(collection: Any, array: np.ndarray) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Working: рабочий слой SE = 4 основные коллекции + 3 доменные
-# input-таблицы (tap_steps / load_characteristics / shunts).
+# Working: the SE working layer = 4 main collections + 3 domain
+# input tables (tap_steps / load_characteristics / shunts).
 # ---------------------------------------------------------------------------
 
 
 def _empty_domain(name: str) -> _ArrayCollection:
-    """Пустая коллекция доменной input-таблицы с её контрактным dtype.
+    """Empty collection of a domain input table with its contract dtype.
 
-    ``name`` ∈ {tap_steps, load_characteristics, shunts}. Lazy-импорт контракта
-    (как в :meth:`Working.empty`) — избегаем циклической зависимости при загрузке.
+    ``name`` ∈ {tap_steps, load_characteristics, shunts}. Lazy import of the contract
+    (as in :meth:`Working.empty`) — avoids a circular dependency on load.
     """
     from gridstate.contract import SE_INPUT
 
@@ -432,11 +432,11 @@ def _empty_domain(name: str) -> _ArrayCollection:
 
 
 class Working:
-    """numpy-backed рабочий слой SE.
+    """numpy-backed SE working layer.
 
-    Держит 4 основные коллекции (:class:`_ArrayCollection`) и 3 доменные
-    input-таблицы (``tap_steps`` / ``load_characteristics`` / ``shunts``) —
-    поверхность, которую читает и пишет препроцессинг и солвер.
+    Holds 4 main collections (:class:`_ArrayCollection`) and 3 domain
+    input tables (``tap_steps`` / ``load_characteristics`` / ``shunts``) —
+    the surface that preprocessing and the solver read and write.
     """
 
     def __init__(
@@ -454,8 +454,8 @@ class Working:
         self.branches = branches
         self.measurements = measurements
         self.generators = generators
-        # Доменные input-only таблицы (формат-агностичные числовые входы).
-        # Дефолт — пустая коллекция контрактного dtype.
+        # Domain input-only tables (format-agnostic numeric inputs).
+        # The default is an empty collection of the contract dtype.
         self.tap_steps = tap_steps if tap_steps is not None else _empty_domain("tap_steps")
         self.load_characteristics = (
             load_characteristics
@@ -465,14 +465,14 @@ class Working:
         self.shunts = shunts if shunts is not None else _empty_domain("shunts")
 
     def copy(self) -> Working:
-        """Глубокая независимая копия рабочего слоя.
+        """Deep independent copy of the working layer.
 
-        Каждая из 4 основных коллекций и 3 доменных таблиц копируется (массивы
-        независимы, конфиг сохранён). Гарантирует Input read-only: когда в
-        ``run()`` подан уже готовый ``Working``
-        (например, npz-вход), пайплайн работает на копии — добавленные
-        псевдо-измерения и правки V/δ НЕ доходят до переданного объекта (иначе
-        повторный ``run_se`` на том же входе падал с дублем id).
+        Each of the 4 main collections and 3 domain tables is copied (the arrays
+        are independent, the config is preserved). Guarantees that Input is read-only: when
+        ``run()`` is given an already-built ``Working``
+        (e.g. an npz input), the pipeline works on a copy — added
+        pseudo-measurements and V/δ edits do NOT reach the passed object (otherwise
+        a repeated ``run_se`` on the same input failed with a duplicate id).
         """
         return Working(
             nodes=self.nodes.copy(),
@@ -486,17 +486,17 @@ class Working:
 
     @classmethod
     def from_model(cls, model: Any) -> Working:
-        """Построить ``Working`` из любого объекта-модели с коллекциями (рабочий слой ``run()``).
+        """Build a ``Working`` from any model object with collections (the ``run()`` working layer).
 
-        Каждая коллекция сидируется из ``model.X.to_numpy().copy()`` (исходник
-        отдаёт свежий массив, ``_ArrayCollection`` копирует его ещё раз —
-        независимость от Input гарантирована). Никакие иные model-level атрибуты
-        не пробрасываются: working-слой их не читает.
+        Each collection is seeded from ``model.X.to_numpy().copy()`` (the source
+        returns a fresh array, ``_ArrayCollection`` copies it once more —
+        independence from Input is guaranteed). No other model-level attributes
+        are forwarded: the working layer does not read them.
         """
 
         def _domain(name: str) -> _ArrayCollection:
-            # Доменные input-таблицы есть не у всякого источника. Отсутствие →
-            # пустая коллекция.
+            # Domain input tables are not present in every source. Absence →
+            # an empty collection.
             coll = getattr(model, name, None)
             if coll is None or not hasattr(coll, "to_numpy"):
                 return _empty_domain(name)
@@ -529,13 +529,13 @@ class Working:
         load_characteristics: np.ndarray | None = None,
         shunts: np.ndarray | None = None,
     ) -> Working:
-        """Построить ``Working`` напрямую из контрактных numpy-массивов.
+        """Build a ``Working`` directly from contract numpy arrays.
 
-        Основной вход: внешний загрузчик/тест собирает структурированные массивы
-        схемы ``SE_INPUT`` (nodes/branches/measurements/generators + доменные
-        tap_steps/load_characteristics/shunts) и передаёт их сюда. Массивы
-        копируются (вход read-only). Доменные таблицы опциональны (None → пустая
-        коллекция). ``measurements`` получает те же add-дефолты, что и
+        Main entry: an external loader/test assembles the structured arrays of the
+        ``SE_INPUT`` schema (nodes/branches/measurements/generators + domain
+        tap_steps/load_characteristics/shunts) and passes them here. The arrays
+        are copied (the input is read-only). Domain tables are optional (None → empty
+        collection). ``measurements`` gets the same add defaults as
         :meth:`from_model`.
         """
 
@@ -560,13 +560,13 @@ class Working:
 
     @classmethod
     def empty(cls) -> Working:
-        """Пустой ``Working`` с контрактными dtype.
+        """Empty ``Working`` with contract dtypes.
 
-        Сидирует 4 коллекции нулевой длины с dtype = INPUT/WORKING ⊕ OUTPUT-роли
-        контракта (``gridstate.contract``) — полный набор колонок, который пайплайн
-        читает И пишет (``estimated_*`` / ``p_inj_calc`` / перетоки). Поддерживает
-        инкрементальное построение через ``.nodes.add({...})`` / ``.get_by_id`` /
-        ``.update`` — удобно для тестов и синтетики.
+        Seeds 4 zero-length collections with dtype = INPUT/WORKING ⊕ OUTPUT roles
+        of the contract (``gridstate.contract``) — the full set of columns that the pipeline
+        reads AND writes (``estimated_*`` / ``p_inj_calc`` / flows). Supports
+        incremental construction via ``.nodes.add({...})`` / ``.get_by_id`` /
+        ``.update`` — convenient for tests and synthetic data.
         """
         from gridstate.contract import SE_INPUT, SE_OUTPUT, io_dtype
 

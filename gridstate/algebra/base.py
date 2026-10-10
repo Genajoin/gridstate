@@ -1,29 +1,29 @@
-"""Базовая алгебра SE: функция измерений ``h(E)`` и якобиан ``H = ∂h/∂E``.
+"""Base SE algebra: the measurement function ``h(E)`` and the Jacobian ``H = ∂h/∂E``.
 
 Adapted from pandapower:
     pandapower/estimation/algorithm/matrix_base.py (class ``BaseAlgebra``).
 Copyright (c) 2016-2025 University of Kassel and Fraunhofer IEE, Kassel.
 Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
 
-Отличия от оригинала:
-    - убрана зависимость от PYPOWER-индексов ``BUS_TYPE``, ``idx_bus/brch``;
-    - вместо ``ExtendedPPCI`` используются ``NetworkPU``, ``MeasurementIndex``
-      и ``StateLayout``;
-    - все операции в p.u., базы — в ``gridstate/units.py``;
-    - порядок строк якобиана / вектора ``h`` соответствует порядку измерений
-      в ``MeasurementIndex`` (то есть тот же порядок, что и в ``z``).
+Differences from the original:
+    - dropped the dependence on the PYPOWER indices ``BUS_TYPE``, ``idx_bus/brch``;
+    - instead of ``ExtendedPPCI``, ``NetworkPU``, ``MeasurementIndex``
+      and ``StateLayout`` are used;
+    - all operations are in p.u., the bases are in ``gridstate/units.py``;
+    - the order of the Jacobian rows / of the ``h`` vector matches the order of the measurements
+      in ``MeasurementIndex`` (i.e. the same order as in ``z``).
 
-Основные комплексные величины (для напряжения ``V_k = V·exp(j·δ)``)::
+Main complex quantities (for the voltage ``V_k = V·exp(j·δ)``)::
 
     I_bus  = Ybus · V
-    S_bus  = V ⊙ conj(I_bus)            инъекция мощности (p.u.)
-    I_from = Yf · V                      ток в ветви со стороны «от»
-    S_from = V[from] ⊙ conj(I_from)     переток на стороне «от»
+    S_bus  = V ⊙ conj(I_bus)            power injection (p.u.)
+    I_from = Yf · V                      branch current at the "from" side
+    S_from = V[from] ⊙ conj(I_from)     flow at the "from" side
     I_to   = Yt · V
-    S_to   = V[to]   ⊙ conj(I_to)       переток на стороне «до»
+    S_to   = V[to]   ⊙ conj(I_to)       flow at the "to" side
 
-Якобиан имеет размерность ``(m × (2n−1))``: первые ``n−1`` столбцов отвечают
-за ``δ`` неслэк-узлов, остальные ``n`` — за ``V`` всех узлов.
+The Jacobian has dimension ``(m × (2n−1))``: the first ``n−1`` columns correspond
+to ``δ`` of the non-slack nodes, the remaining ``n`` to ``V`` of all nodes.
 """
 
 from __future__ import annotations
@@ -61,21 +61,21 @@ if TYPE_CHECKING:
 
 
 def _diag(values: np.ndarray) -> csr_matrix:
-    """Разреженная диагональ ``diag(values)``."""
+    """Sparse diagonal ``diag(values)``."""
     n = values.shape[0]
     idx = np.arange(n)
     return cast("csr_matrix", csr_matrix((values, (idx, idx)), shape=(n, n)))
 
 
 def _inverse_pos_map(node_pos_arr: np.ndarray) -> np.ndarray:
-    """Обратная карта ``pos → индекс в node_pos_arr`` (нет узла → ``−1``).
+    """Inverse map ``pos → index into node_pos_arr`` (no such node → ``−1``).
 
-    ``inv[node_pos_arr[k]] = k`` для всех ``k``; остальные ячейки ``−1``.
-    Дублей в ``node_pos_arr`` по построению ``StateLayout`` нет (каждый
-    активный узел добавляется один раз, см. ``preprocessing/ipm_setup.py``),
-    поэтому простое прямое присваивание корректно совпадает с прежним
-    ``np.where(node_pos_arr == target)[0][0]`` (первое = единственное).
-    Для пустой секции возвращается массив размера 1 (только ``−1``).
+    ``inv[node_pos_arr[k]] = k`` for all ``k``; the remaining cells are ``−1``.
+    There are no duplicates in ``node_pos_arr`` by construction of ``StateLayout`` (each
+    active node is added once, see ``preprocessing/ipm_setup.py``),
+    so a plain direct assignment matches the former
+    ``np.where(node_pos_arr == target)[0][0]`` exactly (first = only).
+    For an empty section an array of size 1 is returned (only ``−1``).
     """
     if node_pos_arr.size == 0:
         return np.full(1, -1, dtype=np.int64)
@@ -86,9 +86,9 @@ def _inverse_pos_map(node_pos_arr: np.ndarray) -> np.ndarray:
 
 
 class BaseAlgebra:
-    """Объект, фиксирующий топологию (Ybus/Yf/Yt + ``MeasurementIndex`` +
-    ``StateLayout``) и умеющий вычислять ``h(V, δ)`` и ``H(V, δ)`` при очередных
-    значениях состояния.
+    """An object that fixes the topology (Ybus/Yf/Yt + ``MeasurementIndex`` +
+    ``StateLayout``) and can compute ``h(V, δ)`` and ``H(V, δ)`` for successive
+    state values.
     """
 
     def __init__(
@@ -122,25 +122,25 @@ class BaseAlgebra:
         pnag_estimated: np.ndarray | None = None,
         qnag_estimated: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Прогнозы измерений ``h(E)`` — массив длины m.
+        """Measurement predictions ``h(E)`` — an array of length m.
 
-        В IPM-режиме принимает дополнительные box-vars для узлов из
-        ``layout.{pgen,qgen,pnag,qnag}_node_pos``. Используются для
-        ``KIND_NODE_BALANCE_P/Q``-измерений::
+        In IPM mode it accepts additional box-vars for the nodes from
+        ``layout.{pgen,qgen,pnag,qnag}_node_pos``. They are used for
+        ``KIND_NODE_BALANCE_P/Q`` measurements::
 
             h_balance_P[i] = Sbus[i].real - (Pgen_est[i] - Pnag_est[i])
             h_balance_Q[i] = Sbus[i].imag - (Qgen_est[i] - Qnag_est[i])
 
-        Узлы без соответствующей box-vars вкладываются как 0 в скобки —
-        это эквивалентно zero-injection для transit-узлов.
+        Nodes without a corresponding box-var enter the brackets as 0 —
+        this is equivalent to zero injection for transit nodes.
 
-        В WLS-режиме (все box-аргументы ``None``) поведение идентично
-        прежнему.
+        In WLS mode (all box arguments ``None``) the behaviour is identical to
+        the previous one.
         """
         if v.shape != (self.n_bus,) or delta.shape != (self.n_bus,):
             raise ValueError(
-                f"v, delta должны быть длины n_bus={self.n_bus}; "
-                f"получено v.shape={v.shape}, delta.shape={delta.shape}"
+                f"v, delta must have length n_bus={self.n_bus}; "
+                f"got v.shape={v.shape}, delta.shape={delta.shape}"
             )
 
         V = v * np.exp(1j * delta)
@@ -196,9 +196,9 @@ class BaseAlgebra:
         if m.any():
             h[m] = np.abs(It[op[m]])
 
-        # ----- Узловой balance P/Q (IPM-режим) -----
+        # ----- Nodal balance P/Q (IPM mode) -----
         # h_balance_P[i] = Sbus[i].real - (Pgen_est[i] - Pnag_est[i])
-        # Box-секции пусты в WLS-режиме → balance-meas нет в meas_index.
+        # Box sections are empty in WLS mode → there are no balance measurements in meas_index.
         m = (kind == KIND_NODE_BALANCE_P) & (ok == OBJ_NODE)
         if m.any():
             box_p = self._build_box_node_contrib(
@@ -220,12 +220,12 @@ class BaseAlgebra:
             )
             h[m] = Sbus[op[m]].imag - box_q
 
-        # ----- Soft-prior для box-vars (KIND_BOX_PRIOR_*) -----
-        # Применяется только в IPM-режиме (есть layout с box-секциями).
-        # h(x) = текущее значение box-var на узле; z несёт ЯКОРЬ prior'а
-        # (init-значение переменной — материализованный load/gen в p.u.;
-        # см. build_ipm_setup) → штраф на |x − z|. Раньше z был 0, и tight
-        # bus-equiv prior пиннил gross-пары эквивалентов к нулю.
+        # ----- Soft prior for box-vars (KIND_BOX_PRIOR_*) -----
+        # Applies only in IPM mode (a layout with box sections exists).
+        # h(x) = current value of the box-var at the node; z carries the prior ANCHOR
+        # (the variable's init value — the materialized load/gen in p.u.;
+        # see build_ipm_setup) → a penalty on |x − z|. Previously z was 0, and a tight
+        # bus-equiv prior pinned the gross pairs of equivalents to zero.
         if self.layout is not None and self.layout.has_box:
             for prior_kind, est_arr, node_pos_arr in (
                 (KIND_BOX_PRIOR_PGEN, pgen_estimated, self.layout.pgen_node_pos),
@@ -236,15 +236,15 @@ class BaseAlgebra:
                 m = (kind == prior_kind) & (ok == OBJ_NODE)
                 if not m.any() or est_arr is None or est_arr.size == 0:
                     continue
-                # Обратная карта pos → индекс в node_pos_arr; нет узла → −1.
+                # Inverse map pos → index into node_pos_arr; no such node → −1.
                 inv = _inverse_pos_map(node_pos_arr)
                 idx_meas = np.where(m)[0]
                 pos_meas = op[idx_meas].astype(np.int64)
-                # Защита выхода за границы inv (pos ≥ inv.size → нет в массиве).
+                # Guard against going out of the bounds of inv (pos ≥ inv.size → not in the array).
                 in_range = pos_meas < inv.size
                 j = np.full(pos_meas.shape, -1, dtype=np.int64)
                 j[in_range] = inv[pos_meas[in_range]]
-                # j < 0 → узла нет в node_pos_arr → 0.0 (как в прежнем цикле).
+                # j < 0 → the node is not in node_pos_arr → 0.0 (as in the former loop).
                 vals = np.where(j >= 0, est_arr[np.where(j >= 0, j, 0)], 0.0)
                 h[idx_meas] = vals
 
@@ -258,18 +258,18 @@ class BaseAlgebra:
         gen_node_pos: np.ndarray,
         nag_node_pos: np.ndarray,
     ) -> np.ndarray:
-        """Вычислить ``Pgen[i] − Pnag[i]`` (или Q-аналог) для узлов из ``node_pos``.
+        """Compute ``Pgen[i] − Pnag[i]`` (or the Q analogue) for the nodes from ``node_pos``.
 
-        Поскольку box-секции хранят значения только для узлов из
-        ``*_node_pos``, делаем lookup через позиционный индекс. Узлы,
-        отсутствующие в ``gen/nag_node_pos``, вкладываются как 0.
+        Since the box sections store values only for the nodes from
+        ``*_node_pos``, a lookup through the positional index is done. Nodes
+        absent from ``gen/nag_node_pos`` enter as 0.
         """
         out = np.zeros(node_pos.shape, dtype=np.float64)
         node_pos_i = node_pos.astype(np.int64)
         if gen_estimated is not None and gen_estimated.size and gen_node_pos.size:
-            # lookup[pos] = est, NaN для узлов без box-var; дубли в gen_node_pos
-            # (по построению StateLayout их нет) → последний выигрывает, как в
-            # прежнем цикле присваивания.
+            # lookup[pos] = est, NaN for nodes without a box-var; duplicates in gen_node_pos
+            # (there are none by construction of StateLayout) → the last one wins, as in
+            # the former assignment loop.
             gen_lookup = np.full(int(gen_node_pos.max()) + 1, np.nan)
             gen_lookup[gen_node_pos.astype(np.int64)] = gen_estimated.astype(np.float64)
             mask = node_pos_i < gen_lookup.size
@@ -285,17 +285,17 @@ class BaseAlgebra:
 
     # ----------------------------------------------------------- H = ∂h/∂E
     def evaluate_jacobian(self, v: np.ndarray, delta: np.ndarray) -> csr_matrix:
-        """Якобиан h по состоянию E — ``(m × (2n−1))`` sparse.
+        """Jacobian of h with respect to the state E — ``(m × (2n−1))`` sparse.
 
-        Считается на фиксированном шаблоне (:class:`JacobianPattern`, строится
-        при первом вызове); значения бит-в-бит совпадают с общим путём
-        :meth:`_evaluate_jacobian_generic`, который остаётся запасным для
-        комбинаций мер, не покрытых шаблоном.
+        Computed on a fixed pattern (:class:`JacobianPattern`, built
+        on the first call); the values coincide bit for bit with the generic path
+        :meth:`_evaluate_jacobian_generic`, which remains as a fallback for
+        combinations of measurements not covered by the pattern.
         """
         if v.shape != (self.n_bus,) or delta.shape != (self.n_bus,):
             raise ValueError(
-                f"v, delta должны быть длины n_bus={self.n_bus}; "
-                f"получено v.shape={v.shape}, delta.shape={delta.shape}"
+                f"v, delta must have length n_bus={self.n_bus}; "
+                f"got v.shape={v.shape}, delta.shape={delta.shape}"
             )
         if len(self.meas_index) == 0:
             return cast("csr_matrix", csr_matrix((0, 2 * self.n_bus - 1)))
@@ -309,7 +309,7 @@ class BaseAlgebra:
         return self._jacobian_pattern.evaluate(v, delta)
 
     def _evaluate_jacobian_generic(self, v: np.ndarray, delta: np.ndarray) -> csr_matrix:
-        """Якобиан через разреженные произведения матриц производных."""
+        """Jacobian via sparse products of the derivative matrices."""
         n = self.n_bus
         m_total = len(self.meas_index)
 
@@ -336,14 +336,14 @@ class BaseAlgebra:
         op = self.meas_index.object_pos
         side = self.meas_index.branch_side
 
-        # Каждая часть: (global_row_indices_in_z, sparse-блок (count, 2n))
+        # Each part: (global_row_indices_in_z, sparse block (count, 2n))
         parts: list[tuple[np.ndarray, csr_matrix]] = []
 
         def add(rows: np.ndarray, dVa: csr_matrix, dVm: csr_matrix) -> None:
             block = cast("csr_matrix", hstack([dVa, dVm], format="csr"))
             parts.append((rows, block))
 
-        # --- P_inj / Q_inj на узлах ---
+        # --- P_inj / Q_inj at nodes ---
         mask = (kind == KIND_POWER_INJECTION_P) & (ok == OBJ_NODE)
         if mask.any():
             rg = np.where(mask)[0]
@@ -355,9 +355,9 @@ class BaseAlgebra:
             pos = op[mask]
             add(rg, dSbus_dVa[pos, :].imag, dSbus_dVm[pos, :].imag)
 
-        # --- Узловой balance (IPM): V/δ-зависимость как у P/Q_inj ---
-        # ∂(Sbus[i] - (Pgen-Pnag))/∂V = ∂Sbus.real/∂V (та же)
-        # Box-vars столбцы добавляются ниже отдельно.
+        # --- Nodal balance (IPM): V/δ dependence as for P/Q_inj ---
+        # ∂(Sbus[i] - (Pgen-Pnag))/∂V = ∂Sbus.real/∂V (the same)
+        # The box-vars columns are added separately below.
         mask = (kind == KIND_NODE_BALANCE_P) & (ok == OBJ_NODE)
         if mask.any():
             rg = np.where(mask)[0]
@@ -369,7 +369,7 @@ class BaseAlgebra:
             pos = op[mask]
             add(rg, dSbus_dVa[pos, :].imag, dSbus_dVm[pos, :].imag)
 
-        # --- P / Q перетоков по ветвям ---
+        # --- P / Q branch flows ---
         if self.n_branch > 0:
             mask = (kind == KIND_POWER_P) & (ok == OBJ_BRANCH) & (side == SIDE_FROM)
             if mask.any():
@@ -392,7 +392,7 @@ class BaseAlgebra:
                 pos = op[mask]
                 add(rg, dSt_dVa[pos, :].imag, dSt_dVm[pos, :].imag)
 
-            # |I| ветвей
+            # |I| of branches
             mask = (kind == KIND_CURRENT) & (ok == OBJ_BRANCH) & (side == SIDE_FROM)
             if mask.any():
                 rg = np.where(mask)[0]
@@ -404,7 +404,7 @@ class BaseAlgebra:
                 pos = op[mask]
                 add(rg, dItm_dVa[pos, :], dItm_dVm[pos, :])
 
-        # --- |V| на узлах ---
+        # --- |V| at nodes ---
         mask = (kind == KIND_VOLTAGE) & (ok == OBJ_NODE)
         if mask.any():
             rg = np.where(mask)[0]
@@ -420,8 +420,8 @@ class BaseAlgebra:
             )
             add(rg, zero_va, eye_vm)
 
-        # --- Soft-prior box-vars: V/δ-зависимости нет, только box-колонки ---
-        # h = box-var, ∂h/∂V = 0, ∂h/∂δ = 0; box-блок добавится отдельно.
+        # --- Soft-prior box-vars: no V/δ dependence, only box columns ---
+        # h = box-var, ∂h/∂V = 0, ∂h/∂δ = 0; the box block is added separately.
         for prior_kind in (
             KIND_BOX_PRIOR_PGEN,
             KIND_BOX_PRIOR_QGEN,
@@ -442,27 +442,27 @@ class BaseAlgebra:
         all_rows = np.concatenate([rg for rg, _ in parts])
         H_full = cast("csr_matrix", vstack([blk for _, blk in parts], format="csr"))
 
-        # Сборка может пропустить измерения с неподдерживаемым типом — в этом
-        # случае их позиции в z останутся не заполнены и якобиан получится
-        # короче. z_vector такое не пропускает (raise в _convert_*), но
-        # подстрахуемся явной проверкой.
+        # The assembly may skip measurements of an unsupported type — in that
+        # case their positions in z stay unfilled and the Jacobian ends up
+        # shorter. z_vector does not skip such ones (raise in _convert_*), but
+        # we play safe with an explicit check.
         if all_rows.shape[0] != m_total:
             missing = sorted(set(range(m_total)) - set(all_rows.tolist()))
             raise ValueError(
-                f"Якобиан собран не для всех {m_total} измерений; "
-                f"пропущены позиции в z: {missing}. "
-                "Это означает, что в MeasurementIndex есть неизвестная "
-                "комбинация (kind, object_kind, branch_side)."
+                f"Jacobian was not assembled for all {m_total} measurements; "
+                f"positions in z are missing: {missing}. "
+                "This means MeasurementIndex contains an unknown "
+                "combination (kind, object_kind, branch_side)."
             )
 
-        # Перестановка строк, чтобы порядок совпадал с порядком в z.
+        # Row permutation so that the order matches the order in z.
         order = np.argsort(all_rows, kind="stable")
         H_full = H_full[order, :]
 
         H_E = H_full[:, keep_cols]
 
-        # IPM: добавить столбцы для box-vars (Pgen, Qgen, Pnag, Qnag).
-        # Для строк с balance-kind ставим ±1 в нужном столбце, остальные 0.
+        # IPM: add columns for box-vars (Pgen, Qgen, Pnag, Qnag).
+        # For rows with a balance kind put ±1 in the right column, the rest 0.
         if self.layout.has_box:
             n_box = self.layout.n_box
             box_block = self._build_balance_jacobian_block(m_total, n_box)
@@ -471,15 +471,15 @@ class BaseAlgebra:
         return cast("csr_matrix", H_E.tocsr())
 
     def _build_balance_jacobian_block(self, m_total: int, n_box: int) -> csr_matrix:
-        """Sparse-блок ``(m_total × n_box)`` с ±1 для balance-meas.
+        """Sparse block ``(m_total × n_box)`` with ±1 for balance measurements.
 
-        Колонки идут в порядке: ``[Pgen, Qgen, Pnag, Qnag]``.
+        Columns are in the order: ``[Pgen, Qgen, Pnag, Qnag]``.
 
-        Для ``KIND_NODE_BALANCE_P`` на узле i:
-            -1 в столбце Pgen[i] (если i ∈ pgen_node_pos)
-            +1 в столбце Pnag[i] (если i ∈ pnag_node_pos)
+        For ``KIND_NODE_BALANCE_P`` at node i:
+            -1 in column Pgen[i] (if i ∈ pgen_node_pos)
+            +1 in column Pnag[i] (if i ∈ pnag_node_pos)
 
-        Аналогично для Q-balance.
+        Likewise for Q-balance.
         """
         kind = self.meas_index.kind
         ok = self.meas_index.object_kind
@@ -493,9 +493,9 @@ class BaseAlgebra:
         off_pnag = off_qgen + int(qgen_pos.size)
         off_qnag = off_pnag + int(pnag_pos.size)
 
-        # Обратные карты pos → индекс в секции (нет узла → −1). Дублей в
-        # *_node_pos по построению StateLayout нет (см. _inverse_pos_map),
-        # поэтому совпадает с прежним np.where(...)[0][0] (первое = единств.).
+        # Inverse maps pos → index into the section (no such node → −1). There are no duplicates in
+        # *_node_pos by construction of StateLayout (see _inverse_pos_map),
+        # so it matches the former np.where(...)[0][0] (first = only).
         inv_pgen = _inverse_pos_map(pgen_pos)
         inv_qgen = _inverse_pos_map(qgen_pos)
         inv_pnag = _inverse_pos_map(pnag_pos)
@@ -506,10 +506,10 @@ class BaseAlgebra:
         data_blocks: list[np.ndarray] = []
 
         def _emit(mask: np.ndarray, inv: np.ndarray, offset: int, sign: float) -> None:
-            """Добавить ``sign`` в столбец ``offset + inv[pos]`` для мер из ``mask``.
+            """Add ``sign`` to column ``offset + inv[pos]`` for the measurements from ``mask``.
 
-            Меры без узла в секции (``inv[pos] < 0`` либо ``pos`` вне ``inv``)
-            пропускаются — как ``if j.size`` в прежних циклах.
+            Measurements without a node in the section (``inv[pos] < 0`` or ``pos`` outside ``inv``)
+            are skipped — like ``if j.size`` in the former loops.
             """
             idx_meas = np.where(mask)[0]
             if idx_meas.size == 0:
@@ -535,8 +535,8 @@ class BaseAlgebra:
         _emit(mask_bq, inv_qgen, off_qgen, -1.0)
         _emit(mask_bq, inv_qnag, off_qnag, +1.0)
 
-        # Soft-prior: ∂h/∂{box-var на узле} = +1; иначе 0.
-        # offset для каждого kind: pgen=0, qgen=|pgen|, pnag=|pgen|+|qgen|,
+        # Soft prior: ∂h/∂{box-var at the node} = +1; otherwise 0.
+        # offset for each kind: pgen=0, qgen=|pgen|, pnag=|pgen|+|qgen|,
         # qnag=|pgen|+|qgen|+|pnag|.
         for prior_kind, inv, offset in (
             (KIND_BOX_PRIOR_PGEN, inv_pgen, 0),
@@ -559,11 +559,11 @@ class BaseAlgebra:
             ),
         )
 
-    # ------------------------------------------------------- частные блоки
+    # ------------------------------------------------------- partial blocks
     def _dSbus_dV(self, V: np.ndarray) -> tuple[csr_matrix, csr_matrix]:
-        """``∂S_bus/∂V`` и ``∂S_bus/∂δ`` — обе ``(n × n)`` sparse complex.
+        """``∂S_bus/∂V`` and ``∂S_bus/∂δ`` — both ``(n × n)`` sparse complex.
 
-        Используются формулы pandapower (``matrix_base._dSbus_dv``)::
+        The pandapower formulas are used (``matrix_base._dSbus_dv``)::
 
             dS_bus/dVm = diag(V) · conj(Ybus · diag(V/|V|)) +
                          conj(diag(I_bus)) · diag(V/|V|)
@@ -580,10 +580,10 @@ class BaseAlgebra:
         return cast("csr_matrix", dSbus_dVm.tocsr()), cast("csr_matrix", dSbus_dVa.tocsr())
 
     def _dSbr_dV(self, V: np.ndarray, side: int) -> tuple[csr_matrix, csr_matrix]:
-        """``∂S_branch/∂V`` и ``∂S_branch/∂δ`` — обе ``(n_branch × n_bus)``.
+        """``∂S_branch/∂V`` and ``∂S_branch/∂δ`` — both ``(n_branch × n_bus)``.
 
-        Адаптация ``matrix_base._dSbr_dv``: для стороны «от» используется
-        ``Yf`` и индексы ``from_idx``; для «до» — ``Yt`` и ``to_idx``.
+        Adaptation of ``matrix_base._dSbr_dv``: for the "from" side ``Yf``
+        and the indices ``from_idx`` are used; for "to" — ``Yt`` and ``to_idx``.
         """
         if side == SIDE_FROM:
             Y = self.yf
@@ -623,17 +623,17 @@ class BaseAlgebra:
         return cast("csr_matrix", dS_dVm.tocsr()), cast("csr_matrix", dS_dVa.tocsr())
 
     def _dImbr_dV(self, V: np.ndarray, side: int) -> tuple[csr_matrix, csr_matrix]:
-        """``∂|I_branch|/∂V`` и ``∂|I_branch|/∂δ`` — обе ``(n_branch × n_bus)`` real.
+        """``∂|I_branch|/∂V`` and ``∂|I_branch|/∂δ`` — both ``(n_branch × n_bus)`` real.
 
-        ``matrix_base._dImbr_dV``: для нулевых токов в ветви производная
-        принимается равной 0 (сингулярность ``conj(I)/|I|``).
+        ``matrix_base._dImbr_dV``: for zero branch currents the derivative
+        is taken as 0 (singularity of ``conj(I)/|I|``).
         """
         Y = self.yf if side == SIDE_FROM else self.yt
         I_br = Y @ V
         Vnorm = V / np.abs(V)
         abs_I = np.abs(I_br)
 
-        # Регуляризация деления на ноль.
+        # Regularization of division by zero.
         norm_diag = np.where(abs_I > 0, np.conj(I_br) / np.where(abs_I > 0, abs_I, 1.0), 0.0 + 0j)
         diagInorm = _diag(norm_diag.astype(np.complex128))
 
@@ -643,7 +643,7 @@ class BaseAlgebra:
         a = diagInorm @ Y @ diagV_full
         b = diagInorm @ Y @ diagVnorm_full
 
-        # ``-Im(a)`` и ``Re(b)``; sparse_matrix.imag/real возвращают sparse.
+        # ``-Im(a)`` and ``Re(b)``; sparse_matrix.imag/real return sparse.
         dIm_dVa = cast("csr_matrix", (-a.imag).tocsr())
         dIm_dVm = cast("csr_matrix", b.real.tocsr())
         return dIm_dVm, dIm_dVa

@@ -1,16 +1,16 @@
-"""Результат оценки состояния — возвращается ``estimate()``.
+"""State estimation result — returned by ``estimate()``.
 
-Ссылка на рабочую модель (``working``-слой) хранится в ``SEResult.model``.
-При вызове через :func:`gridstate.pipeline.run` это **копия** входной модели:
-вход остаётся read-only, выход живёт в рабочей копии и в ``SEResult``. При
-прямом вызове ``estimate(model)`` модель обновляется in-place (низкоуровневый
-движок), и ``SEResult.model`` — та же ссылка.
+A reference to the working model (the ``working`` layer) is stored in ``SEResult.model``.
+When called via :func:`gridstate.pipeline.run` this is a **copy** of the input model:
+the input stays read-only, the output lives in the working copy and in ``SEResult``. On a
+direct ``estimate(model)`` call the model is updated in place (the low-level
+engine), and ``SEResult.model`` is the same reference.
 
-**Output-слой (``outputs``)** — :class:`OutputTables` со структурированными
-массивами (узлы/ветви/меры), keyed по id, параллельными Input-коллекциям. Это
-канонический Output-контракт для внешних адаптеров (UI/CLI): джойнят Input +
-``outputs`` по id для отображения. Поля ``v_pu`` / ``delta_rad`` дублируют V/δ в
-p.u./радианах — для отладки и тестов.
+**Output layer (``outputs``)** — :class:`OutputTables` with structured
+arrays (nodes/branches/measurements), keyed by id, parallel to the Input collections. This is the
+canonical Output contract for external adapters (UI/CLI): they join Input +
+``outputs`` by id for display. The fields ``v_pu`` / ``delta_rad`` duplicate V/δ in
+p.u./radians — for debugging and tests.
 
 The additional quality fields (``chi2``, ``worst_residuals``,
 ``worst_imbalance``, ``observability_warnings``) are filled by ``estimate()``
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
     from gridstate.working import Working
 
 
-# Поля выхода солвера по слоям модели — Output-контейнер ``OutputTables``
-# извлекает ровно их из рабочей модели после записи результатов.
+# Solver output fields per model layer — the ``OutputTables`` Output container
+# extracts exactly these from the working model after the results are written.
 NODE_OUTPUT_FIELDS: tuple[str, ...] = (
     "voltage_magnitude",
     "voltage_angle",
@@ -66,14 +66,14 @@ MEAS_OUTPUT_FIELDS: tuple[str, ...] = (
 
 @dataclass
 class Chi2Summary:
-    """Сводка χ²-теста на финальном решении SE.
+    """Summary of the χ² test on the final SE solution.
 
     Attributes:
-        value: ``J = Σ(r_i² / σ_i²)`` — целевая функция WLS на сходимости.
-        dof: степени свободы ``m − n`` (число измерений минус размер state).
-        threshold: критическое значение ``χ²(dof, 1 − α)``, ``α = 0.05``.
-            ``NaN`` при ``dof ≤ 0`` (тест несостоятелен).
-        passes: ``True``, если ``value ≤ threshold`` (нет признаков bad-data).
+        value: ``J = Σ(r_i² / σ_i²)`` — the WLS objective at convergence.
+        dof: degrees of freedom ``m − n`` (number of measurements minus the state size).
+        threshold: critical value ``χ²(dof, 1 − α)``, ``α = 0.05``.
+            ``NaN`` for ``dof ≤ 0`` (the test is inconclusive).
+        passes: ``True`` if ``value ≤ threshold`` (no signs of bad data).
     """
 
     value: float
@@ -84,25 +84,25 @@ class Chi2Summary:
 
 @dataclass
 class ResidualRow:
-    """Одна запись из топа худших нормированных остатков.
+    """A single entry of the top worst normalized residuals.
 
     Attributes:
-        measurement_id: ``Measurement.id`` исходного измерения.
-        kind: текстовый ярлык типа (``"V"``/``"P"``/``"Q"``/``"I"``/
+        measurement_id: ``Measurement.id`` of the source measurement.
+        kind: text label of the type (``"V"``/``"P"``/``"Q"``/``"I"``/
             ``"P_inj"``/``"Q_inj"``/``"?"``).
-        value: значение измерения ``z`` в p.u. (исходные единицы — в
-            ``measurements.value``/``estimated_si`` по ``measurement_id``).
-        expected: модельное значение ``h(x)`` в p.u.
-        residual: ``value − expected`` в p.u.
-        normalized_residual: ``|r| / √diag(Ω)`` — нормированный остаток
-            (Abur & Expósito §5.6). ``inf`` для non-redundant измерений.
-        sigma: σ измерения в p.u. (``√σ²`` из R-матрицы); ``nan`` если
-            недоступна.
-        object_kind: 0=узел / 1=ветвь / 2=генератор; ``-1`` — неизвестно.
-        object_id: ``id`` объекта измерения (узла/ветви); ``0`` если
-            неизвестен.
-        branch_side: сторона ветви (0=from, 1=to, ``-1`` — не ветвь).
-        is_pseudo: псевдо-приор (``add_pseudo``/синтез), не телеизмерение.
+        value: measurement value ``z`` in p.u. (original units are in
+            ``measurements.value``/``estimated_si`` by ``measurement_id``).
+        expected: model value ``h(x)`` in p.u.
+        residual: ``value − expected`` in p.u.
+        normalized_residual: ``|r| / √diag(Ω)`` — normalized residual
+            (Abur & Expósito §5.6). ``inf`` for non-redundant measurements.
+        sigma: measurement σ in p.u. (``√σ²`` from the R matrix); ``nan`` if
+            unavailable.
+        object_kind: 0=node / 1=branch / 2=generator; ``-1`` — unknown.
+        object_id: ``id`` of the measured object (node/branch); ``0`` if
+            unknown.
+        branch_side: branch side (0=from, 1=to, ``-1`` — not a branch).
+        is_pseudo: pseudo-prior (``add_pseudo``/synthesis), not a telemetry measurement.
     """
 
     measurement_id: int
@@ -120,12 +120,12 @@ class ResidualRow:
 
 @dataclass
 class ImbalanceRow:
-    """Одна запись из топа узловых небалансов.
+    """A single entry of the top nodal imbalances.
 
     Attributes:
-        node_id: ``Node.id`` узла.
-        imbalance_p_mw: ``p_inj_calc − (generation_p − load_p)`` в МВт.
-        imbalance_q_mvar: аналогично для реактивной мощности.
+        node_id: ``Node.id`` of the node.
+        imbalance_p_mw: ``p_inj_calc − (generation_p − load_p)`` in MW.
+        imbalance_q_mvar: likewise for reactive power.
     """
 
     node_id: int
@@ -133,9 +133,9 @@ class ImbalanceRow:
     imbalance_q_mvar: float
 
 
-# Текстовые ярлыки для ``ResidualRow.kind`` — синхронизированы с
-# ``gridstate.z_vector.KIND_*`` (повторяем здесь как литералы, чтобы не
-# тянуть импорт в result.py).
+# Text labels for ``ResidualRow.kind`` — kept in sync with
+# ``gridstate.z_vector.KIND_*`` (repeated here as literals so as not to
+# pull an import into result.py).
 _RESIDUAL_KIND_LABELS: dict[int, str] = {
     0: "P",  # KIND_POWER_P
     1: "Q",  # KIND_POWER_Q
@@ -153,10 +153,10 @@ _RESIDUAL_KIND_LABELS: dict[int, str] = {
 
 
 def _select_output_fields(arr: np.ndarray, fields: tuple[str, ...]) -> np.ndarray:
-    """Собрать структурированный массив ``id`` + ``fields`` из коллекции.
+    """Build a structured array ``id`` + ``fields`` from a collection.
 
-    Берутся только поля, реально присутствующие в ``arr.dtype`` (устойчиво к
-    разным версиям DTYPE). Если массив пуст или нет ``id`` — пустой результат.
+    Only the fields actually present in ``arr.dtype`` are taken (robust to
+    different DTYPE versions). If the array is empty or has no ``id`` — an empty result.
     """
     names = set(arr.dtype.names or ())
     if "id" not in names:
@@ -172,15 +172,15 @@ def _select_output_fields(arr: np.ndarray, fields: tuple[str, ...]) -> np.ndarra
 
 @dataclass
 class OutputTables:
-    """Output-слой SE: результаты, keyed по id, параллельные Input-коллекциям.
+    """SE Output layer: results keyed by id, parallel to the Input collections.
 
-    Канонический Output-контракт (Input read-only): внешние адаптеры (UI/CLI)
-    джойнят Input + эти таблицы по ``id`` для отображения (узлы/ветви на одной
-    странице — входные поля слева, результат справа). Извлекается из рабочей
-    модели после записи результатов солвера.
+    The canonical Output contract (Input is read-only): external adapters (UI/CLI)
+    join Input + these tables by ``id`` for display (nodes/branches on a single
+    page — input fields on the left, result on the right). Extracted from the working
+    model after the solver results are written.
 
     Attributes:
-        nodes: структурированный массив ``id`` + :data:`NODE_OUTPUT_FIELDS`
+        nodes: structured array ``id`` + :data:`NODE_OUTPUT_FIELDS`
             (voltage_magnitude/voltage_angle/p_inj_calc/q_inj_calc/imbalance_*/
             load_*_estimated/generation_*_estimated).
         branches: ``id`` + :data:`BRANCH_OUTPUT_FIELDS`
@@ -194,15 +194,15 @@ class OutputTables:
     measurements: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=[("id", "i8")]))
 
     def node(self, node_id: int) -> dict | None:
-        """Строка выхода узла как dict (или ``None``, если нет)."""
+        """Output row of a node as a dict (or ``None`` if absent)."""
         return self._row(self.nodes, node_id)
 
     def branch(self, branch_id: int) -> dict | None:
-        """Строка выхода ветви как dict (или ``None``)."""
+        """Output row of a branch as a dict (or ``None``)."""
         return self._row(self.branches, branch_id)
 
     def measurement(self, meas_id: int) -> dict | None:
-        """Строка выхода измерения как dict (или ``None``)."""
+        """Output row of a measurement as a dict (or ``None``)."""
         return self._row(self.measurements, meas_id)
 
     @staticmethod
@@ -218,7 +218,7 @@ class OutputTables:
 
 
 def extract_output_tables(model: Working) -> OutputTables:
-    """Извлечь :class:`OutputTables` из рабочей модели после записи результатов."""
+    """Extract :class:`OutputTables` from the working model after the results are written."""
     return OutputTables(
         nodes=_select_output_fields(table_view(model.nodes), NODE_OUTPUT_FIELDS),
         branches=_select_output_fields(table_view(model.branches), BRANCH_OUTPUT_FIELDS),
@@ -228,28 +228,28 @@ def extract_output_tables(model: Working) -> OutputTables:
 
 @dataclass
 class SEResult:
-    """Результат одного запуска ``estimate()``.
+    """Result of a single ``estimate()`` run.
 
     Attributes:
-        model: ссылка на обновлённый ``Working`` (тот же объект, что
-            был передан в ``estimate``).
-        success: сошёлся ли итерационный процесс.
-        iterations: число выполненных итераций.
-        objective_value: значение целевой функции J = rᵀ R⁻¹ r на последней
-            итерации.
-        algorithm: имя использованного алгоритма ("wls" / "ipm").
-        v_pu: (n_nodes,) — модули напряжений в p.u. (дублируют
+        model: reference to the updated ``Working`` (the same object that
+            was passed to ``estimate``).
+        success: whether the iterative process converged.
+        iterations: number of iterations performed.
+        objective_value: value of the objective function J = rᵀ R⁻¹ r at the last
+            iteration.
+        algorithm: name of the algorithm used ("wls" / "ipm").
+        v_pu: (n_nodes,) — voltage magnitudes in p.u. (duplicating
             ``model.nodes.voltage_magnitude / voltage_nominal``).
-        delta_rad: (n_nodes,) — углы напряжений в радианах.
-        message: произвольное диагностическое сообщение (причина несходимости
-            и т. п.).
-        chi2: сводка χ²-теста (``None``, если не считалась).
-        worst_residuals: топ-N измерений по ``|r_N|`` (по убыванию).
-            Пустой список, если расчёт пропущен / нет измерений.
-        worst_imbalance: топ-N узлов по ``|imbalance_p|`` (по убыванию).
-        observability_warnings: список ``node_id`` узлов с нулевыми
-            столбцами ``H`` (state-переменные не покрыты измерениями).
-            Пустой, если анализ не проводился.
+        delta_rad: (n_nodes,) — voltage angles in radians.
+        message: free-form diagnostic message (reason for non-convergence
+            etc.).
+        chi2: summary of the χ² test (``None`` if not computed).
+        worst_residuals: top-N measurements by ``|r_N|`` (descending).
+            Empty list if the computation was skipped / there are no measurements.
+        worst_imbalance: top-N nodes by ``|imbalance_p|`` (descending).
+        observability_warnings: list of ``node_id`` of nodes with zero
+            ``H`` columns (state variables not covered by measurements).
+            Empty if the analysis was not run.
     """
 
     model: Working
@@ -260,19 +260,19 @@ class SEResult:
     v_pu: np.ndarray = field(default_factory=lambda: np.empty(0))
     delta_rad: np.ndarray = field(default_factory=lambda: np.empty(0))
     message: str = ""
-    # Детализация сходимости. WLS: "converged"/"not_converged". IPM —
-    # двухуровневая (см. IPMResult.status): "kkt" (строгая стационарность),
-    # "completed" (μ-расписание пройдено, решение пригодно), "stalled",
+    # Convergence breakdown. WLS: "converged"/"not_converged". IPM is
+    # two-level (see IPMResult.status): "kkt" (strict stationarity),
+    # "completed" (the μ schedule was run through, the solution is usable), "stalled",
     # "error". success == True ⇔ status ∈ {kkt, completed, converged}.
     convergence_status: str = ""
 
-    # Output-контейнер — результаты keyed по id (узлы/ветви/меры), параллельно
-    # Input-коллекциям. Канонический Output-контракт для адаптеров (Input
-    # read-only). Заполняется ``estimate()`` после записи результатов.
+    # Output container — results keyed by id (nodes/branches/measurements), parallel to
+    # the Input collections. The canonical Output contract for adapters (Input is
+    # read-only). Filled by ``estimate()`` after the results are written.
     outputs: OutputTables = field(default_factory=OutputTables)
 
-    # Quality summary — новые опциональные поля; default — пустые/None
-    # для backward-compatibility.
+    # Quality summary — new optional fields; the default is empty/None
+    # for backward compatibility.
     chi2: Chi2Summary | None = None
     worst_residuals: list[ResidualRow] = field(default_factory=list)
     worst_imbalance: list[ImbalanceRow] = field(default_factory=list)
@@ -280,5 +280,5 @@ class SEResult:
 
 
 def label_for_kind(kind_code: int) -> str:
-    """Получить текстовый ярлык для числового ``MeasurementIndex.kind``."""
+    """Get a text label for the numeric ``MeasurementIndex.kind``."""
     return _RESIDUAL_KIND_LABELS.get(int(kind_code), "?")

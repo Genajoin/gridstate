@@ -117,6 +117,6 @@ def test_unsupported_combination_falls_back_to_generic_path() -> None:
     idx = _index([(KIND_VOLTAGE, OBJ_NODE, 0, SIDE_NONE), (KIND_POWER_P, OBJ_BRANCH, 0, SIDE_NONE)])
     algebra = BaseAlgebra(ybus, yf, yt, idx, StateLayout.from_slack(pu.n_bus, pu.slack_idx), pu)
     v, delta = np.ones(pu.n_bus), np.zeros(pu.n_bus)
-    with pytest.raises(ValueError, match="пропущены позиции"):
+    with pytest.raises(ValueError, match="positions in z are missing"):
         algebra.evaluate_jacobian(v, delta)
     assert algebra._jacobian_pattern is False

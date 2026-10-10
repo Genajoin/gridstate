@@ -1,15 +1,13 @@
-"""Псевдо-измерения для устранения недонаблюдаемости в WLS.
+"""Pseudo-measurements to remove under-observability in WLS.
 
-Узел без telemetry-измерений делает соответствующую часть state-vector
-unobservable → Gain matrix singular. Чтобы этого избежать, для каждого
-активного узла без `V/P_inj/Q_inj` измерения добавляем слабый прайор:
+A node without telemetry measurements makes the corresponding part of the state vector
+unobservable, so the gain matrix becomes singular. To avoid this, for every
+active node without a `V/P_inj/Q_inj` measurement we add a weak prior:
 
-* `V ≈ V_nominal` (либо `V_magnitude` из загруженной модели, либо `vzd`
-  для PV-узла) с σ=10% от Vnom (slack — 0.1%, PV — 5%).
-* `P_inj = pg - pn`, `Q_inj = qg - qn` из node-таблицы (для transit
-  узлов это даёт 0). σ зависит от типа узла и empty-model detection.
-
-Перенесено из ``tests/_ti_loader.add_pseudo_measurements``.
+* `V ≈ V_nominal` (either `V_magnitude` from the loaded model, or `vzd`
+  for a PV node) with σ=10% of Vnom (slack 0.1%, PV 5%).
+* `P_inj = pg - pn`, `Q_inj = qg - qn` from the node table (for transit
+  nodes this gives 0). σ depends on the node type and empty-model detection.
 """
 
 from __future__ import annotations
@@ -84,12 +82,12 @@ def _generation_range_variance(row: np.void, lo_col: str, hi_col: str, fallback:
 
 
 def _detect_empty_model(nodes_arr: np.ndarray) -> bool:
-    """Авто-детект «пустой» модели.
+    """Auto-detection of an "empty" model.
 
-    Ряд снимков имеет в model.json нули в pg/pn/qg/qn (режим хранится отдельно).
-    На таких моделях критерий transit pg=pn=qg=qn=0 срабатывает на ВСЕХ узлах →
-    жёсткий prior σ²=zero_inj_variance давит на TM → SE расходится. При empty-model
-    ослабляем все priors на empty_model_loose_factor.
+    Some snapshots have zeros in pg/pn/qg/qn in model.json (the mode is stored separately).
+    On such models the transit criterion pg=pn=qg=qn=0 fires on ALL nodes, so a
+    hard prior σ²=zero_inj_variance overpowers TM and the SE diverges. For an empty model
+    we loosen all priors by empty_model_loose_factor.
     """
     n_active = 0
     n_loaded = 0
@@ -206,11 +204,11 @@ def _build_pseudo_rows(
     unknown_load_q: set[int] | None = None,
     existing_ids: Iterable[int] | np.ndarray = (),
 ) -> tuple[list[dict], dict]:
-    """Основной цикл: построить pseudo V/P_inj/Q_inj-строки по активным узлам.
+    """Main loop: build pseudo V/P_inj/Q_inj rows for the active nodes.
 
-    Последовательный проход по ``nodes_arr`` в исходном порядке, с тем же порядком
-    добавления строк внутри узла (V-приор → P_inj → Q_inj) и монотонной раздачей
-    id от ``config.mid_start`` (сверяются с ``existing_ids``). Возвращает
+    A sequential pass over ``nodes_arr`` in the original order, with the same row order
+    within a node (V prior -> P_inj -> Q_inj) and monotonic id allocation
+    from ``config.mid_start`` (checked against ``existing_ids``). Returns
     ``(new_rows, stats)``.
     """
     ids = IdAllocator(existing_ids, config.mid_start, name="add_pseudo_measurements")
@@ -234,11 +232,11 @@ def _build_pseudo_rows(
             if node_load_props is not None and nid in node_load_props:
                 prop = node_load_props[nid]
                 vzd = float(prop.get("vzd", 0.0))
-                # Slack и PV-узлы с заданной уставкой U_ZAD используют её как
-                # V-prior (семантика входного формата: balancing-узел держит V=vzd,
-                # PV-генератор управляет Q для V=vzd). Раньше slack
-                # исключался — pseudo брал V=Vnom (flat), что отличалось от
-                # vzd на 2-5 кВ и тянуло SE к номиналу, а не к уставке.
+                # Slack and PV nodes with a set U_ZAD setpoint use it as
+                # the V prior (input-format semantics: the balancing node holds V=vzd,
+                # a PV generator controls Q for V=vzd). Previously slack
+                # was excluded and the pseudo took V=Vnom (flat), which differed from
+                # vzd by 2-5 kV and pulled the SE toward nominal rather than the setpoint.
                 if vzd > 0 and (prop.get("exist_gen") or is_slack):
                     v_prior_value = vzd
                     if not is_slack:
@@ -246,7 +244,7 @@ def _build_pseudo_rows(
             if is_slack:
                 sigma = (config.slack_voltage_sigma_frac * vn) ** 2
             elif is_pv_with_vzd:
-                sigma = (0.05 * vn) ** 2  # PV-узел жёстче, vzd≈vras
+                sigma = (0.05 * vn) ** 2  # PV node is stiffer, vzd≈vras
             elif (
                 config.unobservable_v_sigma_frac is not None
                 and nid not in real_v_neighbor
@@ -259,18 +257,18 @@ def _build_pseudo_rows(
                 sigma = (config.unobservable_v_sigma_frac * vn) ** 2
                 n_unobs_v += 1
             else:
-                # 5% Vnom: жёстче чем 10% (был раньше). На weakly-observable
-                # узлах (degree=1, empty-model P_inj σ=100) 10% позволял SE
-                # утаскивать V в 0.3-0.5 p.u. — pseudo-V не держал якорь.
+                # 5% Vnom: stiffer than the former 10%. On weakly observable
+                # nodes (degree=1, empty-model P_inj σ=100) 10% allowed the SE
+                # to drag V down to 0.3-0.5 p.u.: the pseudo-V did not hold the anchor.
                 sigma = (0.05 * vn) ** 2
             new_rows.append(
                 pseudo_node_measurement(ids.next(), nid, KIND_VOLTAGE, v_prior_value, float(sigma))
             )
             n_v_added += 1
 
-        # Q-псевдо требует отсутствия у узла real-P_inj И real-Q_inj: узел с
-        # real-P_inj пропускается целиком (want_pinj=False), поэтому он НЕ получает
-        # и Q-псевдо, даже если Q_inj у него нет — это зафиксированное поведение.
+        # The Q pseudo requires the node to have neither a real P_inj NOR a real Q_inj: a node with a
+        # real P_inj is skipped entirely (want_pinj=False), so it does NOT get
+        # a Q pseudo either, even if it has no Q_inj; this is the recorded behavior.
         want_pinj = config.add_zero_injections and nid not in have_pinj
         want_qinj = want_pinj and nid not in have_qinj
         if want_pinj:
@@ -293,10 +291,10 @@ def _build_pseudo_rows(
                 else:
                     var_p = config.zero_inj_variance * config.empty_model_loose_factor
             else:
-                # Нагрузочные/ген узлы — рыхлее транзитных в load_inj_loose_factor раз
-                # (default 10.0 = историческое поведение). На радиальных терминалах
-                # с материализованной нагрузкой≈0 и без real-ТМ это рыхление пускает
-                # V в overshoot (ветвь-Q гонит фантомный Q).
+                # Load/generation nodes are looser than transit ones by load_inj_loose_factor
+                # (default 10.0 = historical behavior). On radial terminals
+                # with materialized load≈0 and no real TM this loosening lets
+                # V overshoot (the branch Q drives a phantom Q).
                 var_p = (
                     config.zero_inj_variance
                     if transit
@@ -347,18 +345,18 @@ def _add_pseudo_measurements_on_arrays(
     node_load_props: dict[int, dict] | None,
     config: PseudoMeasConfig | None = None,
 ) -> tuple[list[dict], dict]:
-    """Построить pseudo V/P_inj/Q_inj-строки на контрактных массивах (НЕ мутирует входы).
+    """Build pseudo V/P_inj/Q_inj rows on the contract arrays (does NOT mutate the inputs).
 
-    Ядро (append-паттерн): читает ТОЛЬКО контрактные колонки
-    nodes/branches/measurements + готовый ``node_load_props`` (резолвит адаптер);
-    ВОЗВРАЩАЕТ ``(new_rows, stats)``. Семантика ``config`` — см. адаптер
-    ``add_pseudo_measurements`` (``PseudoMeasConfig`` дублирует те же поля с общими
-    дефолтами). ``config=None`` — все дефолты.
+    Core (append pattern): reads ONLY the contract columns
+    nodes/branches/measurements + a ready ``node_load_props`` (resolved by the adapter);
+    RETURNS ``(new_rows, stats)``. For the meaning of ``config`` see the adapter
+    ``add_pseudo_measurements`` (``PseudoMeasConfig`` duplicates the same fields with shared
+    defaults). ``config=None`` means all defaults.
 
-    **Должно оставаться последовательным Python-циклом** по ``nodes_arr`` в исходном
-    порядке, с тем же порядком добавления строк внутри узла (V-приор → P_inj → Q_inj)
-    и монотонной раздачей ``mid`` — арифметика σ²/p_inj_prior скалярная
-    детерминированная.
+    **Must remain a sequential Python loop** over ``nodes_arr`` in the original
+    order, with the same row order within a node (V prior -> P_inj -> Q_inj)
+    and monotonic ``mid`` allocation: the σ²/p_inj_prior arithmetic is scalar and
+    deterministic.
     """
     if config is None:
         config = PseudoMeasConfig()
@@ -414,57 +412,57 @@ def add_pseudo_measurements(
     unmeasured_gen_q_nodes: frozenset[int] = frozenset(),
     loosen_unknown_load: bool = False,
 ) -> dict:
-    """Дополнить модель псевдо-измерениями для устранения недонаблюдаемости.
+    """Augment the model with pseudo-measurements to remove under-observability.
 
-    1. **V-приоры**: для каждого активного узла без VOLTAGE-измерения
-       добавить ``V = voltage_magnitude/nominal`` с дисперсией:
-       slack — ``(slack_voltage_sigma_frac·Vnom)²``; остальные —
-       ``(0.1·Vnom)²`` (слабый прайор).
-    2. **Zero-injection**: для активных узлов без INJECTION-измерения
-       добавить ``P_inj = Q_inj = (pg-pn)`` (из node-таблицы) с дисперсией:
+    1. **V priors**: for every active node without a VOLTAGE measurement
+       add ``V = voltage_magnitude/nominal`` with variance:
+       slack: ``(slack_voltage_sigma_frac·Vnom)²``; the others:
+       ``(0.1·Vnom)²`` (weak prior).
+    2. **Zero-injection**: for active nodes without an INJECTION measurement
+       add ``P_inj = Q_inj = (pg-pn)`` (from the node table) with variance:
 
-       * **транзитный узел** (``exist_load=0 AND exist_gen=0`` если задан
-         ``node_load_props``, иначе fallback ``pg=pn=qg=qn=0`` в node):
-         жёсткий prior ``variance=zero_inj_variance``.
-       * **нагрузочный/генераторный**: слабый prior
+       * **transit node** (``exist_load=0 AND exist_gen=0`` if ``node_load_props``
+         is given, otherwise fallback ``pg=pn=qg=qn=0`` in the node table):
+         hard prior ``variance=zero_inj_variance``.
+       * **load/generation node**: weak prior
          ``variance = 10·zero_inj_variance``.
-       * **empty-model** (заполнено меньше 1% узлов в node-таблице):
-         все узлы получают ``variance = zero_inj_variance·empty_model_loose_factor``,
-         кроме true-транзитов (``EXIST_PN=0 AND EXIST_PG=0`` из
-         ``node_load_props``), у которых дисперсия
+       * **empty-model** (fewer than 1% of nodes filled in the node table):
+         all nodes get ``variance = zero_inj_variance·empty_model_loose_factor``,
+         except true transits (``EXIST_PN=0 AND EXIST_PG=0`` from
+         ``node_load_props``), whose variance is
          ``10·zero_inj_variance``.
 
     Args:
-        model: Working для модификации (in-place).
-        add_zero_injections: добавлять ли P/Q-инжекции.
-        slack_voltage_sigma_frac: фракция σ_V для slack-узла.
-        zero_inj_variance: базовое σ² для transit узлов (МВт²).
-        empty_model_loose_factor: множитель для empty-model.
+        model: Working to modify (in place).
+        add_zero_injections: whether to add P/Q injections.
+        slack_voltage_sigma_frac: σ_V fraction for the slack node.
+        zero_inj_variance: base σ² for transit nodes (MW²).
+        empty_model_loose_factor: multiplier for an empty model.
         node_load_props: ``ny → {exist_load, exist_gen, vzd, ...}`` —
-            семантика входного формата EXIST_PN/PG. Без него — fallback на
-            нули в node-таблице.
-        mid_start: начальный ID для новых measurements.
+            input-format semantics of EXIST_PN/PG. Without it, a fallback to
+            zeros in the node table.
+        mid_start: starting ID for the new measurements.
         boundary_inj_loose_factor: variance multiplier of the P/Q injection
             prior on the nodes selected by ``loosen_unknown_load``. Default
             10000.0 (σ × 100) keeps that prior in the system only for
             observability.
-        unobservable_v_sigma_frac: если задан — для **ненаблюдаемых** узлов
-            без real-V якорим pseudo-V жёстко: ``σ = (frac·Vnom)²`` вместо
-            обычных 5%. Rationale: an unobservable node has no information
+        unobservable_v_sigma_frac: if set, for **unobservable** nodes
+            without a real V the pseudo-V is anchored hard: ``σ = (frac·Vnom)²`` instead of
+            the usual 5%. Rationale: an unobservable node has no information
             beyond the operating point supplied with the input
             (``voltage_magnitude``), and a loose 5 % prior lets the solver drift
             (the dominant top-dV contribution on large models: terminal tails
             drift by 10-22 %). A hard anchor to the vm prior keeps the node at
             that operating point.
-            ``None`` (default) — поведение не меняется (5%).
-        unobservable_v_exclude_real_v_neighbor: при tighten НЕ якорить узел,
-            у которого есть сосед по active-ветви с **real**-V-замером —
+            ``None`` (default): behavior unchanged (5%).
+        unobservable_v_exclude_real_v_neighbor: when tightening, do NOT anchor a node
+            that has a neighbor over an active branch with a **real** V measurement:
             such a node is observable through the line (its V follows the
             neighbour instead of being held at vm). Default True.
-        unobservable_v_min_vm_deviation: минимальное относительное отклонение
-            прайора от номинала ``|v_prior - Vnom|/Vnom`` для tighten. Default
-            0.0 (без ограничения). Мотивация: когда ``vm`` ≈ ``Vnom`` (или
-            ``vm=0`` → fallback к Vnom), the prior is a nominal placeholder,
+        unobservable_v_min_vm_deviation: minimum relative deviation
+            of the prior from nominal ``|v_prior - Vnom|/Vnom`` for tightening. Default
+            0.0 (no restriction). Motivation: when ``vm`` ≈ ``Vnom`` (or
+            ``vm=0`` → fallback to Vnom), the prior is a nominal placeholder,
             not a real operating point, and the true V on such nodes may be
             far from nominal (on large models about half of these nodes
             deviate by more than 2 %), so a hard anchor to nominal worsens the
@@ -485,14 +483,14 @@ def add_pseudo_measurements(
 
     Returns:
         ``{"v_priors_added": N, "zero_inj_added": N, "unobservable_v_tight": N,
-        "unknown_load_loose": N}`` — счётчики.
+        "unknown_load_loose": N}`` — counters.
     """
     nodes_arr = model.nodes.to_numpy()
     meas_arr = model.measurements.to_numpy()
     branches_arr = model.branches.to_numpy()
 
-    # exist_load/exist_gen заполняет загрузчик входного формата;
-    # если они есть — выводим node_load_props из модели автоматически.
+    # exist_load/exist_gen are filled by the input-format loader;
+    # if present, node_load_props is derived from the model automatically.
     if node_load_props is None and (
         np.any(nodes_arr["exist_load"]) or np.any(nodes_arr["exist_gen"])
     ):
@@ -521,7 +519,7 @@ def add_pseudo_measurements(
         node_load_props,
         config,
     )
-    # Пакетная вставка за одну конкатенацию: per-row .add() даёт O(n²) на
-    # тысячах псевдо-измерений (узкое место крупных моделей).
+    # Batch insertion in a single concatenation: per-row .add() gives O(n²) on
+    # thousands of pseudo-measurements (a bottleneck of large models).
     model.measurements.add_many(new_rows)
     return stats

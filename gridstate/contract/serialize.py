@@ -1,26 +1,26 @@
-"""Сериализация ``SEInput`` (контракт + ``DerivedInputs``) в ``.npz`` — граница входа.
+"""Serialization of ``SEInput`` (contract + ``DerivedInputs``) to ``.npz`` — the input boundary.
 
 **Purpose.** The only input boundary of gridstate is a **data file** (``.npz``)
 prepared by the producer of the input and read by gridstate **without external
 dependencies and without knowing the source format**.
 
-Сериализуется ровно то, что нужно ядру для прогона ``run(SEInput)``:
+Exactly what the kernel needs to run ``run(SEInput)`` is serialized:
 
-* контрактные таблицы ``SE_INPUT`` — ``nodes`` / ``branches`` / ``measurements`` /
-  ``generators`` + доменные ``tap_steps`` / ``load_characteristics`` / ``shunts``
-  (структурированные numpy-массивы);
-* :class:`~gridstate.contract.derived.DerivedInputs` — числовые планы (топология /
-  телеметрия / материализация / Vnom), результат обработки источника. Применение РПН
-  идёт через входную таблицу ``tap_steps``, а не через ``DerivedInputs``.
+* the ``SE_INPUT`` contract tables — ``nodes`` / ``branches`` / ``measurements`` /
+  ``generators`` + the domain ``tap_steps`` / ``load_characteristics`` / ``shunts``
+  (structured numpy arrays);
+* :class:`~gridstate.contract.derived.DerivedInputs` — numeric plans (topology /
+  telemetry / materialization / Vnom), the result of processing the source. Tap changer
+  positions are applied through the ``tap_steps`` input table, not through ``DerivedInputs``.
 
-Загрузчик восстанавливает рабочий слой через :meth:`gridstate.working.Working.from_arrays`
-(конструктор из массивов) → ``run()`` исполняется без внешних зависимостей.
+The loader restores the working layer via :meth:`gridstate.working.Working.from_arrays`
+(constructor from arrays) → ``run()`` executes without external dependencies.
 
-**Формат планов (v0, провизорный).** ``DerivedInputs`` несёт dict с tuple-ключами
-(``telemetry_resolved``), поэтому планы кодируются ``pickle`` в object-массиве внутри
-``.npz``. Это внутренний Python-формат; стабильный кросс-тул формат (JSON-схема
-планов) — на будущее. Контрактные ТАБЛИЦЫ хранятся как обычные npz-массивы и читаются
-любым инструментом.
+**Plan format (v0, provisional).** ``DerivedInputs`` carries dicts with tuple keys
+(``telemetry_resolved``), so the plans are encoded with ``pickle`` in an object array inside
+the ``.npz``. This is an internal Python format; a stable cross-tool format (a JSON schema
+of the plans) is future work. The contract TABLES are stored as ordinary npz arrays and can be read by
+any tool.
 """
 
 from __future__ import annotations
@@ -41,12 +41,12 @@ if TYPE_CHECKING:
 _DERIVED_KEY = "__derived_pickle__"
 _META_KEY = "__contract_version__"
 
-# Имена таблиц входа в порядке объявления контракта (единый источник —
-# SEInputSchema.tables()). Первые четыре — основные контрактные таблицы
-# (позиционные аргументы Working.from_arrays, с особой обработкой ниже);
-# остальные — доменные числовые input-таблицы: first-class (пишутся/читаются
-# под собственным именем), но опциональны (источник может их не нести:
-# отсутствующая → пустая коллекция в Working.from_arrays).
+# Input table names in the order of the contract declaration (single source —
+# SEInputSchema.tables()). The first four are the main contract tables
+# (positional arguments of Working.from_arrays, with special handling below);
+# the rest are domain numeric input tables: first-class (written/read
+# under their own name) but optional (the source may not carry them:
+# a missing one → an empty collection in Working.from_arrays).
 _INPUT_TABLE_NAMES = tuple(t.name for t in SE_INPUT.tables())
 _N_CORE_TABLES = 4
 _CONTRACT_TABLES = _INPUT_TABLE_NAMES[:_N_CORE_TABLES]
@@ -54,12 +54,12 @@ _DOMAIN_TABLES = _INPUT_TABLE_NAMES[_N_CORE_TABLES:]
 
 
 def _schema_map() -> dict[str, Any]:
-    """name → ``TableSchema`` для контрактных таблиц."""
+    """name → ``TableSchema`` for the contract tables."""
     return {name: getattr(SE_INPUT, name) for name in _CONTRACT_TABLES}
 
 
 def _derived_to_blob(derived: Any) -> dict | None:
-    """``DerivedInputs`` → сериализуемый dict (числовые планы шагов)."""
+    """``DerivedInputs`` → serializable dict (numeric plans of the steps)."""
     if derived is None:
         return None
     return {
@@ -75,7 +75,7 @@ def _derived_to_blob(derived: Any) -> dict | None:
 
 
 def _blob_to_derived(blob: dict | None) -> Any:
-    """Сериализованный dict → ``DerivedInputs`` (числовые планы шагов)."""
+    """Serialized dict → ``DerivedInputs`` (numeric plans of the steps)."""
     if blob is None:
         return None
     from gridstate.contract.derived import DerivedInputs
@@ -86,7 +86,7 @@ def _blob_to_derived(blob: dict | None) -> Any:
         telemetry_arg_keys=blob["telemetry_arg_keys"],
         telemetry_total_args=blob["telemetry_total_args"],
         materialize_obs=blob["materialize_obs"],
-        # .get(): старые .npz этого плана не несут (обратная совместимость).
+        # .get(): old .npz files do not carry this plan (backward compatibility).
         voltage_nominal=blob["voltage_nominal"],
         v_sigma2_scale=blob.get("v_sigma2_scale"),
         flow_sigma2_scale=blob.get("flow_sigma2_scale"),
@@ -94,12 +94,12 @@ def _blob_to_derived(blob: dict | None) -> Any:
 
 
 def _expand_to_io(arr: np.ndarray, in_schema: Any, out_schema: Any) -> np.ndarray:
-    """Расширить массив до INPUT+OUTPUT dtype, заполняя недостающие OUTPUT-колонки нулями.
+    """Expand an array to the INPUT+OUTPUT dtype, filling the missing OUTPUT columns with zeros.
 
-    Обратная совместимость: если ``arr`` уже содержит OUTPUT-поля (старый формат),
-    они копируются как есть.
+    Backward compatibility: if ``arr`` already contains OUTPUT fields (old format),
+    they are copied as is.
     """
-    # Полный IO dtype — единый билдер io_dtype (contract.tables).
+    # Full IO dtype — the single io_dtype builder (contract.tables).
     full_dt = io_dtype(in_schema, out_schema)
     result = np.zeros(len(arr), dtype=full_dt)
     for name in arr.dtype.names or ():
@@ -109,24 +109,24 @@ def _expand_to_io(arr: np.ndarray, in_schema: Any, out_schema: Any) -> np.ndarra
 
 
 def save_se_input(se_input: SEInput, path: str | Path) -> Path:
-    """Записать ``SEInput`` (контрактные таблицы + ``DerivedInputs``) в ``.npz``.
+    """Write ``SEInput`` (contract tables + ``DerivedInputs``) to an ``.npz``.
 
-    Сохраняются **только** колонки входного контракта (``input_dtype()`` —
-    KEY + INPUT + WORKING).  OUTPUT-колонки (``p_inj_calc``, ``estimated_si``,
-    перетоки и т.д.) НЕ записываются — это результат прогона ``run()``.
-    Загрузчик :func:`load_se_input_npz` добавляет пустые OUTPUT-колонки для
-    пайплайна.
+    **Only** the input contract columns are saved (``input_dtype()`` —
+    KEY + INPUT + WORKING).  OUTPUT columns (``p_inj_calc``, ``estimated_si``,
+    flows, etc.) are NOT written — they are the result of a ``run()``.
+    The loader :func:`load_se_input_npz` adds empty OUTPUT columns for
+    the pipeline.
 
     Args:
-        se_input: вход SE. ``se_input.model`` — носитель контрактных таблиц
-            (``Working`` или любой объект с коллекциями
-            ``.nodes/.branches/.measurements/.generators`` + опц. доменными
-            ``.tap_steps/.load_characteristics/.shunts``, отдающими ``to_numpy()``).
-            ``se_input.derived`` — числовые планы (или ``None``).
-        path: путь к выходному ``.npz`` (расширение добавит numpy при отсутствии).
+        se_input: SE input. ``se_input.model`` is the carrier of the contract tables
+            (``Working`` or any object with the collections
+            ``.nodes/.branches/.measurements/.generators`` + optional domain
+            ``.tap_steps/.load_characteristics/.shunts`` that return ``to_numpy()``).
+            ``se_input.derived`` — numeric plans (or ``None``).
+        path: path of the output ``.npz`` (numpy appends the extension if missing).
 
     Returns:
-        Фактический путь записанного файла.
+        The actual path of the written file.
     """
     schema = _schema_map()
     model = se_input.model
@@ -134,19 +134,19 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
     for name in _CONTRACT_TABLES:
         coll = getattr(model, name)
         full_arr = np.asarray(coll.to_numpy())
-        # Генераторы не имеют OUTPUT — сохраняем целиком
+        # Generators have no OUTPUT — saved whole
         if name == "generators":
             arrays[name] = full_arr
             continue
-        # Контрактные таблицы: только input_dtype (KEY + INPUT + WORKING)
+        # Contract tables: input_dtype only (KEY + INPUT + WORKING)
         in_dt = schema[name].input_dtype()
         arr = np.empty(len(full_arr), dtype=in_dt)
         for col in in_dt.names:
             arr[col] = full_arr[col]
         arrays[name] = arr
 
-    # Доменные числовые таблицы — first-class, под собственным именем
-    # (опционально: источник может их не нести / нести пустыми).
+    # Domain numeric tables — first-class, under their own name
+    # (optional: the source may not carry them / may carry them empty).
     for name in _DOMAIN_TABLES:
         coll = getattr(model, name, None)
         if coll is not None and hasattr(coll, "to_numpy"):
@@ -159,19 +159,19 @@ def save_se_input(se_input: SEInput, path: str | Path) -> Path:
     arrays[_META_KEY] = np.asarray(str(se_input.contract_version))
 
     out = Path(path)
-    # mypy: **arrays статически коллидирует с keyword-only allow_pickle: bool в
-    # savez; ключи arrays — только имена data-массивов, allow_pickle среди них нет.
+    # mypy: **arrays statically collides with the keyword-only allow_pickle: bool in
+    # savez; the arrays keys are data-array names only, allow_pickle is not among them.
     np.savez_compressed(out, **arrays)  # type: ignore[arg-type]
-    # numpy дописывает .npz, если расширения нет — вернём фактическое имя.
+    # numpy appends .npz if there is no extension — return the actual name.
     return out if out.suffix == ".npz" else out.with_suffix(".npz")
 
 
 def load_se_input_npz(path: str | Path) -> SEInput:
     """Read an ``.npz`` (see :func:`save_se_input`) into ``SEInput``; no external dependencies.
 
-    Рабочий слой собирается через :meth:`gridstate.working.Working.from_arrays`.
-    Возвращаемый ``SEInput`` готов к ``run(se_input)``: ``derived`` —
-    восстановленные числовые планы.
+    The working layer is built via :meth:`gridstate.working.Working.from_arrays`.
+    The returned ``SEInput`` is ready for ``run(se_input)``: ``derived`` holds the
+    restored numeric plans.
     """
     from gridstate.contract.containers import SEInput
     from gridstate.contract.version import CONTRACT_VERSION, check_compatibility
@@ -179,14 +179,14 @@ def load_se_input_npz(path: str | Path) -> SEInput:
 
     with np.load(path, allow_pickle=False) as npz:
         files = set(npz.files)
-        # Разворачиваем контрактные таблицы до INPUT+OUTPUT dtype
-        # (добавляем пустые OUTPUT-колонки для пайплайна).
+        # Expand the contract tables to the INPUT+OUTPUT dtype
+        # (add empty OUTPUT columns for the pipeline).
         nodes = _expand_to_io(np.asarray(npz["nodes"]), SE_INPUT.nodes, SE_OUTPUT.nodes)
         branches = _expand_to_io(np.asarray(npz["branches"]), SE_INPUT.branches, SE_OUTPUT.branches)
         measurements = _expand_to_io(
             np.asarray(npz["measurements"]), SE_INPUT.measurements, SE_OUTPUT.measurements
         )
-        generators = np.asarray(npz["generators"])  # у генераторов нет OUTPUT
+        generators = np.asarray(npz["generators"])  # generators have no OUTPUT
         domain = {name: np.asarray(npz[name]) for name in _DOMAIN_TABLES if name in files}
         working = Working.from_arrays(
             nodes=nodes,
@@ -198,15 +198,15 @@ def load_se_input_npz(path: str | Path) -> SEInput:
         blob = pickle.loads(bytes(npz[_DERIVED_KEY])) if _DERIVED_KEY in files else None
         contract_version = str(npz[_META_KEY]) if _META_KEY in files else None
 
-    # Граница входа: версия данных в файле должна быть совместима со встроенным
-    # контрактом библиотеки. Падаем РАНО и ЯВНО (а не тихо грузим несовместимую
-    # схему, которая упадёт глубже в пайплайне непонятной ошибкой).
+    # Input boundary: the data version in the file must be compatible with the library's built-in
+    # contract. Fail EARLY and EXPLICITLY (rather than silently loading an incompatible
+    # schema that would fail deeper in the pipeline with an obscure error).
     if contract_version is not None and check_compatibility(contract_version) is not None:
         raise ValueError(
-            f"Несовместимая версия контракта в npz {Path(path).name!r}: "
-            f"файл собран под {contract_version}, библиотека ожидает "
-            f"{CONTRACT_VERSION} (major должны совпадать). "
-            f"Перегенерируйте npz актуальным инструментом-источником."
+            f"Incompatible contract version in npz {Path(path).name!r}: "
+            f"the file was built under {contract_version}, the library expects "
+            f"{CONTRACT_VERSION} (majors must match). "
+            f"Regenerate the npz with the current source tool."
         )
 
     derived = _blob_to_derived(blob)

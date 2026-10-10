@@ -1,10 +1,10 @@
-"""Единая семантика «незаданных» границ box-полей узла.
+"""Single semantics of "unset" bounds for the node box fields.
 
-Контрактная конвенция (``NODE_DTYPE``: ``load_p_min/max``,
-``generation_q_min/max`` и т.д.): пара границ считается **не заданной**,
-если оба значения нулевые (numpy-default незаполненного поля) либо
-оба — сентинелы (ТОЧНОЕ значение ±9999 — «нет данных» в исходных
-форматах).
+Contract convention (``NODE_DTYPE``: ``load_p_min/max``,
+``generation_q_min/max`` etc.): a pair of bounds is considered **unset**
+if both values are zero (the numpy default of an unfilled field) or
+both are sentinels (the EXACT value ±9999 means "no data" in the source
+formats).
 
 The sentinel is exactly ±9999, NOT a "large enough" threshold: real data
 carries limits of the same magnitude (an equivalent node of a large power
@@ -12,11 +12,11 @@ plant: ``load_p ∈ [10000, 30000]`` MW; BUS equivalents: ±42500), and a
 threshold rule |v| ≥ 9000 swallowed them, replacing the physical range with
 the default box.
 
-До этого модуля каждая подсистема трактовала границы по-своему:
-``ipm_setup`` понимал нули и сентинелы, а клип WLS-разноса
-(``post_processing._clip``) — нет, из-за чего незаполненная пара (0, 0)
-**зануляла** оценку, а сентинельная ±9999 давала мусорные суммы в
-агрегации генераторов. Здесь — одно правило для всех.
+Before this module every subsystem interpreted bounds its own way:
+``ipm_setup`` understood zeros and sentinels, while the WLS spread clip
+(``post_processing._clip``) did not, so an unfilled (0, 0) pair
+**zeroed** the estimate and a sentinel ±9999 pair produced garbage sums in
+generator aggregation. Here there is one rule for everyone.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ __all__ = [
     "resolve_bounds",
 ]
 
-#: Точное значение-сентинел «нет данных» (контрактная конвенция ±9999).
+#: Exact "no data" sentinel value (contract convention ±9999).
 SENTINEL_VALUE = 9999.0
 
 #: Tolerance of the sentinel comparison (the value may come from a text format).
@@ -41,29 +41,30 @@ _SENTINEL_TOL = 1e-6
 
 
 def is_sentinel(value: float) -> bool:
-    """Является ли значение сентинелом «нет данных» (точное ±9999)."""
+    """Whether the value is the "no data" sentinel (exactly ±9999)."""
     return abs(abs(float(value)) - SENTINEL_VALUE) < _SENTINEL_TOL
 
 
 def resolve_bounds(lo_raw: float, hi_raw: float) -> tuple[float, float]:
-    """Пара ``(lo, hi)`` с заменой незаданных сторон на ±inf.
+    """The pair ``(lo, hi)`` with unset sides replaced by ±inf.
 
-    Правила:
+    Rules:
 
-    * обе стороны ≈0 → ``(-inf, +inf)`` — пара не заполнялась
-      (numpy-default); реальный диапазон «ровно [0, 0]» у активного
-      узла не встречается — такой узел не несёт ``exist_*``. Исключение —
-      генерация компенсатора (УШР, СТК, СК): P ровно [0, 0] при заданном
-      Q-диапазоне, см. :func:`is_reactive_only_generation`;
-    * ОБЕ стороны — сентинелы (точное ±9999) → пара не задана →
-      ``(-inf, +inf)``. Полусентинельная пара сохраняется **как есть**
-      (вторая сторона — данные);
-    * ``lo > hi`` → ``(-inf, +inf)`` — границы некорректны, не
-      ограничиваем (раньше такие пары либо зануляли оценку, либо
-      молча пропускались).
+    * both sides ≈0 → ``(-inf, +inf)`` — the pair was never filled
+      (numpy default); a real "exactly [0, 0]" range does not occur on an
+      active node — such a node carries no ``exist_*``. The exception is
+      compensator generation (controlled shunt reactor, static var
+      compensator, synchronous condenser): P exactly [0, 0] with a declared
+      Q range, see :func:`is_reactive_only_generation`;
+    * BOTH sides are sentinels (exactly ±9999) → the pair is unset →
+      ``(-inf, +inf)``. A half-sentinel pair is kept **as is**
+      (the other side is data);
+    * ``lo > hi`` → ``(-inf, +inf)`` — the bounds are invalid and are not
+      enforced (such pairs used to either zero the estimate or be
+      silently skipped).
 
-    Потребители: клип WLS-разноса (``±inf`` = «не клиповать»), box-vars
-    IPM (``±inf`` = «подставить широкий дефолт»).
+    Consumers: the WLS spread clip (``±inf`` = "do not clip"), the IPM
+    box vars (``±inf`` = "substitute a wide default").
     """
     lo = float(lo_raw)
     hi = float(hi_raw)
@@ -100,12 +101,12 @@ def bounds_unset(lo_raw: float, hi_raw: float) -> bool:
 
 
 def is_reactive_only_generation(p_min: float, p_max: float, q_min: float, q_max: float) -> bool:
-    """Генерация только реактивная: ``P ∈ [0, 0]`` при заданном невырожденном Q.
+    """Reactive-only generation: ``P ∈ [0, 0]`` with a declared non-degenerate Q.
 
-    Так схемы задают компенсаторы (УШР, СТК, статкомы, СК) — генераторами без
-    активной мощности. Их пара P [0, 0] — данные, а не «границы не заданы»:
-    трактовка по :func:`resolve_bounds` открывала бы устройству активную
-    мощность.
+    Network models represent compensators (controlled shunt reactors, static
+    var compensators, STATCOMs, synchronous condensers) as generators with no
+    active power. Their P pair [0, 0] is data, not "bounds unset": treating it
+    via :func:`resolve_bounds` would open up active power for the device.
     """
     if float(p_min) != 0.0 or float(p_max) != 0.0:
         return False
