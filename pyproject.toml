@@ -48,15 +48,16 @@ numba = ["numba>=0.57"]
 # solver falls back to scipy.spsolve (kkt_solver="auto").
 fast = ["cvxopt>=1.3"]
 
-# Генерация тестовых фикстур на стандартных IEEE-моделях (tools/gen_ieee_fixtures.py).
-# pandapower нужен ТОЛЬКО для генерации фикстур; рантайм и сами тесты остаются
-# numpy/scipy-only (tests/test_ieee_cases.py читает готовые .npz, pandapower не тянет).
+# Regenerating the test fixtures from the standard IEEE cases
+# (tools/gen_ieee_fixtures.py). pandapower is needed ONLY for fixture generation;
+# the runtime and the tests stay numpy/scipy-only (tests/test_ieee_cases.py reads
+# the committed .npz files and does not import pandapower).
 test-models = ["pandapower>=3.0"]
 
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    "mypy>=1.0.0",
+    "mypy==2.4.0",  # pin: keep CI type checking reproducible,
     "ruff==0.15.12",  # pin: must match the version in .pre-commit-config.yaml
     "pre-commit>=3.0.0",
     "commitizen>=3.0.0",
@@ -93,10 +94,12 @@ hook-dirs = "gridstate.__pyinstaller:get_hook_dirs"
 include = ["gridstate*"]
 exclude = ["tests*", "docs*"]
 
-# After build_cython.py --remove-py, only .so/.pyd plus __init__.py / _version.py
-# remain in gridstate/. Without explicit package-data, setuptools would ship only
-# the .py files. The patterns below include the compiled extensions across all
-# gridstate/ subpackages.
+# Optional compiled distribution (see build_cython.py): after
+# `build_cython.py --remove-py` the compiled modules are .so/.pyd files next to
+# the .py files that must stay (__init__.py, _version.py, the numba kernel module
+# and the PyInstaller hook). Without explicit package-data, setuptools would ship
+# only the .py files; the patterns below include the compiled extensions across
+# all gridstate/ subpackages.
 [tool.setuptools.package-data]
 gridstate = ["py.typed", "*.so", "*.pyd", "**/*.so", "**/*.pyd"]
 
@@ -106,7 +109,7 @@ version_scheme = "release-branch-semver"
 local_scheme = "no-local-version"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -124,10 +127,6 @@ strict_equality = true
 [[tool.mypy.overrides]]
 module = ["numba.*", "scipy.*", "pandapower.*", "PyInstaller.*", "cvxopt.*"]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-ignore_errors = true
 
 [tool.ruff]
 line-length = 100
@@ -178,6 +177,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["gridstate"]
+branch = true
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
@@ -191,8 +191,10 @@ exclude_lines = [
 [tool.commitizen]
 name = "cz_conventional_commits"
 tag_format = "v$version"
-# version comes from setuptools_scm (latest git tag), not pyproject — it's dynamic.
+# Commitizen is used for commit-message linting (the pre-commit commit-msg hook)
+# and for `cz changelog`. Do NOT run `cz bump`: a release is a version PR plus a
+# tag on the merged main commit, and the version itself comes from setuptools_scm
+# (the latest tag), not from pyproject.
 version_provider = "scm"
-update_changelog_on_bump = true
 changelog_file = "CHANGELOG.md"
 annotated_tag = true

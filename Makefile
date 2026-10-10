@@ -12,7 +12,7 @@ VENV_PIP := $(VENV_BIN)/pip
 
 HAS_VENV := $(shell test -d $(VENV) && echo 1 || echo 0)
 
-.PHONY: help venv check-venv install install-dev test test-cov lint format type-check clean build setup
+.PHONY: help venv check-venv install install-dev test test-cov lint format type-check clean build check setup
 
 venv:
 	@echo "Creating virtual environment..."
@@ -59,7 +59,7 @@ clean:
 build: check-venv
 	$(VENV_PYTHON) -m build
 
-check: format lint type-check test
+check: lint type-check test
 	@echo "All checks passed."
 
 setup:
@@ -78,6 +78,6 @@ help:
 	@echo "  make lint         Style check (ruff)"
 	@echo "  make format       Auto-format"
 	@echo "  make type-check   Type check (mypy)"
-	@echo "  make check        format + lint + type-check + test"
+	@echo "  make check        lint + type-check + test (does not modify files; style fixes: make format)"
 	@echo "  make clean        Remove temporary files"
 	@echo "  make build        Build the package"

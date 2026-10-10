@@ -56,7 +56,7 @@ def floored_sigma2(diag: np.ndarray) -> np.ndarray:
     Guards ``1/sigma^2`` against overflow on near-zero variances; see
     :data:`gridstate.constants.SIGMA2_FLOOR` for the rationale behind the value.
     """
-    sigma2 = np.asarray(diag, dtype=np.float64).copy()
+    sigma2: np.ndarray = np.asarray(diag, dtype=np.float64).copy()
     sigma2[sigma2 < SIGMA2_FLOOR] = SIGMA2_FLOOR
     return sigma2
 

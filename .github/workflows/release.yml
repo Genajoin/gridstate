@@ -2,9 +2,12 @@ name: Release
 
 # Publish to PyPI when a version tag is pushed.
 #
-# Versioning is handled by setuptools_scm (the tag IS the version) and tags are
-# created from Conventional Commits with `cz bump` (run locally, then
-# `git push --follow-tags`). This workflow only builds and publishes.
+# Versioning is handled by setuptools_scm (the tag IS the version). Release
+# process: land the release notes (CHANGELOG.md) through a pull request, and only
+# after it is merged create an annotated tag on the merged main commit and push
+# that single tag. Do not tag from a local branch (no `cz bump`, no
+# `--follow-tags`): a tag on a commit that never reaches main is an orphan
+# release. This workflow only builds and publishes.
 #
 # Publishing uses PyPI Trusted Publishing (OIDC) — no API token in secrets.
 # One-time setup on PyPI: add this repository as a trusted publisher for the
