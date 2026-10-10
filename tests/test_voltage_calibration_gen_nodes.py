@@ -320,3 +320,117 @@ def test_questionable_measurement_keeps_its_variance() -> None:
     assert me_by_id[2]["variance"] == pytest.approx(5000.0)
     assert me_by_id[1]["variance"] == pytest.approx(0.1)
     assert stats["updated_meas"] == 1
+
+
+# ---------------------------------------------------------------- mode
+
+
+def _set_variances(m, variances: dict[int, float]) -> None:
+    me = m.measurements.to_numpy().copy()
+    for mid, var in variances.items():
+        sel = me["id"] == mid
+        me["variance"][sel] = var
+        me["weight"][sel] = 1.0 / var
+    m.measurements.update_from_array(me)
+
+
+def _meas_by_id(m) -> dict:
+    return {int(r["id"]): r for r in m.measurements.to_numpy()}
+
+
+def test_absolute_mode_loosens_tighter_measurement() -> None:
+    """Default mode sets sigma2 even where the variance was already smaller."""
+    m = _build_model_three_node_types()
+    aggregate_generators_to_node(m)
+    _set_variances(m, {1: 0.01})  # LV-like telemetry variance, tighter than 0.1
+
+    stats = apply_voltage_meas_calibration_for_gen_nodes(m, sigma2=0.1)
+
+    assert "kept_tighter" not in stats
+    assert _meas_by_id(m)[1]["variance"] == pytest.approx(0.1)  # loosened x10
+    assert _meas_by_id(m)[1]["weight"] == pytest.approx(10.0)
+
+
+def test_default_mode_is_absolute() -> None:
+    m1 = _build_model_three_node_types()
+    m2 = _build_model_three_node_types()
+    for m in (m1, m2):
+        aggregate_generators_to_node(m)
+        _set_variances(m, {1: 0.01})
+    s1 = apply_voltage_meas_calibration_for_gen_nodes(m1, sigma2=0.1)
+    s2 = apply_voltage_meas_calibration_for_gen_nodes(m2, sigma2=0.1, mode="absolute")
+    assert s1 == s2
+    assert (m1.measurements.to_numpy() == m2.measurements.to_numpy()).all()
+
+
+def test_tighten_mode_never_loosens() -> None:
+    """Variance = min(current, sigma2): tighter ones stay as they are."""
+    m = _build_model_three_node_types()
+    aggregate_generators_to_node(m)
+    _set_variances(m, {1: 0.01})  # slack: already tighter than sigma2=0.1
+    # gen node (id=2) keeps variance 50 -> tightened to 0.1; load node (id=3) untouched
+
+    stats = apply_voltage_meas_calibration_for_gen_nodes(m, sigma2=0.1, mode="tighten")
+
+    assert stats == {"updated_meas": 1, "target_nodes": 2, "kept_tighter": 1}
+    me = _meas_by_id(m)
+    assert me[1]["variance"] == pytest.approx(0.01)  # untouched
+    assert me[1]["weight"] == pytest.approx(100.0)
+    assert me[2]["variance"] == pytest.approx(0.1)  # tightened
+    assert me[2]["weight"] == pytest.approx(10.0)
+    assert me[3]["variance"] == pytest.approx(50.0)  # not a target
+
+
+def test_tighten_mode_equal_variance_kept_and_idempotent() -> None:
+    m = _build_model_three_node_types()
+    aggregate_generators_to_node(m)
+    s1 = apply_voltage_meas_calibration_for_gen_nodes(m, sigma2=0.1, mode="tighten")
+    assert s1["updated_meas"] == 2 and s1["kept_tighter"] == 0
+    s2 = apply_voltage_meas_calibration_for_gen_nodes(m, sigma2=0.1, mode="tighten")
+    assert s2["updated_meas"] == 0 and s2["kept_tighter"] == 2
+    assert _meas_by_id(m)[1]["variance"] == pytest.approx(0.1)
+
+
+def test_tighten_mode_questionable_untouched() -> None:
+    """A QUESTIONABLE measurement keeps its inflated variance in both modes."""
+    from gridstate.constants import MeasurementQuality
+
+    m = _build_model_three_node_types()
+    aggregate_generators_to_node(m)
+    me = m.measurements.to_numpy().copy()
+    sel = me["id"] == 2
+    me["variance"][sel] = 5000.0  # inflated by an earlier stage
+    me["quality"][sel] = int(MeasurementQuality.QUESTIONABLE)
+    m.measurements.update_from_array(me)
+
+    apply_voltage_meas_calibration_for_gen_nodes(m, sigma2=0.1, mode="tighten")
+
+    assert _meas_by_id(m)[2]["variance"] == pytest.approx(5000.0)
+
+
+def test_invalid_mode_raises() -> None:
+    m = _build_model_three_node_types()
+    with pytest.raises(ValueError, match="mode"):
+        apply_voltage_meas_calibration_for_gen_nodes(m, mode="nope")  # type: ignore[arg-type]
+
+
+def test_pipeline_config_field_and_step_wiring() -> None:
+    from types import SimpleNamespace
+
+    from gridstate import pipeline as P  # noqa: N812
+
+    cfg = P.PipelineConfig()
+    assert cfg.gen_v_calibration_mode == "absolute"
+    entry = next(p for p in P.manifest()["params"] if p["name"] == "gen_v_calibration_mode")
+    assert entry["default"] == "absolute"
+    assert entry["control"] == "select"
+    assert entry["choices"] == ["absolute", "tighten"]
+    assert entry["depends"] == {"apply_gen_v_calibration": True}
+
+    for mode, expected in (("absolute", 0.1), ("tighten", 0.01)):
+        m = _build_model_three_node_types()
+        aggregate_generators_to_node(m)
+        _set_variances(m, {1: 0.01})
+        ctx = SimpleNamespace(model=m, cfg=P.PipelineConfig(gen_v_calibration_mode=mode))
+        P._s_gen_v_calibration(ctx)  # type: ignore[arg-type]
+        assert _meas_by_id(m)[1]["variance"] == pytest.approx(expected), mode

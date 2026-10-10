@@ -367,3 +367,60 @@ def test_measurements_keep_collection_order() -> None:
     pu = model_to_pu(m)
     _, _, idx = build_z_and_r(m, m.measurements, pu)
     assert idx.meas_id.tolist() == [1, 2, 3, 4, 1001, 1003]
+
+
+# ------------------------------------------- non-finite value / variance
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [("value", np.nan), ("value", np.inf), ("variance", np.nan), ("variance", np.inf)],
+)
+def test_nonfinite_measurement_skipped(field: str, bad: float) -> None:
+    m = _build_two_bus_with_measurements()
+    pu = model_to_pu(m)
+    z0, _, idx0 = build_z_and_r(m, m.measurements, pu)
+    arr = m.measurements.to_numpy()
+    bad_id = int(arr["id"][0])
+    assert bad_id in idx0.meas_id.tolist()
+    arr[field][0] = bad
+    m.measurements.update_from_array(arr)
+
+    z, R, idx = build_z_and_r(m, m.measurements, pu)
+
+    assert len(z) == len(z0) - 1
+    assert bad_id not in idx.meas_id.tolist()
+    assert np.all(np.isfinite(z))
+    assert np.all(np.isfinite(R.diagonal()))
+
+
+def test_nonfinite_measurement_warned_once_per_collection(caplog) -> None:
+    m = _build_two_bus_with_measurements()
+    pu = model_to_pu(m)
+    arr = m.measurements.to_numpy()
+    arr["value"][0] = np.nan
+    m.measurements.update_from_array(arr)
+
+    with caplog.at_level("WARNING", logger="gridstate.z_vector"):
+        build_z_and_r(m, m.measurements, pu)
+        build_z_and_r(m, m.measurements, pu)
+    assert sum("non-finite" in r.getMessage() for r in caplog.records) == 1
+
+
+@pytest.mark.parametrize("algorithm", ["wls", "ipm"])
+@pytest.mark.parametrize(("field", "bad"), [("value", np.nan), ("variance", np.nan)])
+def test_estimate_survives_nonfinite_measurement(algorithm: str, field: str, bad: float) -> None:
+    """One NaN measurement must not fail the whole estimate (it is skipped)."""
+    from pathlib import Path
+
+    from gridstate.api import estimate
+    from gridstate.contract.serialize import load_se_input_npz
+
+    model = load_se_input_npz(Path(__file__).parent / "test_data" / "ieee" / "case14.npz").model
+    arr = model.measurements.to_numpy()
+    arr[field][5] = bad
+    model.measurements.update_from_array(arr)
+
+    res = estimate(model, algorithm=algorithm)
+
+    assert res.success
+    assert np.all(np.isfinite(res.v_pu))
+    assert res.chi2 is not None and np.isfinite(res.chi2.value)
