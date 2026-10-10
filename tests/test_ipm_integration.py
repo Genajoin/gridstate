@@ -1,6 +1,6 @@
-"""Интеграционные тесты IPM-режима через ``gridstate.api.estimate``.
+"""Integration tests of the IPM mode through ``gridstate.api.estimate``.
 
-Проверяют связку IPM-solver'а с моделью сети
+They check the IPM solver together with the network model
 (preprocessing + wrapper + writeback).
 """
 
@@ -10,12 +10,12 @@ from gridstate.api import estimate
 
 
 def _build_three_bus_with_bounds():
-    """3-узловая сеть с активной P-нагрузкой и box-границами."""
+    """3-node network with an active P load and box bounds."""
     from gridstate.constants import BranchType, NodeType
     from gridstate.working import Working
 
     m = Working.empty()
-    # Slack: только генерация
+    # Slack: generation only
     m.nodes.add(
         {
             "id": 1,
@@ -36,7 +36,7 @@ def _build_three_bus_with_bounds():
             "node_type": int(NodeType.SLACK),
         }
     )
-    # Узел нагрузки 2: с box на load_p
+    # Load node 2: with a box on load_p
     m.nodes.add(
         {
             "id": 2,
@@ -55,7 +55,7 @@ def _build_three_bus_with_bounds():
             "node_type": int(NodeType.PQ),
         }
     )
-    # Узел нагрузки 3
+    # Load node 3
     m.nodes.add(
         {
             "id": 3,
@@ -101,7 +101,7 @@ def _build_three_bus_with_bounds():
         }
     )
 
-    # Измерения V на всех узлах + P/Q-инжекции на не-slack
+    # V measurements at all nodes + P/Q injections at non-slack nodes
     from gridstate.z_vector import (
         KIND_POWER_INJECTION_P,
         KIND_POWER_INJECTION_Q,
@@ -156,33 +156,33 @@ def _build_three_bus_with_bounds():
 
 
 class TestIPMIntegration:
-    """Интеграция IPM-solver'а в gridstate.api.estimate.
+    """Integration of the IPM solver into gridstate.api.estimate.
 
-    Проверяем что:
-    1. Pipeline собирается (box-bounds, balance-meas, layout extension);
-    2. solver запускается end-to-end без ошибок;
-    3. *_estimated поля заполняются;
-    4. V/δ движутся в разумном направлении (близко к WLS-baseline).
+    We check that:
+    1. The pipeline assembles (box bounds, balance measurements, layout extension);
+    2. The solver runs end-to-end without errors;
+    3. The *_estimated fields are populated;
+    4. V/δ move in a sensible direction (close to the WLS baseline).
     """
 
     def test_ipm_runs_end_to_end(self) -> None:
-        """IPM запускается на 3-узловой сети и пишет *_estimated."""
+        """IPM runs on the 3-node network and writes *_estimated."""
         m = _build_three_bus_with_bounds()
         result = estimate(m, algorithm="ipm", max_iterations=20)
-        # success может быть False на этой задаче; главное —
-        # завершилось без exception и iterations > 0.
+        # success may be False on this problem; the main thing is that it
+        # finished without an exception and iterations > 0.
         assert result.iterations > 0
         assert result.algorithm == "ipm"
 
-        # *_estimated заполнены для узлов с exist_load/exist_gen
+        # *_estimated are populated for nodes with exist_load/exist_gen
         node2 = m.nodes.get_by_id(2)
         node3 = m.nodes.get_by_id(3)
-        # Box-границы соблюдены (0 <= load_p_est <= 100)
+        # Box bounds are respected (0 <= load_p_est <= 100)
         assert 0.0 <= node2.load_p_estimated <= 100.0
         assert 0.0 <= node3.load_p_estimated <= 100.0
 
     def test_ipm_voltage_close_to_wls(self) -> None:
-        """V близко к WLS-baseline (V/δ часть state почти та же)."""
+        """V is close to the WLS baseline (the V/δ part of the state is nearly the same)."""
         m_wls = _build_three_bus_with_bounds()
         m_ipm = _build_three_bus_with_bounds()
 
@@ -190,8 +190,8 @@ class TestIPMIntegration:
         _ = estimate(m_ipm, algorithm="ipm", max_iterations=20)
 
         assert result_wls.success
-        # Разница V < 1.5 кВ (~1.4 % от 110 кВ) — IPM сходится в
-        # окрестность WLS-решения благодаря adaptive σ² для balance
+        # V difference < 1.5 kV (~1.4 % of 110 kV): IPM converges to a
+        # neighbourhood of the WLS solution thanks to the adaptive σ² for balance
         # + trust-region clip Newton-step.
         for nid in [1, 2, 3]:
             n_wls = m_wls.nodes.get_by_id(nid)
@@ -199,33 +199,33 @@ class TestIPMIntegration:
             assert abs(n_wls.voltage_magnitude - n_ipm.voltage_magnitude) < 1.5
 
     def test_ipm_respects_box_bounds(self) -> None:
-        """*_estimated значения в границах [lo, hi]."""
+        """*_estimated values lie within [lo, hi]."""
         m = _build_three_bus_with_bounds()
-        # Сжимаем pn-box на узле 2 до [25, 28]
+        # Tighten the pn box at node 2 to [25, 28]
         node2 = m.nodes.get_by_id(2)
         node2.load_p_min = 25.0
         node2.load_p_max = 28.0
 
         estimate(m, algorithm="ipm", max_iterations=30)
         n2 = m.nodes.get_by_id(2)
-        # load_p_estimated должна быть в границах (с небольшим
-        # допуском на численную точность).
+        # load_p_estimated must lie within bounds (with a small
+        # tolerance for numerical accuracy).
         assert 24.5 <= n2.load_p_estimated <= 28.5, (
-            f"load_p_estimated={n2.load_p_estimated} вне [25, 28]"
+            f"load_p_estimated={n2.load_p_estimated} outside [25, 28]"
         )
 
     def test_ipm_lazy_outer_break(self) -> None:
-        """Lazy outer-loop: solver выходит при отсутствии прогресса.
+        """Lazy outer loop: the solver exits when there is no progress.
 
-        Если на одной outer-iter Newton/Armijo не находит ни одного
-        шага, дальнейшие outer-iter с меньшим μ не помогают (плоский
-        минимум или плохая обусловленность). Solver должен прерваться,
-        не крутя цикл впустую.
+        If on one outer iteration Newton/Armijo finds no step at all,
+        further outer iterations with a smaller μ do not help (flat
+        minimum or poor conditioning). The solver must break out
+        instead of spinning the loop idly.
         """
         m = _build_three_bus_with_bounds()
         result = estimate(m, algorithm="ipm", max_iterations=30)
-        # outer_max=20 в _run_ipm. Без lazy-break IPM делал бы 20
-        # итераций; с lazy-break ≤10 (по факту ≤5 на этой задаче).
+        # outer_max=20 in _run_ipm. Without the lazy break IPM would make 20
+        # iterations; with the lazy break <=10 (in practice <=5 on this problem).
         assert result.iterations < 15, (
-            f"iterations={result.iterations} — lazy outer-break не работает"
+            f"iterations={result.iterations} - lazy outer break does not work"
         )

@@ -1,4 +1,4 @@
-"""Тесты раскладки вектора состояния SE (``gridstate.state``)."""
+"""Tests of the SE state vector layout (``gridstate.state``)."""
 
 from __future__ import annotations
 
@@ -104,9 +104,9 @@ class TestFlatStart:
         layout = StateLayout.from_slack(n_bus=14, slack_idx=0)
         e = flat_start(layout)
         assert e.shape == (layout.size,)
-        # δ-часть = 0
+        # δ part = 0
         np.testing.assert_array_equal(e[: layout.n_bus - 1], np.zeros(13))
-        # V-часть = 1
+        # V part = 1
         np.testing.assert_array_equal(e[layout.n_bus - 1 :], np.ones(14))
 
     def test_flat_start_unpacks_to_uniform_state(self) -> None:
@@ -118,17 +118,17 @@ class TestFlatStart:
 
 # ------------------------------------------------------------ box-vars (IPM)
 class TestBoxVarsLayout:
-    """IPM: расширение StateLayout box-переменными."""
+    """IPM: StateLayout extension with box variables."""
 
     def test_default_layout_has_no_box_vars(self) -> None:
-        """from_slack даёт WLS-режим: размер = 2·n_bus−1, has_box=False."""
+        """from_slack gives WLS mode: size = 2·n_bus-1, has_box=False."""
         layout = StateLayout.from_slack(n_bus=10, slack_idx=0)
         assert not layout.has_box
         assert layout.n_box == 0
         assert layout.size == 2 * 10 - 1
 
     def test_with_box_vars_size(self) -> None:
-        """Layout с box-vars имеет соответствующий размер."""
+        """A layout with box vars has the corresponding size."""
         layout = StateLayout(
             n_bus=5,
             slack_idx=0,
@@ -144,7 +144,7 @@ class TestBoxVarsLayout:
         assert layout.has_box
 
     def test_offsets_consistent(self) -> None:
-        """Смещения секций согласованы с их размерами."""
+        """Section offsets are consistent with their sizes."""
         layout = StateLayout(
             n_bus=3,
             slack_idx=0,
@@ -163,17 +163,17 @@ class TestBoxVarsLayout:
         assert layout.size == 11  # 9 + 2
 
     def test_box_index_validation(self) -> None:
-        """Индексы box-vars должны быть в [0, n_bus)."""
+        """Box-var indices must lie in [0, n_bus)."""
         with pytest.raises(ValueError, match="pgen_node_pos"):
             StateLayout(
                 n_bus=3,
                 slack_idx=0,
                 non_slack_idx=np.array([1, 2], dtype=np.int64),
-                pgen_node_pos=np.array([5], dtype=np.int64),  # вне диапазона
+                pgen_node_pos=np.array([5], dtype=np.int64),  # out of range
             )
 
     def test_box_index_must_be_1d(self) -> None:
-        """Box-индексы должны быть 1-D."""
+        """Box indices must be 1-D."""
         with pytest.raises(ValueError, match="must be 1-D"):
             StateLayout(
                 n_bus=3,
@@ -183,7 +183,7 @@ class TestBoxVarsLayout:
             )
 
     def test_backward_compat_pack_unpack_with_empty_box(self) -> None:
-        """С пустыми box-полями pack/unpack работают как раньше."""
+        """With empty box fields pack/unpack work as before."""
         layout = StateLayout(
             n_bus=4,
             slack_idx=0,
@@ -199,7 +199,7 @@ class TestBoxVarsLayout:
         assert layout.size == 2 * 4 - 1
 
     def test_pack_with_box_vars(self) -> None:
-        """pack правильно укладывает box-секции."""
+        """pack lays out the box sections correctly."""
         layout = StateLayout(
             n_bus=3,
             slack_idx=0,
@@ -224,7 +224,7 @@ class TestBoxVarsLayout:
         assert e[7] == 30.0  # Pnag[1]
 
     def test_pack_validates_box_arr_required(self) -> None:
-        """В IPM-режиме box-массив обязателен если в layout есть box-vars."""
+        """In IPM mode the box array is mandatory if the layout has box vars."""
         layout = StateLayout(
             n_bus=3,
             slack_idx=0,
@@ -236,11 +236,11 @@ class TestBoxVarsLayout:
                 delta=np.zeros(3),
                 v=np.ones(3),
                 layout=layout,
-                # pgen_estimated отсутствует — должно сломаться
+                # pgen_estimated is missing - this must fail
             )
 
     def test_unpack_full_returns_six_arrays(self) -> None:
-        """unpack_full всегда возвращает 6-tuple, пустые секции = пустые."""
+        """unpack_full always returns a 6-tuple, empty sections = empty."""
         layout = StateLayout(
             n_bus=3,
             slack_idx=0,
@@ -257,12 +257,12 @@ class TestBoxVarsLayout:
         np.testing.assert_allclose(delta, [0.0, 0.1, -0.1])
         np.testing.assert_allclose(v, [1.0, 1.05, 0.98])
         np.testing.assert_allclose(pgen, [100.0, 50.0])
-        assert qgen.size == 0  # пусто
+        assert qgen.size == 0  # empty
         assert pnag.size == 0
         assert qnag.size == 0
 
     def test_flat_start_with_box(self) -> None:
-        """flat_start_with_box инициализирует box-секции переданными значениями."""
+        """flat_start_with_box initialises the box sections with the supplied values."""
         layout = StateLayout(
             n_bus=2,
             slack_idx=0,
@@ -285,7 +285,7 @@ class TestBoxVarsLayout:
         assert e[4] == 50.0
 
     def test_flat_start_no_box_equals_basic(self) -> None:
-        """flat_start без box эквивалентен старой версии."""
+        """flat_start without box is equivalent to the old version."""
         layout = StateLayout.from_slack(n_bus=5, slack_idx=2)
         e1 = flat_start(layout)
         np.testing.assert_array_equal(e1[:4], np.zeros(4))

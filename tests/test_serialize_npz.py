@@ -19,7 +19,7 @@ from tests.test_contract_runtime import _arrays_bit_identical, _make_model
 
 
 def _input_columns_bit_identical(a: np.ndarray, b: np.ndarray, table: str) -> bool:
-    """Сравнить только INPUT-колонки (KEY + INPUT + WORKING) двух массивов."""
+    """Compare only the INPUT columns (KEY + INPUT + WORKING) of two arrays."""
     in_dt = getattr(SE_INPUT, table).input_dtype()
     for col in in_dt.names:
         nan_aware = a.dtype[col].kind in "fc"
@@ -29,7 +29,7 @@ def _input_columns_bit_identical(a: np.ndarray, b: np.ndarray, table: str) -> bo
 
 
 def test_roundtrip_contract_tables_bit_identical(tmp_path):
-    """Контрактные таблицы (nodes/branches/measurements/generators) — бит-в-бит по INPUT-колонкам."""
+    """Contract tables (nodes/branches/measurements/generators) are bit-for-bit on the INPUT columns."""
     se_in = SEInput.from_model(_make_model())
     p = save_se_input(se_in, tmp_path / "m.npz")
     se_out = load_se_input_npz(p)
@@ -37,19 +37,21 @@ def test_roundtrip_contract_tables_bit_identical(tmp_path):
     for table in ("nodes", "branches", "measurements", "generators"):
         a = getattr(se_in.model, table).to_numpy()
         b = getattr(se_out.model, table).to_numpy()
-        # Генераторы не имеют OUTPUT — полные массивы идентичны
+        # Generators have no OUTPUT - the full arrays are identical
         if table == "generators":
-            assert _arrays_bit_identical(a, b), f"{table}: round-trip не бит-в-бит"
+            assert _arrays_bit_identical(a, b), f"{table}: round-trip is not bit-for-bit"
         else:
-            # Остальные таблицы: OUTPUT-колонки в se_out — нули (добавлены expand_to_io),
-            # поэтому сравниваем только INPUT-колонки контракта
-            assert _input_columns_bit_identical(a, b, table), f"{table}: INPUT-колонки не бит-в-бит"
+            # Other tables: the OUTPUT columns in se_out are zeros (added by expand_to_io),
+            # so we compare only the contract INPUT columns
+            assert _input_columns_bit_identical(a, b, table), (
+                f"{table}: INPUT columns are not bit-for-bit"
+            )
     assert se_out.contract_version == se_in.contract_version
-    assert se_out.derived is None  # модель без планов
+    assert se_out.derived is None  # model without plans
 
 
 def test_npz_has_no_output_columns(tmp_path):
-    """Сохранённый NPZ содержит только INPUT-колонки (без OUTPUT)."""
+    """The saved NPZ contains only INPUT columns (no OUTPUT)."""
     from gridstate.contract.tables import SE_INPUT as _SE_INPUT
 
     se_in = SEInput.from_model(_make_model())
@@ -59,16 +61,16 @@ def test_npz_has_no_output_columns(tmp_path):
         for table in ("nodes", "branches", "measurements"):
             arr = np.asarray(npz[table])
             in_dt = getattr(_SE_INPUT, table).input_dtype()
-            # Массив должен иметь ровно input_dtype — ни больше, ни меньше
+            # The array must have exactly input_dtype - no more, no fewer
             assert set(arr.dtype.names or ()) == set(in_dt.names or ()), (
-                f"{table}: NPZ содержит лишние колонки: "
+                f"{table}: NPZ contains extra columns: "
                 f"{set(arr.dtype.names or ()) - set(in_dt.names or ())}"
             )
 
 
 def test_roundtrip_domain_tables(tmp_path):
-    """Доменные input-таблицы tap_steps/load_characteristics/shunts переживают
-    save/load без потерь."""
+    """Domain input tables tap_steps/load_characteristics/shunts survive
+    save/load without loss."""
     from gridstate.contract import SE_INPUT
     from gridstate.working import Working
 
@@ -104,12 +106,12 @@ def test_roundtrip_domain_tables(tmp_path):
 
     for name, ref in (("tap_steps", taps), ("load_characteristics", lc), ("shunts", sh)):
         got = getattr(se_out.model, name).to_numpy()
-        assert _arrays_bit_identical(got, ref), f"{name}: round-trip не бит-в-бит"
+        assert _arrays_bit_identical(got, ref), f"{name}: round-trip is not bit-for-bit"
 
 
 def test_domain_tables_absent_loads_empty(tmp_path):
-    """npz без доменных таблиц грузится: коллекции пустые, прогон не падает."""
-    se_in = SEInput.from_model(_make_model())  # модель без доменных таблиц
+    """An npz without domain tables loads: the collections are empty, the run does not fail."""
+    se_in = SEInput.from_model(_make_model())  # model without domain tables
     p = save_se_input(se_in, tmp_path / "noaux.npz")
     se_out = load_se_input_npz(p)
     for name in ("tap_steps", "load_characteristics", "shunts"):
@@ -117,7 +119,7 @@ def test_domain_tables_absent_loads_empty(tmp_path):
 
 
 def test_roundtrip_derived_plans(tmp_path):
-    """``DerivedInputs`` (числовые планы шагов) восстанавливаются round-trip."""
+    """``DerivedInputs`` (numeric step plans) are restored by the round trip."""
     from gridstate.contract.derived import DerivedInputs
 
     derived = DerivedInputs(
@@ -142,7 +144,7 @@ def test_roundtrip_derived_plans(tmp_path):
 
 
 def _rewrite_contract_version(path, new_version: str):
-    """Перезаписать ``__contract_version__`` в npz (остальное — без изменений)."""
+    """Overwrite ``__contract_version__`` in the npz (everything else unchanged)."""
     with np.load(path, allow_pickle=False) as npz:
         arrays = {k: npz[k] for k in npz.files}
     arrays["__contract_version__"] = np.asarray(str(new_version))
@@ -150,11 +152,11 @@ def _rewrite_contract_version(path, new_version: str):
 
 
 def test_load_npz_raises_on_incompatible_version(tmp_path):
-    """Загрузка npz с несовместимым (другой major) contract_version падает явно.
+    """Loading an npz with an incompatible (different major) contract_version fails explicitly.
 
-    Граница входа обязана отбраковать данные старой схемы (например, под
-    контракт 1.0.0 после заморозки 2.0.0), а не молча грузить несовместимую
-    структуру, которая упадёт глубже непонятной ошибкой.
+    The input boundary must reject data of an old schema (for example, under
+    contract 1.0.0 after the 2.0.0 freeze) instead of silently loading an incompatible
+    structure that would fail deeper with an obscure error.
     """
     from gridstate.contract.version import current_version
 
@@ -167,23 +169,23 @@ def test_load_npz_raises_on_incompatible_version(tmp_path):
     with pytest.raises(ValueError) as exc:
         load_se_input_npz(p)
     msg = str(exc.value)
-    # Сообщение несёт обе версии и подсказку перегенерировать.
+    # The message carries both versions and a hint to regenerate.
     assert incompatible in msg
     assert "regenerate" in msg.lower()
 
 
 def test_load_npz_accepts_current_version(tmp_path):
-    """Sanity: npz, собранный текущим контрактом, грузится без ошибки версии."""
+    """Sanity: an npz built by the current contract loads without a version error."""
     se_in = SEInput.from_model(_make_model())
     p = save_se_input(se_in, tmp_path / "fresh.npz")
-    # Не должно бросать — версия совпадает со встроенной.
+    # Must not raise - the version matches the built-in one.
     se_out = load_se_input_npz(p)
     assert se_out.contract_version == se_in.contract_version
 
 
 @pytest.mark.parametrize("algorithm", ["wls", "ipm"])
 def test_run_bit_identical_via_npz(tmp_path, algorithm):
-    """End-to-end: ``run`` из npz ≡ ``run`` из исходной модели (бит-в-бит)."""
+    """End-to-end: ``run`` from the npz == ``run`` from the source model (bit for bit)."""
     cfg = PipelineConfig(algorithm=algorithm)
     model = _make_model()
     out_direct = contract_run(SEInput.from_model(model), config=cfg, validate=False)

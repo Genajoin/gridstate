@@ -1,7 +1,7 @@
-"""KKTSolver: реюз символьной факторизации CHOLMOD + scipy-фолбэк.
+"""KKTSolver: reuse of the CHOLMOD symbolic factorisation + scipy fallback.
 
-Тесты cholmod-бэкенда скипаются без cvxopt (optional-зависимость
-``gridstate[fast]``); scipy-путь и resolve-логика проверяются всегда.
+The cholmod backend tests are skipped without cvxopt (optional dependency
+``gridstate[fast]``); the scipy path and the resolve logic are always checked.
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from gridstate.algorithms.kkt_solver import KKTSolver, resolve_backend
 
 HAS_CVXOPT = ks._cvxopt_available()
 
-needs_cvxopt = pytest.mark.skipif(not HAS_CVXOPT, reason="cvxopt не установлен")
+needs_cvxopt = pytest.mark.skipif(not HAS_CVXOPT, reason="cvxopt is not installed")
 
 
 def _spd(n: int, seed: int, density: float = 0.1) -> csc_matrix:
-    """Случайная SPD-матрица: AᵀA + n·I."""
+    """Random SPD matrix: AᵀA + n·I."""
     rng = np.random.default_rng(seed)
     A = sparse_random(n, n, density=density, random_state=rng, format="csc")
     eye = csc_matrix((np.full(n, float(n)), (np.arange(n), np.arange(n))), shape=(n, n))
@@ -58,14 +58,14 @@ class TestScipyBackend:
 @needs_cvxopt
 class TestCholmodBackend:
     def test_sequence_same_pattern(self) -> None:
-        """Значения меняются, паттерн фиксирован — symbolic один раз."""
+        """Values change, the pattern is fixed - symbolic analysis runs once."""
         G = _spd(40, seed=2)
         solver = KKTSolver("cholmod")
         rng = np.random.default_rng(3)
         for _ in range(5):
             Gi = G.copy()
             Gi.data = Gi.data * rng.uniform(0.5, 2.0)
-            Gi = (Gi + Gi.T).tocsc()  # симметрия после случайного скейла
+            Gi = (Gi + Gi.T).tocsc()  # symmetry after random scaling
             Gi = (
                 Gi + csc_matrix((np.full(40, 80.0), (np.arange(40), np.arange(40))), (40, 40))
             ).tocsc()
@@ -75,7 +75,7 @@ class TestCholmodBackend:
             )
 
     def test_pattern_growth_and_shrink(self) -> None:
-        """Дрожь паттерна (±элементы) — superset-проекция, решения верны."""
+        """Pattern jitter (±entries) - superset projection, solutions are correct."""
         n = 25
         base = _spd(n, seed=4)
         extra = csc_matrix(([0.3, 0.3], ([0, n - 1], [n - 1, 0])), shape=(n, n))
@@ -88,22 +88,22 @@ class TestCholmodBackend:
             )
 
     def test_non_pd_falls_back_to_spsolve(self) -> None:
-        """Симметричная не-PD матрица: единичный spsolve-фолбэк."""
+        """Symmetric non-PD matrix: single spsolve fallback."""
         G = csc_matrix(np.diag([1.0, -1.0, 2.0]))
         rhs = np.array([1.0, 2.0, 4.0])
         solver = KKTSolver("cholmod")
         np.testing.assert_allclose(solver.solve(G, rhs), [1.0, -2.0, 2.0])
 
     def test_pattern_eps_does_not_change_values(self) -> None:
-        """Проекция на superset не искажает данные (ε вне разрядности)."""
+        """Projection onto the superset does not distort the data (ε is below the precision)."""
         n = 25
         base = _spd(n, seed=5)
         extra = csc_matrix(([0.3, 0.3], ([0, n - 1], [n - 1, 0])), shape=(n, n))
         wide = (base + extra).tocsc()
         solver = KKTSolver("cholmod")
         rhs = np.ones(n)
-        solver.solve(wide, rhs)  # union-паттерн = wide
-        # base ⊂ wide: решение через дырки с ε == точному решению base
+        solver.solve(wide, rhs)  # union pattern = wide
+        # base ⊂ wide: the solution through the holes with ε == the exact base solution
         np.testing.assert_allclose(
             solver.solve(base, rhs), spsolve(base, rhs), rtol=1e-8, atol=1e-12
         )
@@ -112,7 +112,7 @@ class TestCholmodBackend:
 @needs_cvxopt
 class TestSolverIntegration:
     def test_run_same_result_both_backends(self) -> None:
-        """run() c kkt_solver='cholmod' ≈ 'scipy' (wls и ipm)."""
+        """run() with kkt_solver='cholmod' ≈ 'scipy' (wls and ipm)."""
         import sys
         from pathlib import Path
 
@@ -124,8 +124,8 @@ class TestSolverIntegration:
         for algorithm in ("wls", "ipm"):
             results = {}
             for backend in ("scipy", "cholmod"):
-                # ШР заглушен: модель с реактором 605 МВАр конфликтна с
-                # нулевыми Qinj-мерами и не даёт success на IPM (как в
+                # Shunt reactor muted: a model with a 605 MVAr reactor conflicts with
+                # zero Qinj measurements and does not reach success on IPM (as in
                 # test_bad_data_repass).
                 model = _make_model_with_reactor(susceptance_uS=0.0)
                 res = run(model, config=PipelineConfig(algorithm=algorithm, kkt_solver=backend))
