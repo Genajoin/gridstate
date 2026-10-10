@@ -6,10 +6,10 @@ cross-run warm start is given explicitly: the previous ``SEResult`` is passed as
 
 * unit: ``_seed_warm_start`` writes V/delta from the result into the clone;
 * e2e synthetic: ``run(wls)`` -> ``run(ipm, init_state=res)`` without a crash + an event;
-* ``warm_start_mode``: ``"seed_inputs"`` (default) seeds V/delta into the node
-  table before preprocessing, which also moves the pseudo-V priors;
-  ``"x0_only"`` passes the previous solution as the explicit initial point
-  (``estimate(x0=...)``) and the solve sees the cold-start problem.
+* ``warm_start_mode``: ``"x0_only"`` (default) passes the previous solution as
+  the explicit initial point (``estimate(x0=...)``) and the solve sees the
+  cold-start problem; ``"seed_inputs"`` seeds V/delta into the node table
+  before preprocessing, which also moves the pseudo-V priors.
 """
 
 from __future__ import annotations
@@ -74,8 +74,8 @@ def test_run_with_init_state_no_crash_and_event():
 
 
 def test_warm_start_mode_default_and_validation():
-    assert PipelineConfig().warm_start_mode == "seed_inputs"
-    PipelineConfig(warm_start_mode="x0_only").validate()
+    assert PipelineConfig().warm_start_mode == "x0_only"
+    PipelineConfig(warm_start_mode="seed_inputs").validate()
     with pytest.raises(ValueError, match="warm_start_mode"):
         PipelineConfig(warm_start_mode="x0")
     cfg = PipelineConfig()
@@ -87,7 +87,7 @@ def test_warm_start_mode_default_and_validation():
 def test_warm_start_mode_in_manifest():
     params = {p["name"]: p for p in manifest()["params"]}
     entry = params["warm_start_mode"]
-    assert entry["default"] == "seed_inputs"
+    assert entry["default"] == "x0_only"
     assert entry["choices"] == ["seed_inputs", "x0_only"]
     assert entry["control"] == "select"
 
@@ -177,15 +177,16 @@ def test_x0_only_warm_start_solves_the_cold_problem(spy_estimate, algorithm):
 
 
 def test_seed_inputs_warm_start_moves_the_pseudo_priors(spy_estimate):
-    """seed_inputs (default, kept behaviour): the seeded V is the pseudo-V operating point."""
+    """seed_inputs (the previous default): the seeded V is the pseudo-V operating point."""
     se = _ieee("case14_degraded")
-    prev = run(se.model, config=PipelineConfig())
+    cfg = PipelineConfig(warm_start_mode="seed_inputs")
+    prev = run(se.model, config=cfg)
 
     spy_estimate.clear()
-    run(se.model, config=PipelineConfig())
+    run(se.model, config=cfg)
     cold = spy_estimate[0]["measurements"]
     spy_estimate.clear()
-    run(se.model, config=PipelineConfig(), init_state=prev)
+    run(se.model, config=cfg, init_state=prev)
     warm_call = spy_estimate[0]
     warm = warm_call["measurements"]
 
@@ -213,12 +214,12 @@ def test_modes_agree_bit_for_bit_without_pseudo_v_priors(algorithm):
     """Fully measured input (no pseudo-V priors): both modes give the same start and result."""
     se = _ieee("case14")
     prev = run(se.model, config=PipelineConfig(algorithm="wls"))
-    seed = run(se.model, config=PipelineConfig(algorithm=algorithm), init_state=prev)
-    x0 = run(
+    seed = run(
         se.model,
-        config=PipelineConfig(algorithm=algorithm, warm_start_mode="x0_only"),
+        config=PipelineConfig(algorithm=algorithm, warm_start_mode="seed_inputs"),
         init_state=prev,
     )
+    x0 = run(se.model, config=PipelineConfig(algorithm=algorithm), init_state=prev)
     for name in ("voltage_magnitude", "voltage_angle", "p_inj_calc", "q_inj_calc"):
         assert np.array_equal(seed.outputs.nodes[name], x0.outputs.nodes[name]), name
     assert seed.iterations == x0.iterations

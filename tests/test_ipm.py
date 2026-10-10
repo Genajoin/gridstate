@@ -458,7 +458,7 @@ class TestTrustRegionScope:
         )
 
     def test_box_move_no_longer_throttles_the_step(self) -> None:
-        whole = self._solve(inner_max=200)
+        whole = self._solve(inner_max=200, tr_exclude_box=False)
         free_only = self._solve(inner_max=200, tr_exclude_box=True)
         assert whole.success and free_only.success
         assert free_only.iterations_inner_total < whole.iterations_inner_total / 5
@@ -474,12 +474,18 @@ class TestTrustRegionScope:
         assert abs(step[1]) > 0.01
 
         calls_all: list[np.ndarray] = []
-        self._solve(calls_all, tr_radius=0.01, inner_max=1, outer_max=1)
+        self._solve(calls_all, tr_exclude_box=False, tr_radius=0.01, inner_max=1, outer_max=1)
         step_all = calls_all[1] - calls_all[0]
         assert np.max(np.abs(step_all)) == pytest.approx(0.01, rel=1e-9)
         # Same direction, different length.
         cos = step @ step_all / (np.linalg.norm(step) * np.linalg.norm(step_all))
         assert cos == pytest.approx(1.0, abs=1e-12)
+
+    def test_default_is_free_coordinates_only(self) -> None:
+        default = self._solve(inner_max=200)
+        free_only = self._solve(inner_max=200, tr_exclude_box=True)
+        assert np.array_equal(default.x, free_only.x)
+        assert default.iterations_inner_total == free_only.iterations_inner_total
 
     def test_without_boxes_the_flag_is_a_no_op(self) -> None:
         a = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])

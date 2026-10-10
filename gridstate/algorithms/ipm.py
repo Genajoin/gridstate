@@ -261,7 +261,7 @@ def solve_ipm(
     armijo_max: int = 20,
     fraction_to_boundary: float = 0.995,
     tr_radius: float = 0.5,
-    tr_exclude_box: bool = False,
+    tr_exclude_box: bool = True,
     huber_c: float = 0.0,
     huber_mask: np.ndarray | None = None,
     huber_w_floor: float = 0.05,
@@ -306,14 +306,14 @@ def solve_ipm(
             barrier curvature can go past the boundary even after the
             fraction-to-boundary clip.
         tr_exclude_box: which coordinates the trust-region norm is taken over.
-            ``False`` (default) — all of ``x``: the whole step is scaled when
-            ``|Δx|∞ > tr_radius``. ``True`` — only the coordinates outside
-            ``box_idx``: the scaling factor is ``tr_radius / |Δx_free|∞`` and
-            it is still applied to the whole step (the Newton direction is
-            kept), so a box coordinate that has to travel far no longer shrinks
-            the step of the free ones. Box coordinates stay protected by the
-            fraction-to-boundary rule. Without box variables both choices
-            are the same.
+            ``True`` (default) — only the coordinates outside ``box_idx``:
+            the scaling factor is ``tr_radius / |Δx_free|∞`` and it is still
+            applied to the whole step (the Newton direction is kept), so a
+            box coordinate that has to travel far no longer shrinks the step
+            of the free ones. Box coordinates stay protected by the
+            fraction-to-boundary rule. ``False`` — all of ``x``: the whole
+            step is scaled when ``|Δx|∞ > tr_radius``. Without box variables
+            both choices are the same.
         huber_c: parameter of the SHGM-IRLS Huber ψ-function. ``0.0`` — pure WLS
             inside the IPM (no reweighting). ``>0`` — after ``huber_warmup_iters``
             inner iterations the measurement weights are multiplied by

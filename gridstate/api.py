@@ -88,7 +88,7 @@ def estimate(
     quality_summary_top_n: int = 10,
     quality_summary_scope: str = "real",
     x0: InitialPoint | None = None,
-    quality_summary_rn_method: str = "solve",
+    quality_summary_rn_method: str = "selected_inversion",
     quality_summary_rn_refine_below: float = SELINV_REFINE_BELOW,
     quality_summary_near_critical: float = NEAR_CRITICAL_THRESHOLD,
     success_policy: SuccessPolicy = "legacy",
@@ -151,10 +151,11 @@ def estimate(
             with r_N in the hundreds) and the masked block-solve is ~2.5×
             cheaper. ``"all"`` — legacy semantics (every z-vector row).
         quality_summary_rn_method: method of ``diag(H G⁻¹ Hᵀ)`` for the
-            normalized residuals: ``"solve"`` (per-row triangular solves) or
-            ``"selected_inversion"`` (Takahashi recurrence on the sparse
-            Cholesky factor, needs numba; see
-            :mod:`gridstate.algebra.normalized_residuals`).
+            normalized residuals: ``"selected_inversion"`` (default; Takahashi
+            recurrence on the sparse Cholesky factor, the rows with a small
+            ``Ω_ii / σ²_i`` recomputed by solves; needs numba, otherwise
+            ``"solve"`` is used) or ``"solve"`` (per-row triangular solves);
+            see :mod:`gridstate.algebra.normalized_residuals`.
         quality_summary_rn_refine_below: ``"selected_inversion"`` only —
             measurements whose ``Ω_ii / σ²_i`` from the selected inverse is
             below this value are recomputed by per-row solves; those at the
@@ -171,7 +172,7 @@ def estimate(
             (``kkt`` or ``mu_schedule_done`` only). ``solve_status`` and
             ``objective_wls`` are reported under both policies.
         **ipm_kwargs: IPM-mode knobs, ignored for WLS. ``trust_region_scope``
-            (``"all"`` default | ``"state"``) selects the coordinates the IPM
+            (``"state"`` default | ``"all"``) selects the coordinates the IPM
             trust region is measured on (see ``_run_ipm``); everything else is
             forwarded to ``build_ipm_setup`` (``balance_weight_factor``,
             ``bound_relax``, prior sigmas — the A/B-calibration knobs).
@@ -408,7 +409,7 @@ def _populate_quality_summary(
     delta_rad: np.ndarray,
     top_n: int,
     scope: str = "real",
-    rn_method: str = "solve",
+    rn_method: str = "selected_inversion",
     rn_refine_below: float = SELINV_REFINE_BELOW,
     near_critical: float = NEAR_CRITICAL_THRESHOLD,
 ) -> None:
@@ -491,7 +492,7 @@ def populate_quality_summary(
     *,
     top_n: int = 10,
     scope: str = "real",
-    rn_method: str = "solve",
+    rn_method: str = "selected_inversion",
     rn_refine_below: float = SELINV_REFINE_BELOW,
     near_critical: float = NEAR_CRITICAL_THRESHOLD,
 ) -> None:
@@ -647,7 +648,7 @@ def _run_ipm(
     huber_leverage_b_threshold_pu: float = 2.0,
     huber_w_floor: float = 0.05,
     kkt: KKTSolver | None = None,
-    trust_region_scope: str = "all",
+    trust_region_scope: str = "state",
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM mode: extends the state vector with box-vars and solves the primal log-barrier WLS.
@@ -658,8 +659,8 @@ def _run_ipm(
     ``write_node_estimates``.
 
     ``trust_region_scope`` — the coordinates whose Newton step is bounded by
-    the trust region (``tr_radius=0.5``): ``"all"`` (default) — the whole state
-    vector, box variables included; ``"state"`` — V and δ only. In both cases
+    the trust region (``tr_radius=0.5``): ``"state"`` (default) — V and δ only;
+    ``"all"`` — the whole state vector, box variables included. In both cases
     the step keeps its direction (one scaling factor for the whole step); with
     ``"state"`` the factor comes from V/δ, so a generation/load box variable
     that has to move tens of p.u. no longer shrinks the V/δ step. The box

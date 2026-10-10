@@ -1788,11 +1788,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 272.01728163678155,
+   "objective_value": 272.98911063326074,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 809.3767825675199,
+    "value": 811.3782477508014,
     "dof": 193,
     "threshold": 226.41271635215446,
     "passes": false
@@ -2027,7 +2027,7 @@
     "stats": {
      "v_priors_added": 23,
      "zero_inj_added": 1,
-     "unobservable_v_tight": 6,
+     "unobservable_v_tight": 0,
      "unknown_load_loose": 0
     }
    },
@@ -2054,9 +2054,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 484.151228899779,
+     "objective_value": 486.3494651959344,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 2149.4090855577388
+     "objective_wls": 2155.984577800871
     }
    },
    {
@@ -2076,7 +2076,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 792.8829732989669
+     "objective_wls": 796.6452226061292
     }
    },
    {
@@ -2124,10 +2124,14 @@
       "tightened": 6,
       "conflicting": 1
      },
+     "v_mirror_chain": {
+      "max_depth": 3,
+      "nodes": 16
+     },
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 809.3767825675199
+     "objective_wls": 811.3782477508014
     }
    },
    {

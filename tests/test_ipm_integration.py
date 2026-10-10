@@ -238,6 +238,29 @@ class TestIPMIntegration:
         with pytest.raises(ValueError, match="trust_region_scope='box'"):
             estimate(m, algorithm="ipm", max_iterations=20, trust_region_scope="box")
 
+    def test_ipm_trust_region_scope_default_is_state(self) -> None:
+        """estimate() follows PipelineConfig: the trust region is on V/δ by default."""
+        import inspect
+
+        import numpy as np
+
+        from gridstate.algorithms.ipm import solve_ipm
+        from gridstate.api import _run_ipm
+        from gridstate.pipeline import PipelineConfig
+
+        assert PipelineConfig().ipm_trust_region_scope == "state"
+        assert inspect.signature(_run_ipm).parameters["trust_region_scope"].default == "state"
+        assert inspect.signature(solve_ipm).parameters["tr_exclude_box"].default is True
+        default = estimate(_build_three_bus_with_bounds(), algorithm="ipm", max_iterations=20)
+        explicit = estimate(
+            _build_three_bus_with_bounds(),
+            algorithm="ipm",
+            max_iterations=20,
+            trust_region_scope="state",
+        )
+        assert np.array_equal(default.v_pu, explicit.v_pu)
+        assert np.array_equal(default.delta_rad, explicit.delta_rad)
+
     def test_ipm_trust_region_scope_state_runs(self) -> None:
         """trust_region_scope="state" reaches the solver and respects the boxes."""
         m = _build_three_bus_with_bounds()
