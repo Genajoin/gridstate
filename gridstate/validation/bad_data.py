@@ -11,10 +11,15 @@ Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
     Ω = R − H G⁻¹ Hᵀ                       (ковариация невязок)
     r^N_i = |r_i| / √(diag(Ω)_i)            (нормированный остаток)
 
-    while max(r^N) > threshold:
+    while max(finite r^N) > threshold:
         пометить максимальный r^N как BAD (status=False, quality=BAD)
         перезапустить estimate()
         пересчитать r^N
+
+Critical (non-redundant) measurements have ``diag(Ω)_i ≈ 0`` and
+``r^N_i = +inf``: their errors are undetectable and removing one makes the
+network unobservable, so they are never removed — only reported in
+``BadDataResult.critical_meas_ids``.
 
 Возвращает ``BadDataResult`` со списком удалённых ``meas_id`` и финальным
 ``SEResult``.
@@ -182,15 +187,20 @@ class BadDataResult:
         se_result: финальный ``SEResult`` после удаления всех плохих
             измерений.
         removed_meas_ids: список ``meas_id`` измерений, помеченных как BAD.
-        rn_max_history: значения ``max(r^N)`` после каждой итерации
-            (включая последнюю, прошедшую тест).
+        rn_max_history: значения ``max(r^N)`` по конечным ``r^N`` после
+            каждой итерации (включая последнюю, прошедшую тест); ``0.0`` when
+            no measurement has a finite ``r^N``.
         converged: ``True``, если на финальной итерации ``max(r^N) ≤ threshold``.
+        critical_meas_ids: ``meas_id`` of the critical (non-redundant)
+            measurements of the last checked iteration (``r^N = inf``). They
+            are never removed: their errors cannot be detected by the test.
     """
 
     se_result: SEResult
     removed_meas_ids: list[int] = field(default_factory=list)
     rn_max_history: list[float] = field(default_factory=list)
     converged: bool = False
+    critical_meas_ids: list[int] = field(default_factory=list)
 
 
 def _normalized_residuals(diag: Diagnostics) -> np.ndarray:
@@ -247,6 +257,9 @@ def remove_bad_data(
         3. Если ``max(r^N) > threshold`` — плохое измерение помечается
            ``status=False, quality=BAD`` и цикл повторяется.
 
+    Only finite ``r^N`` take part in the test: critical measurements
+    (``r^N = inf``) are kept and listed in ``critical_meas_ids``.
+
     Args:
         model: ``Working`` — обновляется in-place.
         measurements: коллекция — если ``None``, ``model.measurements``.
@@ -263,6 +276,7 @@ def remove_bad_data(
 
     removed: list[int] = []
     rn_history: list[float] = []
+    critical: list[int] = []
 
     def _run_estimate() -> SEResult:
         return estimate(
@@ -281,6 +295,7 @@ def remove_bad_data(
             removed_meas_ids=removed,
             rn_max_history=rn_history,
             converged=converged,
+            critical_meas_ids=critical,
         )
 
     # Первый прогон — до цикла; цикл только повторяет estimate после отбраковки.
@@ -297,7 +312,10 @@ def remove_bad_data(
             return _result(converged=True)
 
         rn = _normalized_residuals(diag)
-        rn_max = float(np.max(rn))
+        # Critical measurements (r^N = inf) are never candidates for removal.
+        finite = np.isfinite(rn)
+        critical = [int(i) for i in diag.meas_index.meas_id[~finite]]
+        rn_max = float(np.max(rn[finite])) if finite.any() else 0.0
         rn_history.append(rn_max)
 
         if rn_max <= rn_max_threshold:
@@ -307,10 +325,16 @@ def remove_bad_data(
                 rn_max,
                 rn_max_threshold,
             )
+            if critical:
+                logger.info(
+                    "rn_max: %d critical measurement(s) kept (r^N undefined): ids=%s",
+                    len(critical),
+                    critical,
+                )
             return _result(converged=True)
 
         # Иначе — отбрасываем худшее измерение.
-        bad_pos = int(np.argmax(rn))
+        bad_pos = int(np.argmax(np.where(finite, rn, -np.inf)))
         bad_id = int(diag.meas_index.meas_id[bad_pos])
         bad_meas = measurements.get_by_id(bad_id)
         if bad_meas is None:
