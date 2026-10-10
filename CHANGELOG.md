@@ -13,6 +13,24 @@ cut by tagging the merged main commit; the version is derived from that tag.
 
 ### Breaking changes
 
+- Transformer branch shunt model: the whole "from" shunt of a branch
+  (`conductance_from` / `susceptance_from` plus half of `conductance` /
+  `susceptance`) is connected at the "from" node, in the "from"-side base,
+  before the ideal transformer. `build_ybus` no longer divides it by `|t|²`
+  (`Yff = Ysf + Yc_from`; `Yft`, `Ytf`, `Ytt` are unchanged), so it no longer
+  depends on the tap. The meaning of the contract fields `conductance_from` /
+  `susceptance_from` on transformers with an off-nominal ratio changes
+  accordingly: inputs that relied on the division (a shunt behind the ideal
+  transformer) must divide the "from" shunt by `|t|²` themselves. Lines and
+  transformers with `|t| = 1` in p.u. are not affected. Branch flows, `h(x)`,
+  the Jacobian, branch results and `compute_system_losses` all follow the
+  Y-bus. `tap_steps.shunt_factor` is still applied as given, but a tap change
+  needs no shunt rescaling any more (use `1.0`). `from_pandapower` converts
+  pandapower's from-end shunt (behind the ideal transformer) by dividing it by
+  `tap_pu²`; the Y-bus still equals pandapower's to 1e-13 p.u. for both
+  `trafo_model="t"` and `"pi"`. The IEEE fixtures and golden snapshots do not
+  change: none of their branches combines an off-nominal ratio with a "from"
+  shunt (#52)
 - `compute_system_losses`: the reactive power of node shunts and line charging
   is reported in the standard sign convention (Y = g + jb, b > 0 capacitive).
   `q_node_shunt`, `q_branch_shunt`, per-branch `q_loss_shunt` / `q_loss_total`

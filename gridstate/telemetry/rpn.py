@@ -25,10 +25,15 @@ def _apply_tap_steps_on_arrays(
     Mutates ``branches_arr``.
 
     The tap choice is made outside the core: ``tap_steps`` carries the target ``tap_ratio``/
-    ``phase_shift`` + ``shunt_factor`` (=(tap_new/tap_old)², 1.0 = no rescaling).
-    The kernel only applies them: it writes tap/phase and rescales the branch
-    shunt (fields ``!=0.0``).
-    This is format-agnostic transformer physics.
+    ``phase_shift`` + ``shunt_factor`` (1.0 = no rescaling).
+    The kernel only applies them: it writes tap/phase and multiplies the branch
+    shunt fields (those ``!=0.0``) by ``shunt_factor`` as given.
+
+    In the core's branch model the shunts do not depend on the tap: the whole
+    "from" shunt is connected at the "from" node, before the ideal transformer
+    (see :mod:`gridstate.ybus`). A tap change therefore needs no shunt
+    rescaling; ``shunt_factor`` is kept for producers whose shunt data
+    differ between tap positions, and the producer decides its value.
     """
     by_id = id_to_pos_map(branches_arr["id"])
     stats: dict[str, int | float] = {"applied": 0, "shunt_recalc": 0}
