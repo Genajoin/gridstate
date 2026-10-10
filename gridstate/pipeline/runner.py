@@ -102,15 +102,15 @@ def _check_derived_consistency(
         if step.toggle is not None and not getattr(cfg, step.toggle):
             continue
         missing.extend(
-            f"шаг '{step.name}' включён, derived.{attr} отсутствует"
+            f"step '{step.name}' is enabled but derived.{attr} is missing"
             for attr in plans
             if getattr(derived, attr, None) is None
         )
     if missing:
         raise ValueError(
-            "Рассинхрон config ↔ derived: "
+            "config <-> derived mismatch: "
             + "; ".join(missing)
-            + ". Деривация планов и прогон обязаны гейтиться одним и тем же config."
+            + ". Plan derivation and the run must be gated by the same config."
         )
 
 
