@@ -24,6 +24,7 @@ shunt power counted in the nodal injections) shows up there first.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -44,12 +45,18 @@ _CHI2_ALPHA = 1e-3
 _CASES = ["case14", "case30", "case118"]
 
 
-def _solve_and_compare(case: str) -> tuple[bool, int, float, float]:
-    """Run WLS SE on a fixture and return (success, iters, max|dV|pu, max|dtheta|deg)."""
+def _solve_and_compare(
+    case: str, config: PipelineConfig | None = None
+) -> tuple[bool, int, float, float]:
+    """Run SE on a fixture and return (success, iters, max|dV|pu, max|dtheta|deg).
+
+    ``config`` defaults to plain WLS.
+    """
     se_in = load_se_input_npz(_DATA_DIR / f"{case}.npz")
     truth = np.load(_DATA_DIR / f"{case}_truth.npz")
 
-    out = run_se(se_in, config=PipelineConfig(algorithm="wls"), validate=False)
+    cfg = config if config is not None else PipelineConfig(algorithm="wls")
+    out = run_se(se_in, config=cfg, validate=False)
 
     # Node Vnom from the input model (to convert kV -> p.u.).
     nodes = se_in.model.nodes.to_numpy()
@@ -97,6 +104,46 @@ def test_ieee_case_se_matches_powerflow(case: str) -> None:
     assert success, f"{case}: WLS did not converge ({iters} iterations)"
     assert max_dv <= _TOL_V_PU, f"{case}: max|dV|={max_dv:.4f} p.u. > {_TOL_V_PU}"
     assert max_dd <= _TOL_DELTA_DEG, f"{case}: max|dδ|={max_dd:.4f}° > {_TOL_DELTA_DEG}"
+
+
+# Cases where the whole-vector trust region clips IPM steps (a box variable
+# has to travel more than tr_radius); on case30 it never triggers.
+_TR_CLIPPED = {"case14": True, "case30": False, "case118": True}
+
+
+@pytest.mark.parametrize("case", _CASES)
+def test_ieee_case_ipm_trust_region_on_state_only(
+    case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IPM with ipm_trust_region_scope="state" converges, stays within the PF
+    tolerance and takes no more inner Newton iterations than the default scope;
+    strictly fewer where the default clip is active."""
+    import gridstate.api as api
+
+    inner: list[int] = []
+    solve = api.solve_ipm
+
+    def counting_solve(*args: Any, **kwargs: Any) -> Any:
+        res = solve(*args, **kwargs)
+        inner.append(res.iterations_inner_total)
+        return res
+
+    monkeypatch.setattr(api, "solve_ipm", counting_solve)
+
+    totals = {}
+    for scope in ("all", "state"):
+        inner.clear()
+        cfg = PipelineConfig(algorithm="ipm", ipm_trust_region_scope=scope)
+        success, iters, max_dv, max_dd = _solve_and_compare(case, cfg)
+        assert success, f"{case}/{scope}: IPM did not converge ({iters} iterations)"
+        assert max_dv <= _TOL_V_PU, f"{case}/{scope}: max|dV|={max_dv:.4f} p.u."
+        assert max_dd <= _TOL_DELTA_DEG, f"{case}/{scope}: max|dδ|={max_dd:.4f}°"
+        totals[scope] = sum(inner)
+
+    if _TR_CLIPPED[case]:
+        assert totals["state"] < totals["all"], totals
+    else:
+        assert totals["state"] == totals["all"], totals
 
 
 @pytest.mark.parametrize("case", _CASES)

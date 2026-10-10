@@ -252,6 +252,7 @@ def solve_ipm(
     armijo_max: int = 20,
     fraction_to_boundary: float = 0.995,
     tr_radius: float = 0.5,
+    tr_exclude_box: bool = False,
     huber_c: float = 0.0,
     huber_mask: np.ndarray | None = None,
     huber_w_floor: float = 0.05,
@@ -295,6 +296,15 @@ def solve_ipm(
             ±50 MW at BASE_MVA=100. Without the TR a Newton step at sharp
             barrier curvature can go past the boundary even after the
             fraction-to-boundary clip.
+        tr_exclude_box: which coordinates the trust-region norm is taken over.
+            ``False`` (default) — all of ``x``: the whole step is scaled when
+            ``|Δx|∞ > tr_radius``. ``True`` — only the coordinates outside
+            ``box_idx``: the scaling factor is ``tr_radius / |Δx_free|∞`` and
+            it is still applied to the whole step (the Newton direction is
+            kept), so a box coordinate that has to travel far no longer shrinks
+            the step of the free ones. Box coordinates stay protected by the
+            fraction-to-boundary rule. Without box variables both choices
+            are the same.
         huber_c: parameter of the SHGM-IRLS Huber ψ-function. ``0.0`` — pure WLS
             inside the IPM (no reweighting). ``>0`` — after ``huber_warmup_iters``
             inner iterations the measurement weights are multiplied by
@@ -365,6 +375,11 @@ def solve_ipm(
     )
 
     x = _project_to_interior(x_init, box_idx, box_lo, box_hi, box_eps)
+    # Coordinates whose step enters the trust-region norm (None: all of x).
+    tr_mask: np.ndarray | None = None
+    if tr_exclude_box and has_box:
+        tr_mask = np.ones(x.shape[0], dtype=bool)
+        tr_mask[box_idx] = False
     mu = float(mu_init)
     iter_inner_total = 0
     grad_inf = float("inf")
@@ -455,7 +470,12 @@ def solve_ipm(
             # Trust-region clip: |Δx|∞ ≤ tr_radius. We keep the direction,
             # scale the length. Protection against large Newton steps at sharp
             # barrier curvature near the box boundaries.
-            step_inf_raw = float(np.max(np.abs(dx))) if dx.size else 0.0
+            # With tr_exclude_box only the free coordinates set the factor.
+            if tr_mask is None:
+                step_inf_raw = float(np.max(np.abs(dx))) if dx.size else 0.0
+            else:
+                dx_tr = dx[tr_mask]
+                step_inf_raw = float(np.max(np.abs(dx_tr))) if dx_tr.size else 0.0
             if step_inf_raw > tr_radius:
                 dx = dx * (tr_radius / step_inf_raw)
             step_inf = float(np.max(np.abs(dx))) if dx.size else 0.0

@@ -6,12 +6,14 @@ They do not depend on the network model: they exercise the bare mechanics of log
 from __future__ import annotations
 
 import itertools
+from typing import Any
 
 import numpy as np
 import pytest
 from scipy.sparse import csr_matrix
 
 from gridstate.algorithms.ipm import (
+    IPMResult,
     _barrier_grad_hess,
     _barrier_value,
     _max_step_to_boundary,
@@ -418,3 +420,83 @@ class TestResidualReuse:
         # The reported objective is evaluated at the returned point.
         r = residual(result.x)
         assert result.objective_data == 0.5 * float(r @ r)
+
+
+# ---------------------------------------------------------------- trust region scope
+class TestTrustRegionScope:
+    """``tr_exclude_box``: the trust-region norm over the free coordinates only."""
+
+    # x = [v, g]: v free, g boxed in [0, 100]; the data pull g from 1 to ~60,
+    # a move far beyond tr_radius=0.5, while v only needs a small correction.
+    _A = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 0.01]])
+    _Z = np.array([1.0, 60.0, 1.6])
+    _R_INV = np.array([1e4, 1.0, 1e2])
+
+    def _solve(self, calls: list[np.ndarray] | None = None, **kwargs: Any) -> IPMResult:
+        a, z = self._A, self._Z
+
+        def residual(x: np.ndarray) -> np.ndarray:
+            if calls is not None:
+                calls.append(x.copy())
+            return z - a @ x
+
+        def jac(x: np.ndarray) -> csr_matrix:
+            return csr_matrix(a)
+
+        return solve_ipm(
+            x_init=np.array([0.0, 1.0]),
+            residual_fn=residual,
+            jacobian_fn=jac,
+            r_inv_diag=self._R_INV,
+            box_idx=np.array([1]),
+            box_lo=np.array([0.0]),
+            box_hi=np.array([100.0]),
+            **kwargs,
+        )
+
+    def test_box_move_no_longer_throttles_the_step(self) -> None:
+        whole = self._solve(inner_max=200)
+        free_only = self._solve(inner_max=200, tr_exclude_box=True)
+        assert whole.success and free_only.success
+        assert free_only.iterations_inner_total < whole.iterations_inner_total / 5
+        np.testing.assert_allclose(free_only.x, whole.x, atol=1e-3)
+
+    def test_factor_from_free_part_scales_the_whole_step(self) -> None:
+        """The first trial step keeps the Newton direction; its free part is
+        clipped to tr_radius, the box part may exceed it."""
+        calls: list[np.ndarray] = []
+        self._solve(calls, tr_exclude_box=True, tr_radius=0.01, inner_max=1, outer_max=1)
+        step = calls[1] - calls[0]
+        assert abs(step[0]) == pytest.approx(0.01, rel=1e-9)
+        assert abs(step[1]) > 0.01
+
+        calls_all: list[np.ndarray] = []
+        self._solve(calls_all, tr_radius=0.01, inner_max=1, outer_max=1)
+        step_all = calls_all[1] - calls_all[0]
+        assert np.max(np.abs(step_all)) == pytest.approx(0.01, rel=1e-9)
+        # Same direction, different length.
+        cos = step @ step_all / (np.linalg.norm(step) * np.linalg.norm(step_all))
+        assert cos == pytest.approx(1.0, abs=1e-12)
+
+    def test_without_boxes_the_flag_is_a_no_op(self) -> None:
+        a = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        z = np.array([3.0, -4.0, 0.0])
+
+        def residual(x: np.ndarray) -> np.ndarray:
+            return z - a @ x
+
+        def jac(x: np.ndarray) -> csr_matrix:
+            return csr_matrix(a)
+
+        res = [
+            solve_ipm(
+                x_init=np.zeros(2),
+                residual_fn=residual,
+                jacobian_fn=jac,
+                r_inv_diag=np.ones(3),
+                tr_exclude_box=flag,
+            )
+            for flag in (False, True)
+        ]
+        assert np.array_equal(res[0].x, res[1].x)
+        assert res[0].iterations_inner_total == res[1].iterations_inner_total

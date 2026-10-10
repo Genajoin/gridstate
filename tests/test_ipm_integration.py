@@ -229,3 +229,19 @@ class TestIPMIntegration:
         assert result.iterations < 15, (
             f"iterations={result.iterations} - lazy outer break does not work"
         )
+
+    def test_ipm_trust_region_scope_is_validated(self) -> None:
+        """An unknown trust_region_scope fails before any solve."""
+        import pytest
+
+        m = _build_three_bus_with_bounds()
+        with pytest.raises(ValueError, match="trust_region_scope='box'"):
+            estimate(m, algorithm="ipm", max_iterations=20, trust_region_scope="box")
+
+    def test_ipm_trust_region_scope_state_runs(self) -> None:
+        """trust_region_scope="state" reaches the solver and respects the boxes."""
+        m = _build_three_bus_with_bounds()
+        result = estimate(m, algorithm="ipm", max_iterations=20, trust_region_scope="state")
+        assert result.iterations > 0
+        for nid in (2, 3):
+            assert 0.0 <= m.nodes.get_by_id(nid).load_p_estimated <= 100.0

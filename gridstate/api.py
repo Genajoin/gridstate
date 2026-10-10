@@ -137,9 +137,11 @@ def estimate(
             out telemetry (large models: 8/10 of the top are our own priors
             with r_N in the hundreds) and the masked block-solve is ~2.5×
             cheaper. ``"all"`` — legacy semantics (every z-vector row).
-        **ipm_kwargs: forwarded to ``build_ipm_setup`` in IPM mode
-            (``balance_weight_factor``, ``bound_relax``, prior sigmas — the
-            A/B-calibration knobs). Ignored for WLS.
+        **ipm_kwargs: IPM-mode knobs, ignored for WLS. ``trust_region_scope``
+            (``"all"`` default | ``"state"``) selects the coordinates the IPM
+            trust region is measured on (see ``_run_ipm``); everything else is
+            forwarded to ``build_ipm_setup`` (``balance_weight_factor``,
+            ``bound_relax``, prior sigmas — the A/B-calibration knobs).
 
     Returns:
         ``SEResult`` with the fields ``success``, ``iterations``, ``objective_value``
@@ -522,6 +524,7 @@ def _run_ipm(
     huber_leverage_b_threshold_pu: float = 2.0,
     huber_w_floor: float = 0.05,
     kkt: KKTSolver | None = None,
+    trust_region_scope: str = "all",
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM mode: extends the state vector with box-vars and solves the primal log-barrier WLS.
@@ -530,7 +533,21 @@ def _run_ipm(
     including the box sections, the two-level ``status``, the μ/grad diagnostics).
     Writes the box-var values from the result into ``model.nodes`` via
     ``write_node_estimates``.
+
+    ``trust_region_scope`` — the coordinates whose Newton step is bounded by
+    the trust region (``tr_radius=0.5``): ``"all"`` (default) — the whole state
+    vector, box variables included; ``"state"`` — V and δ only. In both cases
+    the step keeps its direction (one scaling factor for the whole step); with
+    ``"state"`` the factor comes from V/δ, so a generation/load box variable
+    that has to move tens of p.u. no longer shrinks the V/δ step. The box
+    variables stay protected by the fraction-to-boundary rule. Note that the
+    Huber reweighting starts after ``huber_warmup_iters`` inner iterations, so
+    a solve that converges in fewer steps may finish before it engages.
     """
+    if trust_region_scope not in ("all", "state"):
+        raise ValueError(
+            f"trust_region_scope={trust_region_scope!r} is not one of ['all', 'state']"
+        )
     setup = build_ipm_setup(
         model,
         network_pu,
@@ -604,6 +621,9 @@ def _run_ipm(
         outer_max=20,
         mu_init=0.1,
         tr_radius=0.5,
+        # The box sections are the only boxed coordinates of layout_ipm, so
+        # "outside the boxes" is exactly V/δ.
+        tr_exclude_box=trust_region_scope == "state",
         huber_c=huber_c,
         huber_mask=huber_mask,
         huber_w_floor=huber_w_floor,

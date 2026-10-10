@@ -431,6 +431,19 @@ class PipelineConfig:
         depends={"algorithm": "ipm"},
         help="default 0.01 p.u.².",
     )
+    ipm_trust_region_scope: str = _param(
+        "all",
+        group=_G_IPM,
+        label="Trust region scope",
+        control="select",
+        choices=["all", "state"],
+        depends={"algorithm": "ipm"},
+        help="Coordinates whose Newton step is bounded by the trust region (0.5 p.u.). "
+        "all — the whole state vector, generation/load box variables included "
+        "(previous behaviour); state — V and δ only: a box variable that has to move "
+        "far no longer shrinks the V/δ step (boxes stay protected by "
+        "fraction-to-boundary). Under A/B evaluation.",
+    )
 
     # --- Post-processing ---
     bad_data: bool = _toggle(

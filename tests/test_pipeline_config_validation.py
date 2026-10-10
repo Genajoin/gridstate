@@ -92,6 +92,10 @@ def test_subclass_field_with_metadata_is_checked() -> None:
         ({"algorithm": "IPM"}, "algorithm='IPM' is not one of ['wls', 'ipm']"),
         ({"init": "dc"}, "init='dc' is not one of"),
         ({"kkt_solver": "umfpack"}, "kkt_solver='umfpack' is not one of"),
+        (
+            {"ipm_trust_region_scope": "box"},
+            "ipm_trust_region_scope='box' is not one of ['all', 'state']",
+        ),
         ({"gen_v_calibration_mode": "loose"}, "gen_v_calibration_mode='loose'"),
         ({"tolerance": 0.0}, "tolerance=0.0 is below the minimum"),
         ({"max_iterations": 0}, "max_iterations=0 is below the minimum 1"),
@@ -122,6 +126,16 @@ def test_all_problems_are_reported_together() -> None:
     assert "algorithm='x'" in text
     assert "tolerance=-1.0" in text
     assert "top_residuals_n=1000" in text
+
+
+def test_ipm_trust_region_scope_default_and_forwarding() -> None:
+    from gridstate.pipeline.passes import _estimate_kwargs
+
+    assert PipelineConfig().ipm_trust_region_scope == "all"
+    cfg = PipelineConfig(algorithm="ipm", ipm_trust_region_scope="state")
+    assert _estimate_kwargs(cfg, init="flat")["trust_region_scope"] == "state"
+    # WLS never sees the IPM knob.
+    assert "trust_region_scope" not in _estimate_kwargs(PipelineConfig(), init="flat")
 
 
 def test_replace_validates() -> None:
