@@ -1,12 +1,12 @@
-"""Доменные перечисления gridstate (контракт владеет ими).
+"""Domain enumerations of gridstate (owned by the contract).
 
-gridstate — самостоятельный модуль SE; домен-перечисления (типы узлов/ветвей/
-измерений) фиксируются **здесь** и являются каноническим источником: модули
-телеметрии/препроцессинга ссылаются на эти константы.
+gridstate is a self-contained SE module; the domain enumerations (node/branch/
+measurement types) are fixed **here** and are the canonical source: the
+telemetry/preprocessing modules refer to these constants.
 
-Числовые значения IntEnum — часть контракта данных: они участвуют в
-целочисленных сравнениях z-вектора/фильтров/таблиц, поэтому стабильны и не
-меняются произвольно.
+The numeric values of IntEnum are part of the data contract: they take part in
+integer comparisons of the z-vector/filters/tables, so they are stable and are not
+changed arbitrarily.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 
-# Численный guard от переполнения R⁻¹ = 1/σ² на per-measurement диагонали R.
+# Numerical guard against overflow of R⁻¹ = 1/σ² on the per-measurement diagonal of R.
 # The value 1e-10 (the historical WLS floor, algorithms/wls.py) removes a silent
 # wls(1e-10)/ipm(1e-12) divergence. On the production models min σ² ≈ 1.8e-7, far
 # above the floor, so the choice is bit-neutral (no measurement falls into the
@@ -23,7 +23,7 @@ SIGMA2_FLOOR: float = 1e-10
 
 
 class NodeType(IntEnum):
-    """Тип узла (``node_type``-колонка контракта)."""
+    """Node type (the ``node_type`` column of the contract)."""
 
     PQ = 0
     PV = 1
@@ -31,7 +31,7 @@ class NodeType(IntEnum):
 
 
 class BranchType(IntEnum):
-    """Тип ветви (``branch_type``-колонка контракта)."""
+    """Branch type (the ``branch_type`` column of the contract)."""
 
     LINE = 0
     TRANSFORMER = 1
@@ -39,7 +39,7 @@ class BranchType(IntEnum):
 
 
 class MeasurementType(IntEnum):
-    """Тип измерения (``measurement_type``-колонка контракта)."""
+    """Measurement type (the ``measurement_type`` column of the contract)."""
 
     POWER_P = 0
     POWER_Q = 1
@@ -80,7 +80,7 @@ class FilterFlag(IntEnum):
 
 
 class MeasurementObjectType(IntEnum):
-    """Тип объекта измерения (``object_type``-колонка контракта)."""
+    """Measured object type (the ``object_type`` column of the contract)."""
 
     NODE = 0
     BRANCH = 1

@@ -97,7 +97,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class BranchLossRow:
-    """Per-branch разбивка потерь (физ. единицы, МВт/МВАр)."""
+    """Per-branch loss breakdown (physical units, MW/MVAr)."""
 
     branch_id: int
     from_node: int
@@ -113,11 +113,11 @@ class BranchLossRow:
 
 @dataclass
 class SystemLosses:
-    """Сводка по системе."""
+    """System summary."""
 
     total_p_loss_mw: float
     total_q_loss_mvar: float
-    # Разбивка по типам, МВт/МВАр
+    # Breakdown by type, MW/MVAr
     p_line_series: float
     q_line_series: float
     p_trafo_series: float
@@ -166,31 +166,31 @@ def compute_system_losses(
     v_pu: np.ndarray | None = None,
     delta_rad: np.ndarray | None = None,
 ) -> SystemLosses:
-    """Посчитать активные/реактивные потери системы по результатам SE.
+    """Compute the active/reactive system losses from the SE results.
 
-    Расчёт идёт в p.u. через ``gridstate.units.model_to_pu``, что
-    гарантирует консистентность с y-bus, использовавшейся в SE
-    (см. ``gridstate/ybus.py``). Финальные тоталы переводятся в МВт/МВАр
-    через ``BASE_MVA=100``.
+    The computation is done in p.u. via ``gridstate.units.model_to_pu``, which
+    guarantees consistency with the y-bus used in SE
+    (see ``gridstate/ybus.py``). The final totals are converted to MW/MVAr
+    via ``BASE_MVA=100``.
 
-    Если ``v_pu``/``delta_rad`` не переданы — V/δ берутся из
-    ``model.nodes.voltage_magnitude / voltage_angle`` (т.е. уже записанные
-    результаты SE; см. ``write_results_to_model``).
+    If ``v_pu``/``delta_rad`` are not given — V/δ are taken from
+    ``model.nodes.voltage_magnitude / voltage_angle`` (i.e. the already written
+    SE results; see ``write_results_to_model``).
 
     Args:
-        model: ``Working`` после ``estimate()``.
-        v_pu: (n_bus_active,) — модули V в p.u. (опционально).
-        delta_rad: (n_bus_active,) — углы в радианах (опционально).
+        model: ``Working`` after ``estimate()``.
+        v_pu: (n_bus_active,) — V magnitudes in p.u. (optional).
+        delta_rad: (n_bus_active,) — angles in radians (optional).
 
     Returns:
-        ``SystemLosses`` — тоталы + разбивка по типам + per-branch list.
+        ``SystemLosses`` — totals + breakdown by type + per-branch list.
     """
     network_pu = model_to_pu(model)
     n_bus = network_pu.n_bus
     n_branch = network_pu.n_branch
 
     if v_pu is None:
-        # Из model.nodes.voltage_magnitude (после write_results_to_model).
+        # From model.nodes.voltage_magnitude (after write_results_to_model).
         # Vectorized read: resolve bus_ids -> rows once (missing id -> 0.0,
         # matching the former per-node get_by_id fallback).
         nodes_arr = model.nodes.to_numpy()
@@ -210,13 +210,13 @@ def compute_system_losses(
         if v_pu_arr.shape != (n_bus,):
             raise ValueError(f"v_pu length {v_pu_arr.shape} != n_bus_active {n_bus}")
         if delta_rad is None:
-            raise ValueError("delta_rad обязателен, если v_pu задан")
+            raise ValueError("delta_rad is required if v_pu is given")
         delta = np.asarray(delta_rad, dtype=np.float64)
 
-    # Комплексные V в p.u.
+    # Complex V in p.u.
     v_complex = v_pu_arr * np.exp(1j * delta)
 
-    # ---- Узловые шунты (в p.u., S = |V|² · conj(Y)) ----
+    # ---- Nodal shunts (in p.u., S = |V|² · conj(Y)) ----
     y_sh = network_pu.bus_g_shunt + 1j * network_pu.bus_b_shunt  # p.u.
     s_node_shunt_pu = (v_pu_arr**2) * np.conj(y_sh)
     p_node_shunt = float(s_node_shunt_pu.real.sum()) * BASE_MVA
@@ -224,7 +224,7 @@ def compute_system_losses(
     # capacitor (it generates Q) and positive for a reactor (it absorbs Q).
     q_node_shunt = float(s_node_shunt_pu.imag.sum()) * BASE_MVA
 
-    # ---- Ветви (vectorized) ----
+    # ---- Branches (vectorized) ----
     if n_branch == 0:
         return SystemLosses(
             total_p_loss_mw=p_node_shunt,
@@ -240,8 +240,8 @@ def compute_system_losses(
             per_branch=[],
         )
 
-    # Используем ту же y-bus, что строит SE — гарантирует консистентность
-    # с branch.loss_p/q (записанным в write_results_to_model).
+    # Use the same y-bus that SE builds — guarantees consistency
+    # with branch.loss_p/q (written in write_results_to_model).
     _, yf, yt = build_ybus(network_pu)
     i_from = yf @ v_complex
     i_to = yt @ v_complex
@@ -249,11 +249,13 @@ def compute_system_losses(
     s_to = v_complex[network_pu.to_idx] * np.conj(i_to)
     s_loss_total = s_from + s_to  # p.u.
 
-    # Серийная часть отдельно — для разбивки. С тем же tap'ом.
+    # Series part separately — for the breakdown. With the same tap.
     z_ser = network_pu.branch_r + 1j * network_pu.branch_x
     if np.any(z_ser == 0):
-        raise ValueError("Ветви с r=x=0 в active set; должны быть отключены до SE.")
-    # Сопротивление, приведённое за идеальный трансформатор (как в build_ybus).
+        raise ValueError(
+            "Branches with r=x=0 in the active set; they must be switched off before SE."
+        )
+    # Resistance referred behind the ideal transformer (as in build_ybus).
     y_ser = series_admittance(network_pu)
     z_ser = z_ser / network_pu.tap_ratio**2
     tap_complex = network_pu.tap_ratio * np.exp(1j * network_pu.phase_shift)
@@ -263,10 +265,10 @@ def compute_system_losses(
     i_ser = (v_f_eff - v_t) * y_ser
     s_series = (np.abs(i_ser) ** 2) * z_ser  # p.u.
 
-    # Шунтовая часть — по разности (s_loss_total = s_series + s_shunt).
+    # Shunt part — by difference (s_loss_total = s_series + s_shunt).
     s_shunt = s_loss_total - s_series
 
-    # Признак трафо per-branch (vectorized _branch_is_trafo_pu)
+    # Per-branch transformer flag (vectorized _branch_is_trafo_pu)
     off_nominal_tap = np.abs(network_pu.tap_ratio - 1.0) > 1e-6
     shunt_one_sided = (
         (np.abs(network_pu.branch_g) < 1e-12)
@@ -288,7 +290,7 @@ def compute_system_losses(
     p_branch_shunt = float(p_sh_mw.sum())
     q_branch_shunt = float(q_sh_mvar.sum())
 
-    # Per-branch list. Используем оригинальные id узлов (не позиции).
+    # Per-branch list. Use the original node ids (not positions).
     from_node_ids = network_pu.bus_ids[network_pu.from_idx]
     to_node_ids = network_pu.bus_ids[network_pu.to_idx]
     per_branch: list[BranchLossRow] = []

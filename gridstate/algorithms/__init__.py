@@ -1,5 +1,5 @@
-"""Численные алгоритмы SE.
+"""Numerical SE algorithms.
 
-Каждый модуль содержит порт соответствующей реализации из pandapower с
-удалённым PYPOWER-слоем (атрибуция — в ``LICENSE``, раздел Third-Party Notices).
+Each module contains a port of the corresponding pandapower implementation with the
+PYPOWER layer removed (attribution is in ``LICENSE``, the Third-Party Notices section).
 """

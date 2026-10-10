@@ -265,7 +265,7 @@ def test_empty_measurements_returns_no_observability() -> None:
     assert rep.n_measurements == 0
     assert rep.rank_H == 0
     assert set(rep.unobservable_buses) == {1, 2}
-    assert "Нет ни одного" in rep.diagnostics
+    assert "No active measurements" in rep.diagnostics
 
 
 def test_observable_island_unmeasured_bus_in_diagnostics() -> None:

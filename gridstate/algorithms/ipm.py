@@ -1,38 +1,38 @@
-"""Primal log-barrier Interior-Point Method для box-constrained WLS.
+"""Primal log-barrier Interior-Point Method for box-constrained WLS.
 
 State estimation with operating limits is posed as WLS solved by IPM: besides
 ``(δ, V)`` the optimisation variables include ``Pgen, Qgen, Pnag, Qnag``, the
 nodal generation and load, estimated from telemetry under **box
 constraints** enforced by a log barrier.
 
-Этот модуль реализует **generic** IPM-solver: он работает с произвольным
-набором переменных и box-bounds, не зная про доменную модель сети. Связку с
-``BaseAlgebra`` / ``z_vector`` / ``StateLayout`` обеспечивает отдельный
-слой (см. ``gridstate.preprocessing.ipm_setup``).
+This module implements a **generic** IPM solver: it works with an arbitrary
+set of variables and box bounds, without knowing the network domain model. The glue to
+``BaseAlgebra`` / ``z_vector`` / ``StateLayout`` is provided by a separate
+layer (see ``gridstate.preprocessing.ipm_setup``).
 
-Целевая функция (primal-only IPM)::
+Objective function (primal-only IPM)::
 
     Φ(x; μ) = ½ rᵀ R⁻¹ r  −  μ Σ_v [log(x_v − lo_v) + log(hi_v − x_v)]
 
-где ``r = residual_fn(x)`` — невязки; box-сумма берётся по индексам из
-``box_idx`` с нижними/верхними границами ``box_lo / box_hi``.
+where ``r = residual_fn(x)`` are the residuals; the box sum is taken over the indices from
+``box_idx`` with lower/upper bounds ``box_lo / box_hi``.
 
-Алгоритм::
+Algorithm::
 
-    Outer μ-loop:    μ ← μ·factor, начиная с μ_init, пока μ > μ_min
-        Inner Newton до сходимости ``Φ(·; μ)``:
+    Outer μ-loop:    μ ← μ·factor, starting from μ_init, while μ > μ_min
+        Inner Newton until ``Φ(·; μ)`` converges:
             g = −Hᵀ R⁻¹ r + ∇B(x; μ)
-            G = (Hᵀ R⁻¹ H) + diag(∂²B/∂x²)        # добавка диагональная
+            G = (Hᵀ R⁻¹ H) + diag(∂²B/∂x²)        # the added term is diagonal
             Δx = −G⁻¹ g
-            α  = backtrack-Armijo с условием feasibility (interior)
+            α  = backtrack-Armijo with a feasibility condition (interior)
             x ← x + α·Δx
 
-Гессиан barrier — диагональный, добавляется к ``HᵀR⁻¹H`` без
-изменения sparse-структуры. Шаг ограничен ``α_max·(1−ε)`` так, чтобы
-``x_new`` оставался строго внутри боксов.
+The barrier Hessian is diagonal and is added to ``HᵀR⁻¹H`` without
+changing the sparse structure. The step is limited to ``α_max·(1−ε)`` so that
+``x_new`` stays strictly inside the boxes.
 
-Sanity-property: при ``box_idx=[]`` IPM эквивалентен Gauss-Newton WLS
-(barrier нулевой, outer-loop делает один проход).
+Sanity property: with ``box_idx=[]`` the IPM is equivalent to Gauss-Newton WLS
+(the barrier is zero, the outer loop makes a single pass).
 """
 
 from __future__ import annotations
@@ -55,34 +55,34 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class IPMResult:
-    """Результат IPM-solver'а.
+    """Result of the IPM solver.
 
     Attributes:
-        status: двухуровневая сходимость:
+        status: two-level convergence:
 
-            * ``"kkt"`` — строгая стационарность
+            * ``"kkt"`` — strict stationarity
               (``grad_inf < max(1e-2, inner_tol·100)``);
-            * ``"completed"`` — μ-расписание барьера пройдено до
-              ``mu_min`` без ошибок: решение в стационарной зоне
-              барьерного пути и пригодно, хотя строгий KKT-порог не
-              достигнут (на реальных моделях |grad|∞ ~1–100 из-за шкалы
-              весов 1/σ² — НЕ признак разноса);
-            * ``"stalled"`` — солвер остановился до завершения
-              расписания (lazy-break: Armijo не нашёл допустимого шага
-              и inner не сошёлся по толерансу / исчерпан ``outer_max``).
-              Сходимость inner без принятых шагов (старт в стационарной
-              точке Φ(·; μ)) stall'ом НЕ считается — μ-расписание
-              продолжается;
-            * ``"error"`` — терминальная ошибка (kkt solve fail,
+            * ``"completed"`` — the barrier μ schedule has been run through to
+              ``mu_min`` without errors: the solution is in the stationary zone
+              of the barrier path and is usable although the strict KKT threshold was not
+              reached (on real models |grad|∞ ~1–100 because of the scale of the
+              1/σ² weights — NOT a sign of divergence);
+            * ``"stalled"`` — the solver stopped before the schedule
+              completed (lazy-break: Armijo found no admissible step
+              and inner did not converge by tolerance / ``outer_max`` was exhausted).
+              Inner convergence without accepted steps (a start at a stationary
+              point of Φ(·; μ)) is NOT counted as a stall — the μ schedule
+              continues;
+            * ``"error"`` — terminal error (kkt solve fail,
               non-finite step).
-        success: ``status in ("kkt", "completed")`` — «решение
-          пригодно». Прежняя семантика (только строгий KKT) давала
-          ложный «не сошёлся» на всех региональных моделях.
+        success: ``status in ("kkt", "completed")`` — "the solution
+          is usable". The former semantics (strict KKT only) gave a
+          false "not converged" on all real-world models.
     """
 
     x: np.ndarray
     success: bool
-    objective_data: float  # ½ rᵀ R⁻¹ r на финальной точке
+    objective_data: float  # ½ rᵀ R⁻¹ r at the final point
     iterations_outer: int
     iterations_inner_total: int
     mu_final: float
@@ -98,10 +98,10 @@ def _project_to_interior(
     box_hi: np.ndarray,
     eps: float,
 ) -> np.ndarray:
-    """Спроецировать ``x`` строго внутрь боксов.
+    """Project ``x`` strictly inside the boxes.
 
     ``x_box ← clip(x_box, lo + ε·(hi−lo), hi − ε·(hi−lo))``.
-    Координаты вне ``box_idx`` не меняются.
+    Coordinates outside ``box_idx`` are unchanged.
     """
     x_out = x.astype(np.float64, copy=True)
     if box_idx.size == 0:
@@ -123,15 +123,15 @@ def _barrier_grad_hess(
     box_hi: np.ndarray,
     mu: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Градиент и (диагональный) гессиан barrier-члена ``B(x; μ)``.
+    """Gradient and (diagonal) Hessian of the barrier term ``B(x; μ)``.
 
     ::
 
         ∂B/∂x_v   = −μ / (x_v − lo_v) + μ / (hi_v − x_v)
         ∂²B/∂x_v² =  μ / (x_v − lo_v)² + μ / (hi_v − x_v)²
 
-    Возвращает ``(grad_full, hess_diag_full)`` той же длины что ``x``;
-    координаты вне ``box_idx`` равны нулю.
+    Returns ``(grad_full, hess_diag_full)`` of the same length as ``x``;
+    coordinates outside ``box_idx`` are zero.
     """
     grad = np.zeros_like(x)
     hess = np.zeros_like(x)
@@ -152,9 +152,9 @@ def _barrier_value(
     box_hi: np.ndarray,
     mu: float,
 ) -> float:
-    """Скалярный barrier ``−μ Σ [log(x−lo) + log(hi−x)]``.
+    """Scalar barrier ``−μ Σ [log(x−lo) + log(hi−x)]``.
 
-    Возвращает ``+inf`` если ``x`` вышел за бокс (для line-search reject).
+    Returns ``+inf`` if ``x`` left the box (for line-search reject).
     """
     if box_idx.size == 0 or mu <= 0.0:
         return 0.0
@@ -174,21 +174,21 @@ def _max_step_to_boundary(
     box_hi: np.ndarray,
     fraction: float = 0.995,
 ) -> float:
-    """Максимальный α такой, что ``x + α·dx`` остаётся в interior.
+    """Maximum α such that ``x + α·dx`` stays in the interior.
 
-    Использует «fraction-to-boundary» rule: возвращает ``α·fraction``,
-    где ``fraction < 1`` (стандартно 0.995) — не позволяет точно
-    попасть в границу за один шаг.
+    Uses the "fraction-to-boundary" rule: returns ``α·fraction``,
+    where ``fraction < 1`` (typically 0.995) — it does not allow
+    hitting the boundary exactly in one step.
 
-    Если ни одна координата не движется к границе → ``+inf`` (= 1.0
-    как cap в outer-стратегии).
+    If no coordinate moves towards the boundary → ``+inf`` (= 1.0
+    as a cap in the outer strategy).
     """
     if box_idx.size == 0:
         return float("inf")
     cur = x[box_idx]
     step = dx[box_idx]
     alpha = float("inf")
-    # шаг к нижней границе: x + α·dx > lo  ⇔  α < (lo − x)/dx если dx<0
+    # step towards the lower bound: x + α·dx > lo  ⇔  α < (lo − x)/dx if dx<0
     neg = step < 0
     if np.any(neg):
         a_lo = (box_lo[neg] - cur[neg]) / step[neg]
@@ -260,58 +260,58 @@ def solve_ipm(
     huber_warmup_iters: int = 5,
     kkt_solver: KKTSolver | None = None,
 ) -> IPMResult:
-    """Primal log-barrier IPM для box-constrained WLS.
+    """Primal log-barrier IPM for box-constrained WLS.
 
     Args:
-        x_init: начальное приближение ``x ∈ ℝⁿ``. Если оно вне боксов,
-            будет спроецировано в interior с зазором ``box_eps``.
-        residual_fn: ``x → r = z − h(x)`` (длины m, в p.u.). Must be a pure
+        x_init: initial guess ``x ∈ ℝⁿ``. If it is outside the boxes,
+            it will be projected into the interior with a margin ``box_eps``.
+        residual_fn: ``x → r = z − h(x)`` (length m, in p.u.). Must be a pure
             function of ``x``: the residual of the accepted Armijo trial is
             reused as ``r`` of the next iteration and as the final residual,
             without calling ``residual_fn`` again at the same point.
-        jacobian_fn: ``x → H = ∂h/∂x`` (m×n, sparse). **Не** ``∂r/∂x`` —
-            то же соглашение что в ``solve_wls`` и стандартных учебниках
-            SE (Schweppe/Wildes, Abur). Знак учитывается внутри:
+        jacobian_fn: ``x → H = ∂h/∂x`` (m×n, sparse). **Not** ``∂r/∂x`` —
+            the same convention as in ``solve_wls`` and the standard SE
+            textbooks (Schweppe/Wildes, Abur). The sign is accounted for internally:
             ``grad_data = −Hᵀ R⁻¹ r``, ``Δx = G⁻¹·(Hᵀ R⁻¹ r)``.
-        r_inv_diag: ``1/σ²`` длины m. Регуляризация уже применена
-            вызывающим (см. ``solve_wls``).
-        box_idx: индексы переменных с box-границами в ``x``. ``None``
-            или пустой массив → IPM эквивалентен WLS (один outer-pass,
+        r_inv_diag: ``1/σ²`` of length m. Regularization is already applied
+            by the caller (see ``solve_wls``).
+        box_idx: indices of the variables with box bounds in ``x``. ``None``
+            or an empty array → the IPM is equivalent to WLS (one outer pass,
             barrier=0).
-        box_lo, box_hi: нижние/верхние границы для ``x[box_idx]``.
-            Должны иметь ту же длину что ``box_idx``.
-        mu_init, mu_factor, mu_min: outer-loop по barrier-параметру.
-        inner_tol: критерий останова inner Newton по
+        box_lo, box_hi: lower/upper bounds for ``x[box_idx]``.
+            Must have the same length as ``box_idx``.
+        mu_init, mu_factor, mu_min: outer loop over the barrier parameter.
+        inner_tol: stopping criterion of the inner Newton on
             ``max(|grad|∞, |Δx|∞)``.
-        inner_max: максимум inner-итераций на один outer-шаг.
-        outer_max: максимум outer-итераций.
-        box_eps: зазор от границы при проектировании x_init.
-        armijo_c, armijo_backtrack, armijo_max: параметры
-            Armijo-backtrack по ``Φ(x; μ)``.
-        fraction_to_boundary: fraction-to-boundary rule (стандарт 0.995).
-        tr_radius: верхняя граница ``|Δx|∞`` (trust-region clip). Newton-
-            step масштабируется до ``tr_radius`` если превышает. Стандарт
-            ``0.5`` — для V в p.u. это ±50 %, для Pgen/Pnag в p.u. это
-            ±50 МВт при BASE_MVA=100. Без TR Newton-step на резкой
-            кривизне barrier'а может уходить за boundary даже после
+        inner_max: maximum inner iterations per outer step.
+        outer_max: maximum outer iterations.
+        box_eps: margin from the boundary when projecting x_init.
+        armijo_c, armijo_backtrack, armijo_max: parameters of the
+            Armijo backtrack on ``Φ(x; μ)``.
+        fraction_to_boundary: fraction-to-boundary rule (standard 0.995).
+        tr_radius: upper bound on ``|Δx|∞`` (trust-region clip). The Newton
+            step is scaled to ``tr_radius`` if it exceeds it. The standard
+            ``0.5`` — for V in p.u. this is ±50 %, for Pgen/Pnag in p.u. this is
+            ±50 MW at BASE_MVA=100. Without the TR a Newton step at sharp
+            barrier curvature can go past the boundary even after the
             fraction-to-boundary clip.
-        huber_c: параметр SHGM-IRLS Huber ψ-функции. ``0.0`` — чистый WLS
-            внутри IPM (без перевзвешивания). ``>0`` — после ``huber_warmup_iters``
-            inner-итераций веса измерений умножаются на
-            ``w_i = max(huber_w_floor, min(1, c_eff / |r/σ|))`` для индексов
-            из ``huber_mask``. См. ``solve_wls`` для подробностей.
-        huber_mask: bool-маска длины ``m`` — какие измерения подлежат
-            Huber-перевзвешиванию. Обычно — branch P/Q без трансформаторов
-            и без leverage-Q (PS-proxy). ``None`` — Huber отключён.
-        huber_w_floor: минимальный вес (защита от полного зануления).
-        huber_use_mad: если ``True`` — нормализация ``|r|`` через MAD
-            вместо ``σ`` (Hampel 1986); иначе ``r_N = r/σ``.
-        huber_adaptive_k, huber_warmup_iters: параметры adaptive c_eff
-            и warmup-итераций (как в ``solve_wls``).
-        kkt_solver: решатель Newton-систем ``G·Δx = −g`` с реюзом
-            символьной факторизации между итерациями (см.
+        huber_c: parameter of the SHGM-IRLS Huber ψ-function. ``0.0`` — pure WLS
+            inside the IPM (no reweighting). ``>0`` — after ``huber_warmup_iters``
+            inner iterations the measurement weights are multiplied by
+            ``w_i = max(huber_w_floor, min(1, c_eff / |r/σ|))`` for the indices
+            from ``huber_mask``. See ``solve_wls`` for details.
+        huber_mask: bool mask of length ``m`` — which measurements are subject to
+            Huber reweighting. Usually — branch P/Q without transformers
+            and without leverage-Q (PS-proxy). ``None`` — Huber is disabled.
+        huber_w_floor: minimum weight (protection against complete zeroing).
+        huber_use_mad: if ``True`` — normalize ``|r|`` via the MAD
+            instead of ``σ`` (Hampel 1986); otherwise ``r_N = r/σ``.
+        huber_adaptive_k, huber_warmup_iters: parameters of the adaptive c_eff
+            and the warmup iterations (as in ``solve_wls``).
+        kkt_solver: solver of the Newton systems ``G·Δx = −g`` that reuses the
+            symbolic factorization between iterations (see
             ``gridstate.algorithms.kkt_solver``). ``None`` — scipy spsolve
-            (прежнее поведение бит-в-бит).
+            (the former behaviour, bit for bit).
 
     Returns:
         ``IPMResult``.
@@ -323,16 +323,16 @@ def solve_ipm(
     else:
         box_idx = np.asarray(box_idx, dtype=np.int64)
         if box_lo is None or box_hi is None:
-            raise ValueError("box_lo и box_hi обязательны при заданном box_idx")
+            raise ValueError("box_lo and box_hi are required when box_idx is given")
         box_lo = np.asarray(box_lo, dtype=np.float64)
         box_hi = np.asarray(box_hi, dtype=np.float64)
         if box_idx.shape != box_lo.shape or box_idx.shape != box_hi.shape:
             raise ValueError(
                 f"box_idx ({box_idx.shape}), box_lo ({box_lo.shape}), "
-                f"box_hi ({box_hi.shape}) должны иметь одинаковую длину"
+                f"box_hi ({box_hi.shape}) must have the same length"
             )
         if np.any(box_lo >= box_hi):
-            raise ValueError("в box_lo/box_hi есть пары с lo >= hi")
+            raise ValueError("box_lo/box_hi contain pairs with lo >= hi")
 
     has_box = box_idx.size > 0
 
@@ -342,7 +342,7 @@ def solve_ipm(
     r_inv_diag_base = np.asarray(r_inv_diag, dtype=np.float64).copy()
 
     R_inv = sparse_diag(r_inv_diag_base)
-    r_inv_diag = r_inv_diag_base  # текущая диагональ R⁻¹ (для column-scaling HtRinv)
+    r_inv_diag = r_inv_diag_base  # current diagonal of R⁻¹ (for column-scaling HtRinv)
 
     # SHGM-IRLS mask/weight policy shared with solve_wls; see
     # gridstate.algebra.estimators for the mechanics.
@@ -371,7 +371,7 @@ def solve_ipm(
     message = ""
 
     if not has_box:
-        # WLS-режим: один outer-pass без barrier.
+        # WLS mode: a single outer pass without a barrier.
         mu = 0.0
 
     outer_iter = 0
@@ -381,28 +381,28 @@ def solve_ipm(
     # calling residual_fn again at the same point.
     r_at_x: np.ndarray | None = None
     for outer_iter in range(outer_max):
-        any_inner_step = False  # Lazy outer: если ни одного шага → break.
-        # inner вышел по толерансу (grad/step < inner_tol) — стационарная
-        # точка Φ(·; μ) достигнута. Это СХОДИМОСТЬ inner для текущего μ,
-        # а не стагнация: μ-расписание должно продолжаться. Без этого
-        # флага старт в/около решения (после promote результата во вход)
-        # давал ложный «stalled»: первый же Newton-шаг < tol → нет
-        # принятых шагов → lazy-break до μ_min.
+        any_inner_step = False  # Lazy outer: if no step was made → break.
+        # inner exited by tolerance (grad/step < inner_tol) — a stationary
+        # point of Φ(·; μ) was reached. This is CONVERGENCE of inner for the current μ,
+        # not stagnation: the μ schedule must continue. Without this
+        # flag a start at/near the solution (after promoting the result into the input)
+        # gave a false "stalled": the very first Newton step < tol → no
+        # accepted steps → lazy-break all the way to μ_min.
         inner_converged = False
-        # IPM-специфика: adaptive c_eff пересчитывается **каждый outer** —
-        # residuals резко падают между outer (μ уменьшается, barrier
-        # ослабевает), поэтому one-shot adaptive (как в WLS) даёт c_eff
-        # завышенный по ранним residuals. Сброс позволяет downweight
-        # активироваться к концу IPM-сходимости.
+        # IPM specifics: the adaptive c_eff is recomputed **on every outer** —
+        # residuals drop sharply between outers (μ decreases, the barrier
+        # weakens), so a one-shot adaptive (as in WLS) gives a c_eff
+        # overestimated from the early residuals. The reset lets the downweight
+        # activate towards the end of the IPM convergence.
         reweighter.reset_adaptive()
-        # Inner Newton сходится к min Φ(·; μ).
+        # Inner Newton converges to min Φ(·; μ).
         for inner in range(inner_max):
             if r_at_x is None:
                 r_at_x = residual_fn(x)
             r = r_at_x
-            # SHGM-IRLS: после warmup-итераций пересчитываем huber-веса по
-            # текущему residual. Применяется до построения G/grad, влияет
-            # на R_inv. См. ``solve_wls`` для деталей механики.
+            # SHGM-IRLS: after the warmup iterations we recompute the huber weights from
+            # the current residual. Applied before building G/grad, affects
+            # R_inv. See ``solve_wls`` for the mechanics.
             if use_huber and iter_inner_total > huber_warmup_iters:
                 r_inv_diag = r_inv_diag_base * reweighter.weights(r)
                 R_inv = sparse_diag(r_inv_diag)
@@ -452,9 +452,9 @@ def solve_ipm(
                     grad_inf=grad_inf,
                 )
 
-            # Trust-region clip: |Δx|∞ ≤ tr_radius. Сохраняем направление,
-            # масштабируем длину. Защита от больших Newton-шагов на резкой
-            # кривизне barrier'а у границ боксов.
+            # Trust-region clip: |Δx|∞ ≤ tr_radius. We keep the direction,
+            # scale the length. Protection against large Newton steps at sharp
+            # barrier curvature near the box boundaries.
             step_inf_raw = float(np.max(np.abs(dx))) if dx.size else 0.0
             if step_inf_raw > tr_radius:
                 dx = dx * (tr_radius / step_inf_raw)
@@ -483,7 +483,7 @@ def solve_ipm(
             )
             slope = float(grad @ dx)
             accepted = False
-            x_trial = x  # default: без шага
+            x_trial = x  # default: no step
             r_accepted = r
             for _ in range(armijo_max):
                 x_candidate = x + alpha * dx
@@ -507,7 +507,7 @@ def solve_ipm(
 
             iter_inner_total += 1
             if not accepted:
-                # Не нашли допустимый шаг — outer-loop увеличит μ и попробует снова.
+                # No admissible step found — the outer loop will increase μ and try again.
                 logger.debug(
                     "ipm: no Armijo step at outer=%d inner=%d, breaking inner", outer_iter, inner
                 )
@@ -518,26 +518,26 @@ def solve_ipm(
             any_inner_step = True
 
         if not has_box:
-            break  # WLS-режим: один outer-pass.
+            break  # WLS mode: a single outer pass.
 
         if mu <= mu_min:
             schedule_done = True
             break
-        # Lazy outer: если на этой outer ни одного шага не приняли И inner
-        # НЕ сошёлся по толерансу — solver застрял (Armijo не нашёл
-        # допустимого шага спуска: плоский min или плохая обусловленность).
-        # Дальнейшие outer-iter с меньшим μ не помогут.
-        # Если же inner сошёлся (grad/step < tol) без принятых шагов —
-        # это стационарность для текущего μ; μ-расписание продолжается.
+        # Lazy outer: if no step was accepted on this outer AND inner
+        # did NOT converge by tolerance — the solver is stuck (Armijo found no
+        # admissible descent step: a flat minimum or poor conditioning).
+        # Further outer iterations with a smaller μ will not help.
+        # If inner did converge (grad/step < tol) without accepted steps —
+        # that is stationarity for the current μ; the μ schedule continues.
         if not any_inner_step and not inner_converged:
             logger.debug("ipm: no inner step at outer=%d (μ=%.3e) — break outer", outer_iter, mu)
             break
         mu = max(mu * mu_factor, mu_min * 0.5)
     else:
-        # for завершился без break: исчерпан outer_max.
+        # the for loop finished without break: outer_max exhausted.
         schedule_done = mu <= mu_min
 
-    # Финальная невязка/objective
+    # Final residual/objective
     r_final = r_at_x if r_at_x is not None else residual_fn(x)
     obj_data = 0.5 * float(r_final @ (R_inv @ r_final))
 

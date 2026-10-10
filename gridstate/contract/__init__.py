@@ -1,18 +1,18 @@
-"""Контракт данных оценки состояния (``SEInput`` / ``SEOutput``).
+"""State estimation data contract (``SEInput`` / ``SEOutput``).
 
-Выделенный, самодостаточный модуль gridstate, владеющий **схемой** входных и
-выходных таблиц SE и **версией** контракта. Контракт делает зависимость SE от
-*данных* явной, проверяемой и версионируемой — вместо неявной зависимости от
-конкретного класса модели сети.
+A dedicated, self-contained gridstate module that owns the **schema** of the SE input and
+output tables and the contract **version**. The contract makes the dependence of SE on
+*data* explicit, verifiable and versioned, instead of an implicit dependence on a
+particular network-model class.
 
-Состав:
+Contents:
 
-* :mod:`gridstate.contract.tables` — декларация таблиц/колонок/ролей
+* :mod:`gridstate.contract.tables` — declaration of tables/columns/roles
   (:data:`SE_INPUT`, :data:`SE_OUTPUT`, :class:`Role`, :class:`ColumnSpec`,
   :class:`TableSchema`).
-* :mod:`gridstate.contract.version` — :data:`CONTRACT_VERSION` + SemVer-логика
-  совместимости (:class:`ContractVersion`).
-* :mod:`gridstate.contract.validate` — :func:`validate_input` (валидация входа).
+* :mod:`gridstate.contract.version` — :data:`CONTRACT_VERSION` + SemVer
+  compatibility logic (:class:`ContractVersion`).
+* :mod:`gridstate.contract.validate` — :func:`validate_input` (input validation).
 """
 
 from gridstate.contract.containers import SEInput, SEOutput, load_se_input

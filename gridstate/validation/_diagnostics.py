@@ -1,8 +1,8 @@
-"""Внутренние утилиты валидации: пересборка ``r``, ``H``, ``R⁻¹`` из текущего
-состояния ``Working`` (после ``estimate()``).
+"""Internal validation utilities: rebuild ``r``, ``H``, ``R⁻¹`` from the current
+``Working`` state (after ``estimate()``).
 
-Используется ``chi2_test`` и ``bad_data`` — оба нуждаются в одних и тех же
-сводных величинах, поэтому собрано в один файл.
+Used by ``chi2_test`` and ``bad_data`` — both need the same
+summary quantities, so they are collected in one file.
 """
 
 from __future__ import annotations
@@ -27,22 +27,22 @@ if TYPE_CHECKING:
 
 
 class Diagnostics(NamedTuple):
-    """Сводные данные для валидационных тестов."""
+    """Summary data for the validation tests."""
 
-    r: np.ndarray  # (m,) — невязка z − h(state)
+    r: np.ndarray  # (m,) — residual z − h(state)
     H: csr_matrix  # (m × (2n−1))
-    R_inv: csr_matrix  # (m × m) диагональ 1/σ²
-    sigma2: np.ndarray  # (m,) σ² с регуляризацией
+    R_inv: csr_matrix  # (m × m) diagonal 1/σ²
+    sigma2: np.ndarray  # (m,) σ² with regularization
     meas_index: MeasurementIndex
     layout: StateLayout
     network_pu: NetworkPU
 
 
 def state_from_model(model: Working, network_pu: NetworkPU) -> tuple[np.ndarray, np.ndarray]:
-    """Прочитать ``(v_pu, delta_rad)`` длины ``n_bus`` из текущего состояния ``model``.
+    """Read ``(v_pu, delta_rad)`` of length ``n_bus`` from the current state of ``model``.
 
-    Узлы без записи ``voltage_magnitude > 0`` инициализируются как ``V=1.0`` p.u.,
-    углы по умолчанию 0.
+    Nodes without a ``voltage_magnitude > 0`` entry are initialized as ``V=1.0`` p.u.,
+    angles default to 0.
     """
     nodes_arr = model.nodes.to_numpy()
     id_to_pos = id_to_pos_map(network_pu.bus_ids)
@@ -66,7 +66,7 @@ def compute_diagnostics(
     model: Working,
     measurements: _ArrayCollection,
 ) -> Diagnostics:
-    """Пересобрать ``r``, ``H``, ``R⁻¹`` для текущего состояния ``model``."""
+    """Rebuild ``r``, ``H``, ``R⁻¹`` for the current state of ``model``."""
     network_pu = model_to_pu(model)
     ybus, yf, yt = build_ybus(network_pu)
     z, R_matrix, meas_index = build_z_and_r(model, measurements, network_pu)

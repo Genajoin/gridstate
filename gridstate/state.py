@@ -1,24 +1,24 @@
-"""Вектор состояния SE.
+"""SE state vector.
 
-В базовом WLS-режиме вектор E имеет размерность ``2·n_bus − 1``:
+In the basic WLS mode the vector E has dimension ``2·n_bus − 1``:
 
-- ``δ`` — углы всех узлов *кроме* slack (``n_bus − 1`` компонент, радианы);
-- ``V`` — модули напряжений всех узлов (``n_bus`` компонент, p.u.).
+- ``δ`` — angles of all nodes *except* slack (``n_bus − 1`` components, radians);
+- ``V`` — voltage magnitudes of all nodes (``n_bus`` components, p.u.).
 
-В IPM-режиме state дополнительно содержит box-переменные нагрузки и
-генерации:
+In IPM mode the state additionally contains box variables of load and
+generation:
 
-- ``Pgen_i`` для узлов с ``exist_gen=1`` — длина ``len(pgen_node_pos)``;
-- ``Qgen_i`` — длина ``len(qgen_node_pos)``;
-- ``Pnag_i`` для узлов с ``exist_load=1`` — длина ``len(pnag_node_pos)``;
-- ``Qnag_i`` — длина ``len(qnag_node_pos)``.
+- ``Pgen_i`` for nodes with ``exist_gen=1`` — length ``len(pgen_node_pos)``;
+- ``Qgen_i`` — length ``len(qgen_node_pos)``;
+- ``Pnag_i`` for nodes with ``exist_load=1`` — length ``len(pnag_node_pos)``;
+- ``Qnag_i`` — length ``len(qnag_node_pos)``.
 
-Раскладка фиксированная: ``[δ, V, Pgen, Qgen, Pnag, Qnag]``. Если все
-четыре ``*_node_pos`` пусты, layout идентичен старому (`size = 2·n_bus − 1`)
-и WLS работает без изменений.
+The layout is fixed: ``[δ, V, Pgen, Qgen, Pnag, Qnag]``. If all four
+``*_node_pos`` are empty, the layout is identical to the old one (`size = 2·n_bus − 1`)
+and WLS works unchanged.
 
-Slack-угол фиксирован (обычно 0 рад) и в вектор состояния не входит.
-Раскладку в/из плоского массива выполняют ``pack`` / ``unpack``.
+The slack angle is fixed (usually 0 rad) and is not part of the state vector.
+The layout to/from a flat array is handled by ``pack`` / ``unpack``.
 """
 
 from __future__ import annotations
@@ -34,18 +34,18 @@ def _empty_int64() -> np.ndarray:
 
 @dataclass(frozen=True)
 class StateLayout:
-    """Описание раскладки вектора состояния под данную сеть.
+    """Description of the state vector layout for a given network.
 
     Attributes:
-        n_bus: число узлов.
-        slack_idx: позиционный индекс slack-узла (``0..n_bus−1``).
-        non_slack_idx: индексы остальных узлов (длина ``n_bus−1``); порядок
-            соответствует части δ вектора E.
-        pgen_node_pos: позиции (в bus-ordering) узлов с переменной
-            ``Pgen``. Пусто в WLS-режиме.
-        qgen_node_pos: позиции узлов с переменной ``Qgen``.
-        pnag_node_pos: позиции узлов с переменной ``Pnag``.
-        qnag_node_pos: позиции узлов с переменной ``Qnag``.
+        n_bus: number of nodes.
+        slack_idx: positional index of the slack node (``0..n_bus−1``).
+        non_slack_idx: indices of the remaining nodes (length ``n_bus−1``); the order
+            corresponds to the δ part of the vector E.
+        pgen_node_pos: positions (in bus ordering) of nodes with the variable
+            ``Pgen``. Empty in WLS mode.
+        qgen_node_pos: positions of nodes with the variable ``Qgen``.
+        pnag_node_pos: positions of nodes with the variable ``Pnag``.
+        qnag_node_pos: positions of nodes with the variable ``Qnag``.
     """
 
     n_bus: int
@@ -58,37 +58,36 @@ class StateLayout:
 
     def __post_init__(self) -> None:
         if self.n_bus < 1:
-            raise ValueError(f"n_bus должно быть ≥1, получено {self.n_bus}")
+            raise ValueError(f"n_bus must be ≥1, got {self.n_bus}")
         if not (0 <= self.slack_idx < self.n_bus):
-            raise ValueError(f"slack_idx={self.slack_idx} вне диапазона [0, {self.n_bus})")
+            raise ValueError(f"slack_idx={self.slack_idx} is out of range [0, {self.n_bus})")
         if self.non_slack_idx.shape != (self.n_bus - 1,):
             raise ValueError(
-                f"non_slack_idx должен иметь форму ({self.n_bus - 1},), "
-                f"получено {self.non_slack_idx.shape}"
+                f"non_slack_idx must have shape ({self.n_bus - 1},), got {self.non_slack_idx.shape}"
             )
         if self.slack_idx in self.non_slack_idx.tolist():
-            raise ValueError(f"slack_idx={self.slack_idx} не должен присутствовать в non_slack_idx")
+            raise ValueError(f"slack_idx={self.slack_idx} must not be present in non_slack_idx")
         for name in ("pgen_node_pos", "qgen_node_pos", "pnag_node_pos", "qnag_node_pos"):
             arr = getattr(self, name)
             if arr.ndim != 1:
-                raise ValueError(f"{name} должен быть 1-D, получено shape={arr.shape}")
+                raise ValueError(f"{name} must be 1-D, got shape={arr.shape}")
             if arr.size and (arr.min() < 0 or arr.max() >= self.n_bus):
                 raise ValueError(
-                    f"{name} содержит индекс вне [0, {self.n_bus}): min={arr.min()} max={arr.max()}"
+                    f"{name} contains an index outside [0, {self.n_bus}): min={arr.min()} max={arr.max()}"
                 )
 
     @property
     def size(self) -> int:
-        """Размерность вектора состояния.
+        """Dimension of the state vector.
 
-        В WLS-режиме (все box-поля пусты) — ``2·n_bus − 1``.
-        В IPM-режиме добавляется суммарная длина четырёх box-секций.
+        In WLS mode (all box fields empty) — ``2·n_bus − 1``.
+        In IPM mode the total length of the four box sections is added.
         """
         return 2 * self.n_bus - 1 + self.n_box
 
     @property
     def n_box(self) -> int:
-        """Общее число box-переменных (``Pgen + Qgen + Pnag + Qnag``)."""
+        """Total number of box variables (``Pgen + Qgen + Pnag + Qnag``)."""
         return (
             int(self.pgen_node_pos.size)
             + int(self.qgen_node_pos.size)
@@ -98,46 +97,46 @@ class StateLayout:
 
     @property
     def has_box(self) -> bool:
-        """``True`` если layout включает box-переменные (IPM-режим)."""
+        """``True`` if the layout includes box variables (IPM mode)."""
         return self.n_box > 0
 
     @property
     def offset_delta(self) -> int:
-        """Смещение секции δ в плоском E (всегда 0)."""
+        """Offset of the δ section in the flat E (always 0)."""
         return 0
 
     @property
     def offset_v(self) -> int:
-        """Смещение секции V в плоском E."""
+        """Offset of the V section in the flat E."""
         return self.n_bus - 1
 
     @property
     def offset_pgen(self) -> int:
-        """Смещение секции Pgen в плоском E."""
+        """Offset of the Pgen section in the flat E."""
         return 2 * self.n_bus - 1
 
     @property
     def offset_qgen(self) -> int:
-        """Смещение секции Qgen в плоском E."""
+        """Offset of the Qgen section in the flat E."""
         return self.offset_pgen + int(self.pgen_node_pos.size)
 
     @property
     def offset_pnag(self) -> int:
-        """Смещение секции Pnag в плоском E."""
+        """Offset of the Pnag section in the flat E."""
         return self.offset_qgen + int(self.qgen_node_pos.size)
 
     @property
     def offset_qnag(self) -> int:
-        """Смещение секции Qnag в плоском E."""
+        """Offset of the Qnag section in the flat E."""
         return self.offset_pnag + int(self.pnag_node_pos.size)
 
     @classmethod
     def from_slack(cls, n_bus: int, slack_idx: int) -> StateLayout:
-        """Построить WLS-раскладку (без box-переменных).
+        """Build a WLS layout (without box variables).
 
-        ``non_slack_idx`` заполняется в порядке возрастания (``0, 1, ...``)
-        с пропуском ``slack_idx``. Box-секции пусты — поведение и размер
-        вектора состояния идентичны pre-IPM версии.
+        ``non_slack_idx`` is filled in ascending order (``0, 1, ...``)
+        skipping ``slack_idx``. The box sections are empty — the behaviour and size
+        of the state vector are identical to the pre-IPM version.
         """
         non_slack = np.array([i for i in range(n_bus) if i != slack_idx], dtype=np.int64)
         return cls(n_bus=n_bus, slack_idx=slack_idx, non_slack_idx=non_slack)
@@ -153,29 +152,29 @@ def pack(
     pnag_estimated: np.ndarray | None = None,
     qnag_estimated: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Собрать E из полных массивов состояния.
+    """Assemble E from the full state arrays.
 
-    Базовый WLS-режим (layout без box-vars):
-        ``E = [δ_non_slack, V]`` длины ``2·n_bus−1``.
+    Basic WLS mode (layout without box-vars):
+        ``E = [δ_non_slack, V]`` of length ``2·n_bus−1``.
 
-    IPM-режим (layout с box-vars):
+    IPM mode (layout with box-vars):
         ``E = [δ_non_slack, V, Pgen, Qgen, Pnag, Qnag]``.
 
     Args:
-        delta: (n_bus,) — углы напряжений (радианы), включая slack.
-        v: (n_bus,) — модули напряжений (p.u.), включая slack.
-        layout: раскладка.
-        pgen_estimated: (len(pgen_node_pos),) — ``Pgen`` для box-vars.
-            Обязателен если ``layout.pgen_node_pos`` непуст.
-        qgen_estimated, pnag_estimated, qnag_estimated: аналогично.
+        delta: (n_bus,) — voltage angles (radians), including slack.
+        v: (n_bus,) — voltage magnitudes (p.u.), including slack.
+        layout: layout.
+        pgen_estimated: (len(pgen_node_pos),) — ``Pgen`` for box-vars.
+            Required if ``layout.pgen_node_pos`` is non-empty.
+        qgen_estimated, pnag_estimated, qnag_estimated: likewise.
 
     Returns:
-        ``E`` длины ``layout.size``.
+        ``E`` of length ``layout.size``.
     """
     if delta.shape != (layout.n_bus,):
-        raise ValueError(f"delta должен быть длины {layout.n_bus}, получено {delta.shape}")
+        raise ValueError(f"delta must have length {layout.n_bus}, got {delta.shape}")
     if v.shape != (layout.n_bus,):
-        raise ValueError(f"v должен быть длины {layout.n_bus}, получено {v.shape}")
+        raise ValueError(f"v must have length {layout.n_bus}, got {v.shape}")
 
     e = np.empty(layout.size, dtype=np.float64)
     e[layout.offset_delta : layout.offset_delta + layout.n_bus - 1] = delta[layout.non_slack_idx]
@@ -192,16 +191,16 @@ def pack(
         if sz == 0:
             if arr is not None and arr.size != 0:
                 raise ValueError(
-                    f"{name} должен быть None или пустым, в layout нет соответствующих box-vars"
+                    f"{name} must be None or empty, the layout has no corresponding box-vars"
                 )
             continue
         if arr is None:
             raise ValueError(
-                f"{name} обязателен в IPM-режиме (layout содержит "
-                f"{sz} box-vars соответствующего типа)"
+                f"{name} is required in IPM mode (the layout contains "
+                f"{sz} box-vars of the corresponding type)"
             )
         if arr.shape != (sz,):
-            raise ValueError(f"{name} должен быть длины {sz}, получено {arr.shape}")
+            raise ValueError(f"{name} must have length {sz}, got {arr.shape}")
         e[offset : offset + sz] = arr
 
     return e
@@ -212,25 +211,25 @@ def unpack(
     layout: StateLayout,
     slack_delta: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Развернуть ``E`` обратно в полные ``(δ, V)`` длины ``n_bus``.
+    """Unpack ``E`` back into the full ``(δ, V)`` of length ``n_bus``.
 
     Args:
-        e: (2·n_bus−1,) — вектор состояния.
-        layout: раскладка.
-        slack_delta: угол, который подставляется на позицию slack-узла. По
-            умолчанию 0 рад (классическая нормировка SE).
+        e: (2·n_bus−1,) — state vector.
+        layout: layout.
+        slack_delta: the angle substituted at the slack node position. Default
+            0 rad (the classic SE normalization).
 
     Returns:
-        (delta, v) — два массива длины ``n_bus`` в исходной индексации узлов.
+        (delta, v) — two arrays of length ``n_bus`` in the original node indexing.
     """
     if e.shape != (layout.size,):
-        raise ValueError(f"e должен быть длины {layout.size}, получено {e.shape}")
+        raise ValueError(f"e must have length {layout.size}, got {e.shape}")
 
     delta = np.empty(layout.n_bus, dtype=np.float64)
     delta[layout.slack_idx] = slack_delta
     delta[layout.non_slack_idx] = e[: layout.n_bus - 1]
 
-    # В IPM-режиме после V идут box-секции — slice ограничен n_bus.
+    # In IPM mode the box sections follow V — the slice is limited to n_bus.
     v = e[layout.offset_v : layout.offset_v + layout.n_bus].astype(
         np.float64,
         copy=True,
@@ -241,13 +240,13 @@ def unpack(
 def flat_start(layout: StateLayout) -> np.ndarray:
     """Flat-start.
 
-    Базовая часть: ``δ = 0`` (для всех неслэк-узлов), ``V = 1.0`` p.u.
-    для всех.
+    Base part: ``δ = 0`` (for all non-slack nodes), ``V = 1.0`` p.u.
+    for all.
 
-    В IPM-режиме (layout с box-vars) box-секции остаются нулями. Для
-    feasibility их следует инициализировать middle-of-box значениями
-    через ``flat_start_with_box`` или скорректировать перед вызовом
-    solver'а (``_project_to_interior`` в IPM делает это автоматически).
+    In IPM mode (layout with box-vars) the box sections stay zeros. For
+    feasibility they should be initialized with middle-of-box values
+    via ``flat_start_with_box`` or corrected before calling the
+    solver (``_project_to_interior`` in the IPM does this automatically).
     """
     e = np.zeros(layout.size, dtype=np.float64)
     e[layout.offset_v : layout.offset_v + layout.n_bus] = 1.0
@@ -259,17 +258,17 @@ def unpack_full(
     layout: StateLayout,
     slack_delta: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Развернуть E с box-секциями.
+    """Unpack E with box sections.
 
-    Возвращает шестёрку ``(delta, v, pgen, qgen, pnag, qnag)`` где
-    box-секции — массивы длины ``len(*_node_pos)`` (могут быть пусты).
-    Для базового WLS-режима три последних — пустые массивы.
+    Returns the six-tuple ``(delta, v, pgen, qgen, pnag, qnag)`` where
+    the box sections are arrays of length ``len(*_node_pos)`` (may be empty).
+    For the basic WLS mode the last three are empty arrays.
 
-    Используется IPM-solver'ом для извлечения значений переменных
-    нагрузки/генерации после optimization.
+    Used by the IPM solver to extract the values of the load/generation
+    variables after optimization.
     """
     if e.shape != (layout.size,):
-        raise ValueError(f"e должен быть длины {layout.size}, получено {e.shape}")
+        raise ValueError(f"e must have length {layout.size}, got {e.shape}")
     delta, v = unpack(e, layout, slack_delta=slack_delta)
 
     pgen = e[layout.offset_pgen : layout.offset_qgen].astype(np.float64, copy=True)
@@ -289,15 +288,15 @@ def flat_start_with_box(
     pnag_init: np.ndarray | None = None,
     qnag_init: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Flat-start + явная инициализация box-секций.
+    """Flat start + explicit initialization of the box sections.
 
-    Базовая часть как ``flat_start`` (δ=0, V=1). Box-секции заполняются
-    переданными ``*_init`` массивами — это значения для
-    ``Pgen/Qgen/Pnag/Qnag`` на старте IPM-итераций. Если соответствующая
-    box-секция пуста в layout, ``*_init`` должен быть None или пустым.
+    The base part is like ``flat_start`` (δ=0, V=1). The box sections are filled with
+    the passed ``*_init`` arrays — these are the values for
+    ``Pgen/Qgen/Pnag/Qnag`` at the start of the IPM iterations. If the corresponding
+    box section is empty in the layout, ``*_init`` must be None or empty.
 
-    Для feasibility caller отвечает за то, чтобы ``*_init`` лежали внутри
-    бокс-границ (или solver сам спроектирует их в interior через
+    For feasibility the caller is responsible for making sure the ``*_init`` lie within
+    the box bounds (or the solver projects them into the interior itself via
     ``_project_to_interior``).
     """
     return pack(

@@ -43,11 +43,11 @@ class TestStateLayout:
             StateLayout(n_bus=0, slack_idx=0, non_slack_idx=np.array([], dtype=np.int64))
 
     def test_non_slack_must_exclude_slack(self) -> None:
-        with pytest.raises(ValueError, match="не должен присутствовать"):
+        with pytest.raises(ValueError, match="must not be present"):
             StateLayout(n_bus=3, slack_idx=1, non_slack_idx=np.array([0, 1]))
 
     def test_non_slack_size_validated(self) -> None:
-        with pytest.raises(ValueError, match="форму"):
+        with pytest.raises(ValueError, match="must have shape"):
             StateLayout(n_bus=4, slack_idx=0, non_slack_idx=np.array([1, 2]))
 
 
@@ -174,7 +174,7 @@ class TestBoxVarsLayout:
 
     def test_box_index_must_be_1d(self) -> None:
         """Box-индексы должны быть 1-D."""
-        with pytest.raises(ValueError, match="должен быть 1-D"):
+        with pytest.raises(ValueError, match="must be 1-D"):
             StateLayout(
                 n_bus=3,
                 slack_idx=0,
@@ -231,7 +231,7 @@ class TestBoxVarsLayout:
             non_slack_idx=np.array([1, 2], dtype=np.int64),
             pgen_node_pos=np.array([0], dtype=np.int64),
         )
-        with pytest.raises(ValueError, match=r"pgen_estimated.*обязателен"):
+        with pytest.raises(ValueError, match=r"pgen_estimated.*required"):
             pack(
                 delta=np.zeros(3),
                 v=np.ones(3),

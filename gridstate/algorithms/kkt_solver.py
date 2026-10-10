@@ -1,30 +1,30 @@
-"""Решатель последовательности KKT-систем (нормальных уравнений) Ньютона.
+"""Solver for a sequence of Newton KKT systems (normal equations).
 
-Внутри одного solve (WLS LM-цикл, IPM inner-Newton) каждая итерация решает
-``G·d = rhs`` с ``G = HᵀR⁻¹H (+ диагональная добавка)`` — симметричной
-положительно определённой матрицей, чья sparsity-структура между
-итерациями практически неизменна: меняются только значения (V/δ в
-тригонометрии H, huber-веса в R⁻¹, barrier-диагональ). Это позволяет
-сделать символьный анализ один раз и далее только числовую
-рефакторизацию — ``scipy.sparse.linalg.spsolve`` так не умеет (каждый
-вызов = полный анализ + LU).
+Within a single solve (WLS LM loop, IPM inner Newton) each iteration solves
+``G·d = rhs`` with ``G = HᵀR⁻¹H (+ diagonal term)`` — a symmetric
+positive definite matrix whose sparsity structure is practically unchanged between
+iterations: only the values change (V/δ in the
+trigonometry of H, huber weights in R⁻¹, the barrier diagonal). This makes it possible to
+do the symbolic analysis once and afterwards only a numeric
+refactorization — ``scipy.sparse.linalg.spsolve`` cannot do that (every
+call = full analysis + LU).
 
-Бэкенд ``"cholmod"`` использует CHOLMOD из SuiteSparse через cvxopt
-(manylinux-wheels, лёгкая optional-зависимость): ``cholmod.symbolic`` на
-паттерн + ``cholmod.numeric`` на итерацию, режим simplicial LDLᵀ
+The ``"cholmod"`` backend uses CHOLMOD from SuiteSparse via cvxopt
+(manylinux wheels, a light optional dependency): ``cholmod.symbolic`` on the
+pattern + ``cholmod.numeric`` per iteration, simplicial LDLᵀ mode
 (``options['supernodal']=0``): late IPM iterations are quasi-definite
 (barrier ~1e14 on the diagonal) and supernodal LLᵀ breaks down on them with a
 reused fill order. On a 16k-node production model (339 systems, n=16k,
-nnz=237k): 17.4 s spsolve → 1.2 s (×14). Фолбэк на вырожденной матрице (потеря
-наблюдаемости) — единичный ``spsolve`` с warning.
+nnz=237k): 17.4 s spsolve → 1.2 s (×14). Fallback on a singular matrix (loss of
+observability) — a single ``spsolve`` with a warning.
 
 Pattern stabilisation pitfall: scipy prunes numerical zeros both in sparse
 matmul and in addition, so the pattern of G jitters by a few entries between
 iterations (236564..236569 nnz on that model), and projecting onto a superset
-by adding a zero pattern matrix falls apart (zero sums are pruned too). Решение — паттерн-матрица с данными
-``±PATTERN_EPS=1e-300``: сумма в «дырах» не нулевая (не prune'ится), а
-для реальных значений G (≫1e-280) добавка за пределами разрядности
-double — данные бит-в-бит те же.
+by adding a zero pattern matrix falls apart (zero sums are pruned too). The fix is a pattern matrix with data
+``±PATTERN_EPS=1e-300``: the sum in the "holes" is non-zero (not pruned), and
+for real values of G (≫1e-280) the addition lies beyond the precision of
+double — the data is bit-for-bit the same.
 
 Fixed-pattern Gram path (:meth:`KKTSolver.solve_normal`): within one solve the
 Jacobian keeps its sparsity pattern (``JacobianPattern``), so the pattern of
@@ -59,8 +59,8 @@ logger = logging.getLogger(__name__)
 # Environment switch of the numba Gram path: "0" disables it (scipy path).
 NUMBA_ENV = "GRIDSTATE_NUMBA"
 
-# Значение паттерн-матрицы superset'а: не 0.0 (prune при сложении), но
-# заведомо за пределами double-разрядности любых реальных значений G.
+# Value of the superset pattern matrix: not 0.0 (pruned on addition), but
+# well beyond the double precision of any real value of G.
 PATTERN_EPS = 1e-300
 
 
@@ -73,30 +73,30 @@ def _cvxopt_available() -> bool:
 
 
 def resolve_backend(backend: str) -> str:
-    """Развернуть ``"auto"`` в конкретный бэкенд по наличию cvxopt.
+    """Resolve ``"auto"`` into a concrete backend depending on whether cvxopt is available.
 
     Args:
         backend: ``"auto"`` | ``"cholmod"`` | ``"scipy"``.
 
     Returns:
-        ``"cholmod"`` или ``"scipy"``.
+        ``"cholmod"`` or ``"scipy"``.
 
     Raises:
-        ImportError: явный запрос ``"cholmod"`` без установленного cvxopt.
-        ValueError: неизвестное имя бэкенда.
+        ImportError: an explicit ``"cholmod"`` request without cvxopt installed.
+        ValueError: unknown backend name.
     """
     if backend == "scipy":
         return "scipy"
     if backend == "cholmod":
         if not _cvxopt_available():
             raise ImportError(
-                "kkt_solver='cholmod' требует cvxopt (pip install cvxopt "
-                "или gridstate[fast]); для автофолбэка используйте 'auto'"
+                "kkt_solver='cholmod' requires cvxopt (pip install cvxopt "
+                "or gridstate[fast]); use 'auto' for an automatic fallback"
             )
         return "cholmod"
     if backend == "auto":
         return "cholmod" if _cvxopt_available() else "scipy"
-    raise ValueError(f"неизвестный kkt_solver: {backend!r}; доступны 'auto', 'cholmod', 'scipy'")
+    raise ValueError(f"unknown kkt_solver: {backend!r}; available: 'auto', 'cholmod', 'scipy'")
 
 
 def gram_scipy(
@@ -254,19 +254,19 @@ class _GramPattern:
 
 
 class KKTSolver:
-    """Решатель ``G·d = rhs`` с реюзом символьной факторизации.
+    """Solver of ``G·d = rhs`` that reuses the symbolic factorization.
 
-    Один экземпляр живёт на один itерационный цикл (solve_wls / solve_ipm):
-    держит накопительный superset-паттерн и symbolic-фактор CHOLMOD,
-    рефакторизуя только значения, пока паттерн не вырастет.
+    One instance lives for one iterative loop (solve_wls / solve_ipm):
+    it keeps the accumulating superset pattern and the CHOLMOD symbolic factor,
+    refactorizing only the values until the pattern grows.
 
-    Бэкенд ``"scipy"`` — прежнее поведение (spsolve) бит-в-бит.
+    The ``"scipy"`` backend is the former behaviour (spsolve), bit for bit.
     """
 
     def __init__(self, backend: str = "auto") -> None:
         self.backend = resolve_backend(backend)
-        # superset-паттерн (csc с data=PATTERN_EPS), cvxopt-матрица и
-        # symbolic-фактор; живут пока паттерн стабилен.
+        # superset pattern (csc with data=PATTERN_EPS), cvxopt matrix and
+        # symbolic factor; they live while the pattern is stable.
         self._pattern: csc_matrix | None = None
         self._A: Any = None
         self._F: Any = None
@@ -310,7 +310,9 @@ class KKTSolver:
             self._seen = None
             return self._solve_gram_cholmod(gram, values, rhs)
         except ArithmeticError:
-            logger.warning("kkt cholmod: матрица не PD и при fresh-анализе — фолбэк на spsolve")
+            logger.warning(
+                "kkt cholmod: matrix is not PD even on a fresh analysis — falling back to spsolve"
+            )
             G = gram_scipy(H, w, diag, HtW)
             return np.asarray(spsolve(G, rhs), dtype=np.float64).ravel()
 
@@ -395,16 +397,16 @@ class KKTSolver:
         self._F = cholmod.symbolic(self._A)
 
     def solve(self, G: csc_matrix, rhs: np.ndarray) -> np.ndarray:
-        """Решить ``G·d = rhs``; G — SPD csc.
+        """Solve ``G·d = rhs``; G is an SPD csc matrix.
 
-        Каскад устойчивости cholmod-бэкенда: поздние IPM-итерации дают
-        квази-определённые G (barrier ~1e14 на диагонали, rcond до 1e-24),
-        на которых LLᵀ с реюзнутым fill-order (AMD от ранней матрицы
-        паттерна) может сорваться в not-PD, хотя fresh-анализ от текущей
-        матрицы проходит. Поэтому: (1) retry со сбросом паттерна — свежий
-        ``symbolic`` живёт дальше и для следующих систем хвоста
-        μ-расписания; (2) лишь затем единичный ``spsolve``-фолбэк
-        (честно вырожденная G — потеря наблюдаемости).
+        Stability cascade of the cholmod backend: late IPM iterations give
+        quasi-definite G (barrier ~1e14 on the diagonal, rcond down to 1e-24),
+        on which LLᵀ with a reused fill-order (AMD from an early matrix of the
+        pattern) may break down into not-PD even though a fresh analysis of the current
+        matrix succeeds. Hence: (1) retry with a pattern reset — the fresh
+        ``symbolic`` lives on for the following systems of the tail of the
+        μ schedule; (2) only then a single ``spsolve`` fallback
+        (a truly singular G — loss of observability).
 
         Simplicial LDLᵀ (``options['supernodal']=0``) was REJECTED as a cure:
         the diagonal D without pivoting is noisy on the same quasi-definite
@@ -421,10 +423,12 @@ class KKTSolver:
         except ArithmeticError:
             pass
         try:
-            self._pattern = None  # retry: fresh symbolic от текущей G
+            self._pattern = None  # retry: fresh symbolic from the current G
             return self._solve_cholmod(G, rhs)
         except ArithmeticError:
-            logger.warning("kkt cholmod: матрица не PD и при fresh-анализе — фолбэк на spsolve")
+            logger.warning(
+                "kkt cholmod: matrix is not PD even on a fresh analysis — falling back to spsolve"
+            )
             return np.asarray(spsolve(G, rhs), dtype=np.float64).ravel()
 
     def _solve_cholmod(self, G: csc_matrix, rhs: np.ndarray) -> np.ndarray:
@@ -436,11 +440,11 @@ class KKTSolver:
             changed = True
         else:
             P = G + self._pattern
-            # ВАЖНО: scipy не гарантирует сортировку indices у результата
-            # сложения — а V-update ниже кладёт P.data в cvxopt-матрицу,
-            # хранящую данные в canonical CSC-порядке. Без sort_indices()
-            # значения рассаживаются мимо позиций (мусорная матрица,
-            # каскад not-PD). Сортируем ДО сравнения с паттерном.
+            # IMPORTANT: scipy does not guarantee that the indices of the result of an
+            # addition are sorted — and the V-update below puts P.data into the cvxopt matrix,
+            # which stores its data in canonical CSC order. Without sort_indices()
+            # the values are scattered past their positions (a garbage matrix,
+            # a cascade of not-PD). We sort BEFORE comparing with the pattern.
             P.sort_indices()
             changed = (
                 P.nnz != self._pattern.nnz
@@ -460,7 +464,7 @@ class KKTSolver:
             )
             self._F = cholmod.symbolic(self._A)
         else:
-            # Порядок data в cvxopt CSC совпадает со scipy canonical csc.
+            # The order of data in cvxopt CSC matches scipy canonical csc.
             self._A.V = matrix(P.data)
         cholmod.numeric(self._A, self._F)
         b = matrix(np.asarray(rhs, dtype=np.float64))

@@ -1,27 +1,27 @@
-"""Обнаружение и удаление плохих данных по тесту максимального нормированного
-остатка (``rn_max``).
+"""Detection and removal of bad data by the largest normalized
+residual test (``rn_max``).
 
 Adapted from pandapower:
     pandapower/estimation/state_estimation.py (function ``perform_rn_max_test``).
 Copyright (c) 2016-2025 University of Kassel and Fraunhofer IEE, Kassel.
 Licensed under BSD 3-Clause; see the LICENSE file (Third-Party Notices).
 
-Алгоритм::
+Algorithm::
 
-    Ω = R − H G⁻¹ Hᵀ                       (ковариация невязок)
-    r^N_i = |r_i| / √(diag(Ω)_i)            (нормированный остаток)
+    Ω = R − H G⁻¹ Hᵀ                       (residual covariance)
+    r^N_i = |r_i| / √(diag(Ω)_i)            (normalized residual)
 
     while max(finite r^N) > threshold:
-        пометить максимальный r^N как BAD (status=False, quality=BAD)
-        перезапустить estimate()
-        пересчитать r^N
+        mark the maximum r^N as BAD (status=False, quality=BAD)
+        re-run estimate()
+        recompute r^N
 
 Critical (non-redundant) measurements have ``diag(Ω)_i ≈ 0`` and
 ``r^N_i = +inf``: their errors are undetectable and removing one makes the
 network unobservable, so they are never removed — only reported in
 ``BadDataResult.critical_meas_ids``.
 
-Возвращает ``BadDataResult`` со списком удалённых ``meas_id`` и финальным
+Returns a ``BadDataResult`` with the list of removed ``meas_id`` and the final
 ``SEResult``.
 """
 
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Код качества измерения «BAD» в контракте (значение колонки ``quality``).
+# Measurement quality code "BAD" in the contract (value of the ``quality`` column).
 QUALITY_BAD = int(MeasurementQuality.BAD)
 
 
@@ -59,13 +59,13 @@ class ResidualTopRecord(NamedTuple):
     backward compatibility while giving the fields readable names.
 
     Attributes:
-        rn: нормированный остаток ``r^N``.
-        meas_id: ``meas_id`` измерения.
+        rn: normalized residual ``r^N``.
+        meas_id: ``meas_id`` of the measurement.
         object_kind: ``0`` — NODE, ``1`` — BRANCH.
-        object_id: ID объекта измерения (``-1`` если не найден).
+        object_id: ID of the measured object (``-1`` if not found).
         kind: ``MeasurementType`` (0=POWER_P, 1=POWER_Q, 2=VOLTAGE, ...).
-        value: значение измерения (``nan`` если не найдено).
-        residual: невязка ``r``.
+        value: measurement value (``nan`` if not found).
+        residual: residual ``r``.
         sigma: ``√σ²``.
     """
 
@@ -81,22 +81,22 @@ class ResidualTopRecord(NamedTuple):
 
 @dataclass
 class NormalizedResidualReport:
-    """Audit-only отчёт по нормированным остаткам после SE.
+    """Audit-only report on the normalized residuals after SE.
 
-    Не модифицирует measurements (в отличие от ``remove_bad_data``). Просто
-    диагностический срез: какие измерения подозрительные (r^N > порог),
-    топ-N по нормированному остатку.
+    Does not modify measurements (unlike ``remove_bad_data``). It is simply
+    a diagnostic snapshot: which measurements are suspicious (r^N > threshold),
+    top-N by normalized residual.
 
     Attributes:
-        rn: массив нормированных остатков (m,). ``inf`` для non-redundant
+        rn: array of normalized residuals (m,). ``inf`` for non-redundant
             (``diag(Ω)`` ≤ 0).
-        meas_ids: ``meas_id`` для каждого элемента ``rn`` (порядок совпадает
-            с z-vector в текущей model).
-        top_records: топ-N записей по ``|rn|`` (исключая ``inf``) —
-            список :class:`ResidualTopRecord` (именованные поля).
-        n_above_threshold: сколько измерений (исключая ``inf``) дают
+        meas_ids: ``meas_id`` for each element of ``rn`` (the order matches
+            the z-vector in the current model).
+        top_records: top-N records by ``|rn|`` (excluding ``inf``) —
+            list of :class:`ResidualTopRecord` (named fields).
+        n_above_threshold: how many measurements (excluding ``inf``) give
             ``rn > rn_threshold``.
-        rn_max_finite: ``max(rn[rn<inf])`` — максимум по информативным.
+        rn_max_finite: ``max(rn[rn<inf])`` — the maximum over the informative ones.
     """
 
     rn: np.ndarray
@@ -113,21 +113,21 @@ def compute_normalized_residuals_report(
     top_n: int = 5,
     rn_threshold: float = 3.0,
 ) -> NormalizedResidualReport:
-    """Собрать отчёт по нормированным остаткам после SE.
+    """Build a report on the normalized residuals after SE.
 
-    Работает на текущем состоянии ``model`` (запустил ``estimate()`` ранее).
-    Считает ``r^N = |r| / √(diag(Ω))``, где ``Ω = R − H G⁻¹ Hᵀ``. Возвращает
-    топ-``top_n`` подозрительных и счётчик `rn > rn_threshold`. **Не**
-    модифицирует measurements — audit-only.
+    Works on the current state of ``model`` (``estimate()`` was run earlier).
+    Computes ``r^N = |r| / √(diag(Ω))``, where ``Ω = R − H G⁻¹ Hᵀ``. Returns the
+    top-``top_n`` suspicious ones and the count of `rn > rn_threshold`. Does **not**
+    modify measurements — audit-only.
 
     Args:
-        model: ``Working`` с выполненной оценкой.
+        model: ``Working`` with a completed estimation.
         measurements: ``_ArrayCollection`` — ``None`` → ``model.measurements``.
-        top_n: сколько топ-записей вернуть (по убыванию ``|rn|``).
-        rn_threshold: порог для подсчёта подозрительных (классически 3.0).
+        top_n: how many top records to return (descending ``|rn|``).
+        rn_threshold: threshold for counting suspicious ones (classically 3.0).
 
     Returns:
-        ``NormalizedResidualReport``. ``inf``-значения исключаются из топа.
+        ``NormalizedResidualReport``. ``inf`` values are excluded from the top.
     """
     if measurements is None:
         measurements = model.measurements
@@ -183,16 +183,16 @@ def compute_normalized_residuals_report(
 
 @dataclass
 class BadDataResult:
-    """Результат итеративной чистки плохих данных.
+    """Result of the iterative bad data clean-up.
 
     Attributes:
-        se_result: финальный ``SEResult`` после удаления всех плохих
-            измерений.
-        removed_meas_ids: список ``meas_id`` измерений, помеченных как BAD.
-        rn_max_history: значения ``max(r^N)`` по конечным ``r^N`` после
-            каждой итерации (включая последнюю, прошедшую тест); ``0.0`` when
+        se_result: the final ``SEResult`` after removing all bad
+            measurements.
+        removed_meas_ids: list of ``meas_id`` of measurements marked as BAD.
+        rn_max_history: values of ``max(r^N)`` over the finite ``r^N`` after
+            each iteration (including the last one, which passed the test); ``0.0`` when
             no measurement has a finite ``r^N``.
-        converged: ``True``, если на финальной итерации ``max(r^N) ≤ threshold``.
+        converged: ``True`` if on the final iteration ``max(r^N) ≤ threshold``.
         critical_meas_ids: ``meas_id`` of the critical (non-redundant)
             measurements of the last checked iteration (``r^N = inf``). They
             are never removed: their errors cannot be detected by the test.
@@ -206,11 +206,11 @@ class BadDataResult:
 
 
 def _normalized_residuals(diag: Diagnostics) -> np.ndarray:
-    """``r^N = |r| / √(diag(Ω))``, где ``Ω = R − H G⁻¹ Hᵀ``.
+    """``r^N = |r| / √(diag(Ω))``, where ``Ω = R − H G⁻¹ Hᵀ``.
 
-    Если ``Ω_ii`` численно равно нулю или отрицательно (плохая обусловленность
-    G), элемент возвращается как ``+∞`` — такое измерение фактически
-    «non-redundant», и нормированный остаток для него не определён.
+    If ``Ω_ii`` is numerically zero or negative (poor conditioning of
+    G), the element is returned as ``+∞`` — such a measurement is effectively
+    "non-redundant", and the normalized residual is not defined for it.
 
     Delegates to the shared sparse implementation
     :func:`gridstate.algebra.normalized_residuals.normalized_residuals`
@@ -227,30 +227,30 @@ def remove_bad_data(
     tolerance: float = 1e-6,
     estimate_max_iterations: int = 50,
 ) -> BadDataResult:
-    """Итеративно удалить плохие измерения и вернуть финальный ``SEResult``.
+    """Iteratively remove bad measurements and return the final ``SEResult``.
 
-    На каждой итерации:
-        1. Запускается ``estimate()``;
-        2. Считается ``r^N``;
-        3. Если ``max(r^N) > threshold`` — плохое измерение помечается
-           ``status=False, quality=BAD`` и цикл повторяется.
+    On each iteration:
+        1. ``estimate()`` is run;
+        2. ``r^N`` is computed;
+        3. If ``max(r^N) > threshold`` — the bad measurement is marked
+           ``status=False, quality=BAD`` and the loop repeats.
 
     Only finite ``r^N`` take part in the test: critical measurements
     (``r^N = inf``) are kept and listed in ``critical_meas_ids``.
 
     Args:
-        model: ``Working`` — обновляется in-place.
-        measurements: коллекция — если ``None``, ``model.measurements``.
-        rn_max_threshold: порог для нормированного остатка (классически 3.0).
-        max_iterations: максимальное число итераций отбраковки (защита от
-            зацикливания).
-        tolerance: критерий сходимости для внутреннего ``estimate``.
-        estimate_max_iterations: лимит итераций Gauss-Newton на каждый
-            вызов ``estimate``.
+        model: ``Working`` — updated in place.
+        measurements: collection — if ``None``, ``model.measurements``.
+        rn_max_threshold: threshold for the normalized residual (classically 3.0).
+        max_iterations: maximum number of rejection iterations (protection against
+            looping).
+        tolerance: convergence criterion for the inner ``estimate``.
+        estimate_max_iterations: Gauss-Newton iteration limit for each
+            ``estimate`` call.
     """
     if measurements is None:
         measurements = model.measurements
-    assert measurements is not None  # для pyright
+    assert measurements is not None  # for pyright
 
     removed: list[int] = []
     rn_history: list[float] = []
@@ -276,17 +276,19 @@ def remove_bad_data(
             critical_meas_ids=critical,
         )
 
-    # Первый прогон — до цикла; цикл только повторяет estimate после отбраковки.
+    # First run — before the loop; the loop only repeats estimate after a rejection.
     se_result = _run_estimate()
 
     for it in range(max_iterations + 1):
         if not se_result.success:
-            logger.warning("rn_max: SE не сошлась на итерации %d — прерываем чистку", it)
+            logger.warning(
+                "rn_max: SE did not converge at iteration %d — aborting the clean-up", it
+            )
             return _result(converged=False)
 
         diag = compute_diagnostics(model, measurements)
         if diag.r.shape[0] == 0:
-            logger.warning("rn_max: нет активных измерений — нечего проверять")
+            logger.warning("rn_max: no active measurements — nothing to check")
             return _result(converged=True)
 
         rn = _normalized_residuals(diag)
@@ -298,7 +300,7 @@ def remove_bad_data(
 
         if rn_max <= rn_max_threshold:
             logger.debug(
-                "rn_max-тест пройден на итерации %d: max(r^N)=%.3f ≤ %.3f",
+                "rn_max test passed at iteration %d: max(r^N)=%.3f ≤ %.3f",
                 it,
                 rn_max,
                 rn_max_threshold,
@@ -311,13 +313,13 @@ def remove_bad_data(
                 )
             return _result(converged=True)
 
-        # Иначе — отбрасываем худшее измерение.
+        # Otherwise — drop the worst measurement.
         bad_pos = int(np.argmax(np.where(finite, rn, -np.inf)))
         bad_id = int(diag.meas_index.meas_id[bad_pos])
         bad_meas = measurements.get_by_id(bad_id)
         if bad_meas is None:
             logger.error(
-                "rn_max: не нашли измерение id=%d в коллекции — прерываем",
+                "rn_max: measurement id=%d not found in the collection — aborting",
                 bad_id,
             )
             return _result(converged=False)
@@ -325,21 +327,21 @@ def remove_bad_data(
         bad_meas.quality = QUALITY_BAD
         removed.append(bad_id)
         logger.info(
-            "rn_max: itr %d, удалено измерение id=%d (r^N=%.2f > %.2f)",
+            "rn_max: itr %d, removed measurement id=%d (r^N=%.2f > %.2f)",
             it,
             bad_id,
             rn_max,
             rn_max_threshold,
         )
 
-        # Лимит итераций достигнут — не переоцениваем после последней отбраковки
-        # (финальный se_result соответствует прошедшему прогону, как раньше).
+        # Iteration limit reached — do not re-estimate after the last rejection
+        # (the final se_result corresponds to the completed run, as before).
         if it == max_iterations:
             break
         se_result = _run_estimate()
 
     logger.warning(
-        "rn_max: достигнут лимит итераций (%d), а тест ещё не пройден",
+        "rn_max: iteration limit reached (%d) and the test has not passed yet",
         max_iterations,
     )
     return _result(converged=False)
