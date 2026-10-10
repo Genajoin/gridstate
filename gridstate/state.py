@@ -24,6 +24,7 @@ The layout to/from a flat array is handled by ``pack`` / ``unpack``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -308,3 +309,71 @@ def flat_start_with_box(
         pnag_estimated=pnag_init,
         qnag_estimated=qnag_init,
     )
+
+
+@dataclass(frozen=True)
+class InitialPoint:
+    """Explicit solver initial point ``x0``: node V/δ keyed by node id.
+
+    The initial point of :func:`gridstate.api.estimate` is otherwise read from
+    the node table (``init="results"``), where ``voltage_magnitude`` also
+    feeds the pseudo-V priors. An ``InitialPoint`` carries the start
+    separately, so a warm start can change where the solver begins without
+    changing the estimation problem.
+
+    Attributes:
+        node_ids: (k,) node ids.
+        voltage_magnitude: (k,) V magnitude, kV (converted to p.u. with the
+            node's ``voltage_nominal`` at solve time; a non-positive value
+            starts the node at 1.0 p.u.).
+        voltage_angle: (k,) V angle, rad.
+
+    A repeated id keeps its last entry.
+    """
+
+    node_ids: np.ndarray
+    voltage_magnitude: np.ndarray
+    voltage_angle: np.ndarray
+
+    def __post_init__(self) -> None:
+        n = np.shape(self.node_ids)
+        if np.shape(self.voltage_magnitude) != n or np.shape(self.voltage_angle) != n:
+            raise ValueError(
+                "node_ids, voltage_magnitude and voltage_angle must have the same shape, got "
+                f"{np.shape(self.node_ids)}, {np.shape(self.voltage_magnitude)}, "
+                f"{np.shape(self.voltage_angle)}"
+            )
+
+    @classmethod
+    def from_result(cls, result: Any) -> InitialPoint:
+        """V/δ of a previous solution (an ``SEResult`` or a compatible object).
+
+        The source is ``result.outputs.nodes`` (the Output table), falling back
+        to ``result.model.nodes``.
+        """
+        out_nodes = getattr(getattr(result, "outputs", None), "nodes", None)
+        if (
+            out_nodes is not None
+            and getattr(out_nodes, "size", 0) > 0
+            and "voltage_magnitude" in (out_nodes.dtype.names or ())
+        ):
+            src = out_nodes
+        else:
+            src = result.model.nodes.to_numpy()
+        return cls(
+            node_ids=np.asarray(src["id"], dtype=np.int64).copy(),
+            voltage_magnitude=np.asarray(src["voltage_magnitude"], dtype=np.float64).copy(),
+            voltage_angle=np.asarray(src["voltage_angle"], dtype=np.float64).copy(),
+        )
+
+    def as_dict(self) -> dict[int, tuple[float, float]]:
+        """``{node id: (V kV, δ rad)}``; a repeated id keeps its last entry."""
+        return {
+            int(i): (float(vm), float(va))
+            for i, vm, va in zip(
+                self.node_ids.tolist(),
+                self.voltage_magnitude.tolist(),
+                self.voltage_angle.tolist(),
+                strict=True,
+            )
+        }

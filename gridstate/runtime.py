@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     from gridstate.pipeline.config import PipelineConfig
     from gridstate.result import SEResult
+    from gridstate.state import InitialPoint
     from gridstate.working import Working
 
 
@@ -40,7 +41,7 @@ def run(
     *,
     config: PipelineConfig | None = None,
     on_event: Callable[[dict], None] | None = None,
-    init_state: SEOutput | SEResult | None = None,
+    init_state: SEOutput | SEResult | InitialPoint | None = None,
     validate: bool = True,
 ) -> SEOutput:
     """Public contract entry point of SE: ``SEInput → SEOutput``.
@@ -54,8 +55,9 @@ def run(
         config: :class:`gridstate.pipeline.PipelineConfig`; ``None`` → library
             defaults.
         on_event: progress callback (as for the pipeline).
-        init_state: previous :class:`SEOutput` (or ``SEResult``) for a warm
-            start.
+        init_state: previous :class:`SEOutput` (or ``SEResult`` /
+            :class:`~gridstate.state.InitialPoint`) for a warm start; how its
+            V/δ are used is set by ``config.warm_start_mode``.
         validate: validate the input against the contract and **raise**
             :class:`gridstate.contract.ContractValidationError` on missing
             required columns or an incompatible contract version (fail early

@@ -88,7 +88,13 @@ def _estimate_kwargs(cfg: PipelineConfig, *, init: str, **overrides: Any) -> dic
 
 def _s_estimate(ctx: _Ctx) -> dict:
     cfg = ctx.cfg
-    ctx.result = estimate(ctx.model, **_estimate_kwargs(cfg, init=cfg.init))
+    kwargs = _estimate_kwargs(cfg, init=cfg.init)
+    if ctx.x0 is not None:
+        # Warm start in x0_only mode: the previous solution is the start of the
+        # main solve only. The re-solve passes start from the table, which by
+        # then holds this solve's V/δ, as on a cold start.
+        kwargs["x0"] = ctx.x0
+    ctx.result = estimate(ctx.model, **kwargs)
     return {
         "algorithm": cfg.algorithm,
         "success": bool(ctx.result.success),

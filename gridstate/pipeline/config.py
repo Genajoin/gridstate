@@ -338,6 +338,19 @@ class PipelineConfig:
         choices=["flat", "results", "slack"],
         help="flat (V=1,δ=0) | results | slack.",
     )
+    warm_start_mode: str = _param(
+        "seed_inputs",
+        group=_G_EST,
+        label="Режим warm start",
+        control="select",
+        choices=["seed_inputs", "x0_only"],
+        help="How run(init_state=...) uses the previous solution. seed_inputs: its "
+        "V/δ are written into the node table before preprocessing, so they are both "
+        "the solver start and the V operating point the pseudo-V priors are built "
+        "from (default, previous behaviour). x0_only: the previous solution is only "
+        "the solver initial point; the priors come from the input exactly as on a "
+        "cold start.",
+    )
     tolerance: float = _param(
         1e-3,
         group=_G_EST,

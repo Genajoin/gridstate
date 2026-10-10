@@ -12,7 +12,10 @@ cleaner one. Every event is a ``dict`` with a ``"type"`` key:
 
 ``warm_start``
     ``{"type", "seeded_nodes": int}``. :func:`run` with ``init_state`` only;
-    emitted first, before ``clone``.
+    emitted first, before ``clone``. ``seeded_nodes`` counts the nodes of the
+    working copy the previous solution covers (seeded into the table with
+    ``warm_start_mode="seed_inputs"``, carried by the explicit initial point
+    with ``"x0_only"``).
 ``clone``
     ``{"type", "nodes": int, "branches": int}``: sizes of the working copy.
     :func:`run` only (not :func:`prepare_network`).
@@ -67,6 +70,7 @@ from gridstate.pipeline.config import PipelineConfig
 from gridstate.pipeline.context import Step, _Ctx, _no_solution
 from gridstate.pipeline.steps import STEPS
 from gridstate.result import SEResult
+from gridstate.state import InitialPoint
 from gridstate.working import Working
 
 
@@ -187,36 +191,25 @@ def _build_working(model: Any) -> Any:
 
 
 def _seed_warm_start(working: Any, init_state: Any) -> int:
-    """Seed V/δ of the working copy from a previous ``SEResult`` (explicit warm start).
+    """Seed V/δ of the working copy from a previous ``SEResult`` (``warm_start_mode="seed_inputs"``).
 
     The input is read-only, so ``run`` clones it on every call (V/δ as supplied)
     and a warm start across runs cannot come from reading an overwritten
     ``voltage_magnitude`` (as it used to). Instead the caller passes the previous
     result as ``init_state``; its V/δ (kV/rad, keyed by id) are written into the
     nodes of the working copy BEFORE preprocessing. The ``estimate`` step with
-    ``init="results"`` picks them up (preprocessing does not touch V/δ).
+    ``init="results"`` picks them up as its start. The seeded V is also the
+    operating point ``add_pseudo`` reads for the pseudo-V priors (prior value
+    and the ``unobservable_v_min_vm_deviation`` gate), so this mode changes
+    the estimation problem as well as the start; ``warm_start_mode="x0_only"``
+    passes the start separately instead (:class:`~gridstate.state.InitialPoint`).
     Returns the number of seeded nodes.
 
-    The V/δ source is ``init_state.outputs.nodes`` (the Output table), falling
-    back to ``init_state.model.nodes``.
+    ``init_state`` is a previous result (V/δ from ``init_state.outputs.nodes``,
+    falling back to ``init_state.model.nodes``) or a ready ``InitialPoint``.
     """
-    vd: dict[int, tuple[float, float]] = {}
-    out_nodes = getattr(getattr(init_state, "outputs", None), "nodes", None)
-    if (
-        out_nodes is not None
-        and getattr(out_nodes, "size", 0) > 0
-        and "voltage_magnitude" in (out_nodes.dtype.names or ())
-    ):
-        for i in range(len(out_nodes)):
-            vd[int(out_nodes["id"][i])] = (
-                float(out_nodes["voltage_magnitude"][i]),
-                float(out_nodes["voltage_angle"][i]),
-            )
-    else:
-        src = init_state.model.nodes.to_numpy()
-        for r in src:
-            vd[int(r["id"])] = (float(r["voltage_magnitude"]), float(r["voltage_angle"]))
-
+    point = _initial_point(init_state)
+    vd = point.as_dict()
     arr = working.nodes.to_numpy().copy()
     seeded = 0
     for i in range(len(arr)):
@@ -227,6 +220,19 @@ def _seed_warm_start(working: Any, init_state: Any) -> int:
             seeded += 1
     working.nodes.update_from_array(arr)
     return seeded
+
+
+def _initial_point(init_state: Any) -> InitialPoint:
+    """``init_state`` as an :class:`InitialPoint` (a previous result or a ready point)."""
+    if isinstance(init_state, InitialPoint):
+        return init_state
+    return InitialPoint.from_result(init_state)
+
+
+def _count_covered(working: Any, point: InitialPoint) -> int:
+    """Nodes of the working copy that ``point`` covers (the ``seeded_nodes`` count)."""
+    ids = set(point.node_ids.tolist())
+    return sum(1 for nid in working.nodes.to_numpy()["id"].tolist() if int(nid) in ids)
 
 
 def run(
@@ -264,10 +270,15 @@ def run(
             already carry the measurements).
         on_event: progress callback. Receives dict events ``step_start`` /
             ``step_done`` / ``step_skipped`` / ``step_error`` / ``final``.
-        init_state: previous ``SEResult`` for a **warm start** (the chain
-            ``run(wls)`` → ``run(ipm, init_state=res_wls)``). Its V/δ are seeded
-            into the working copy before preprocessing and the estimate starts
-            from them (init is forced to ``"results"``). ``None``: cold start
+        init_state: previous ``SEResult`` (or an
+            :class:`~gridstate.state.InitialPoint`) for a **warm start** (the
+            chain ``run(wls)`` → ``run(ipm, init_state=res_wls)``); init is
+            forced to ``"results"``. ``cfg.warm_start_mode`` decides what the
+            previous V/δ are: ``"seed_inputs"`` (default) seeds them into the
+            working copy before preprocessing, so they are both the start and
+            the V operating point of the pseudo-V priors; ``"x0_only"`` passes
+            them to the ``estimate`` step as an explicit initial point only and
+            the estimation problem is the cold-start one. ``None``: cold start
             from ``cfg.init``.
 
     Returns:
@@ -284,13 +295,23 @@ def run(
     # _build_working/Working) and needs no reset.
     working = _build_working(model)
 
-    # Warm start: seed V/δ from the previous result and force init="results".
+    # Warm start from the previous result; init is forced to "results" (the
+    # nodes the previous result does not cover start from the input V/δ).
+    # seed_inputs: V/δ are written into the working copy before preprocessing
+    # (start AND pseudo-V operating point). x0_only: they travel as an explicit
+    # initial point of the main estimate only; the problem is the cold one.
+    x0: InitialPoint | None = None
     if init_state is not None:
-        seeded = _seed_warm_start(working, init_state)
+        point = _initial_point(init_state)
+        if cfg.warm_start_mode == "x0_only":
+            x0 = point
+            seeded = _count_covered(working, point)
+        else:
+            seeded = _seed_warm_start(working, point)
         cfg = replace(cfg, init="results")
         _emit(on_event, {"type": "warm_start", "seeded_nodes": seeded})
 
-    ctx = _Ctx(model=working, cfg=cfg)
+    ctx = _Ctx(model=working, cfg=cfg, x0=x0)
 
     # The numeric plans (topology / tap changers / telemetry / materialization /
     # Vnom) come ready (``derived``): the data producer computed them outside
