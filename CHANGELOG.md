@@ -9,6 +9,19 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.1.0 (2026-10-14)
+
+### Feat
+
+- `SEResult.normalized_residuals` (`MeasurementNormalizedResiduals`, exported
+  from the package root): `r_N` and `Ω_ii / σ²_i` of every z-vector
+  measurement by measurement id, in z-vector order. The quality summary keeps
+  the vector it already computes; `worst_residuals` and
+  `near_critical_measurements` still rank and trim it. Rows outside the
+  residual scope (pseudo-measurements under `"real"`) hold `nan`, critical
+  measurements `inf`; `None` when the summary is not computed. Additive, no
+  data contract change (#101)
+
 ## v2.0.0 (2026-10-10)
 
 ### Breaking changes
