@@ -19,6 +19,7 @@ from gridstate.api import estimate
 from gridstate.result import (
     Chi2Summary,
     ImbalanceRow,
+    MeasurementNormalizedResiduals,
     ResidualRow,
     SEResult,
 )
@@ -96,6 +97,7 @@ def test_seresult_quality_summary_disabled() -> None:
     assert res.worst_residuals == []
     assert res.worst_imbalance == []
     assert res.observability_warnings == []
+    assert res.normalized_residuals is None
 
 
 def test_seresult_backward_compat_default_construction() -> None:
@@ -186,3 +188,37 @@ def test_worst_residuals_scope_all_keeps_pseudo() -> None:
     top = res.worst_residuals[0]
     assert top.measurement_id == 900
     assert top.is_pseudo is True
+
+
+def test_normalized_residuals_vector_covers_every_measurement() -> None:
+    """The full r_N vector holds every z row and agrees with the trimmed top."""
+    m, _, _ = _three_bus_with_clean_measurements()
+    res = estimate(m, tolerance=1e-10, quality_summary_top_n=2)
+
+    vec = res.normalized_residuals
+    assert isinstance(vec, MeasurementNormalizedResiduals)
+    n_meas = sum(1 for me in m.measurements if me.status)
+    assert vec.measurement_id.shape == (n_meas,)
+    assert vec.normalized_residual.shape == vec.omega_ratio.shape == (n_meas,)
+    assert len(set(vec.measurement_id.tolist())) == n_meas
+
+    rn_by_id = dict(zip(vec.measurement_id.tolist(), vec.normalized_residual.tolist(), strict=True))
+    assert len(res.worst_residuals) == 2
+    for row in res.worst_residuals:
+        assert rn_by_id[row.measurement_id] == row.normalized_residual
+
+
+def test_normalized_residuals_vector_pseudo_outside_scope_is_nan() -> None:
+    """Under scope="real" a pseudo row stays in the vector with nan r_N."""
+    m = _with_pseudo_outlier()
+    res = estimate(m, tolerance=1e-10)
+    vec = res.normalized_residuals
+    assert vec is not None
+    ids = vec.measurement_id.tolist()
+    assert 900 in ids
+    pos = ids.index(900)
+    assert np.isnan(vec.normalized_residual[pos])
+    assert np.isnan(vec.omega_ratio[pos])
+    real = np.ones(len(ids), dtype=bool)
+    real[pos] = False
+    assert not np.isnan(vec.normalized_residual[real]).any()

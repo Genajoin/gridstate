@@ -39,7 +39,7 @@ from gridstate.quality_summary import (
     top_worst_imbalance,
     top_worst_residuals,
 )
-from gridstate.result import SEResult, extract_output_tables
+from gridstate.result import MeasurementNormalizedResiduals, SEResult, extract_output_tables
 from gridstate.state import (
     InitialPoint,
     StateLayout,
@@ -414,7 +414,8 @@ def _populate_quality_summary(
     near_critical: float = NEAR_CRITICAL_THRESHOLD,
 ) -> None:
     """Fill ``result.chi2 / worst_residuals / worst_imbalance /
-    observability_warnings / near_critical_measurements`` after
+    observability_warnings / near_critical_measurements /
+    normalized_residuals`` after
     ``write_results_to_model``.
 
     All errors in the summary are swallowed into the logs: report quality is not an indicator of
@@ -475,6 +476,11 @@ def _populate_quality_summary(
                 threshold=near_critical,
                 is_pseudo=is_pseudo_z,
                 network_pu=network_pu,
+            )
+            result.normalized_residuals = MeasurementNormalizedResiduals(
+                measurement_id=np.asarray(meas_index.meas_id, dtype=np.int64).copy(),
+                normalized_residual=np.asarray(normalized.rn, dtype=np.float64).copy(),
+                omega_ratio=np.asarray(normalized.omega_ratio, dtype=np.float64).copy(),
             )
         result.worst_imbalance = top_worst_imbalance(model, n=top_n)
         result.observability_warnings = observability_warnings_from_H(
