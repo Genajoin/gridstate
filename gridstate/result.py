@@ -13,7 +13,8 @@ canonical Output contract for external adapters (UI/CLI): they join Input +
 p.u./radians — for debugging and tests.
 
 The additional quality fields (``chi2``, ``worst_residuals``,
-``worst_imbalance``, ``observability_warnings``) are filled by ``estimate()``
+``worst_imbalance``, ``observability_warnings``, ``normalized_residuals``) are
+filled by ``estimate()``
 after ``write_results_to_model``: a structured summary for backward-compatible
 diagnostics (it used to be assembled ad hoc by an example script).
 """
@@ -117,6 +118,31 @@ class ResidualRow:
     object_id: int = 0
     branch_side: int = -1
     is_pseudo: bool = False
+
+
+@dataclass
+class MeasurementNormalizedResiduals:
+    """Normalized residuals of every z-vector measurement, by measurement id.
+
+    The full vector behind ``worst_residuals`` / ``near_critical_measurements``:
+    those lists rank and trim it, this one keeps every row so that an adapter
+    can show ``r_N`` next to each measurement. Arrays are parallel, in z-vector
+    order; pseudo-measurements are in the vector only under
+    ``quality_summary_scope="all"``.
+
+    Attributes:
+        measurement_id: (m,) ``Measurement.id`` of the z-vector rows.
+        normalized_residual: (m,) ``|r| / √Ω_ii``; ``inf`` for a critical
+            measurement (numerically non-positive ``Ω_ii``); ``nan`` for a row
+            outside the residual scope (a pseudo-measurement under ``"real"``).
+        omega_ratio: (m,) ``Ω_ii / σ²_i`` (1: fully redundant, 0: critical);
+            below the near-critical threshold ``r_N`` is numerically
+            unreliable. ``nan`` where ``normalized_residual`` is ``nan``.
+    """
+
+    measurement_id: np.ndarray
+    normalized_residual: np.ndarray
+    omega_ratio: np.ndarray
 
 
 @dataclass
@@ -316,6 +342,10 @@ class SEResult:
             ``False``; with ``quality_summary_scope="all"`` they take part
             and are marked by ``is_pseudo`` (the pipeline always uses
             ``"real"``).
+        normalized_residuals: ``r_N`` and ``Ω_ii / σ²_i`` of every z-vector
+            measurement (:class:`MeasurementNormalizedResiduals`), the
+            untrimmed source of ``worst_residuals``; ``None`` if the summary
+            was not computed.
     """
 
     model: Working
@@ -353,6 +383,7 @@ class SEResult:
     worst_imbalance: list[ImbalanceRow] = field(default_factory=list)
     observability_warnings: list[int] = field(default_factory=list)
     near_critical_measurements: list[NearCriticalRow] = field(default_factory=list)
+    normalized_residuals: MeasurementNormalizedResiduals | None = None
 
 
 def label_for_kind(kind_code: int) -> str:
