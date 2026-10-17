@@ -9,6 +9,27 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.4.0 (2026-10-17)
+
+### Behavior changes
+
+- Breaker branches marked by the input format (R = 0, X = 1 Ohm) get
+  X = 110·min_x·Vn Ohm with min_x = 4e-6 (≈ 0.044/Vn p.u.) instead of a fixed
+  1e-3 p.u.; `breaker_x_pu` (new) sets a fixed p.u. value instead. Estimates
+  move on models carrying the marker (≤ 4.5e-3 p.u. V with `ipm_pd` on the
+  test models) (#115)
+- A solved state with V/Vnom below `implausible_v_ratio` (new, default 0.3)
+  at any node is marked not converged whatever the solver reports, with a
+  WARNING listing the nodes and hints; a non-converged WLS solve logs its
+  largest normalized residuals (#114, #115)
+
+### Feat
+
+- Piecewise static load characteristics: optional input table
+  `load_characteristic_segments` (contract 3.2.0) with per-segment
+  coefficients up to V⁴ for P and Q; `apply_load_characteristic` uses it in
+  place of the quadratic row; without the table nothing changes (#113, #115)
+
 ## v2.3.0 (2026-10-17)
 
 ### Behavior changes
