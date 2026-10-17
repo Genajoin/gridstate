@@ -196,6 +196,7 @@ def solve_ipm_pd(
     armijo_c: float = 1e-4,
     armijo_backtrack: float = 0.5,
     armijo_max: int = 10,
+    max_search_failures: int = 20,
     step_tol: float = 1e-4,
     feas_tol: float = 1e-6,
     max_iter: int = 100,
@@ -229,6 +230,9 @@ def solve_ipm_pd(
         armijo_c, armijo_backtrack, armijo_max: Armijo backtracking of the
             primal step on the merit (see the module docstring); at most
             ``armijo_max`` trial points, ``0`` disables the search.
+        max_search_failures: stop (``"stalled"``) once this many iterations found
+            no sufficient decrease: the iteration is not converging and the
+            remaining budget would be spent for nothing.
         step_tol: stop once the last primal step ``|αp·Δx|∞`` over the coordinates
             outside ``box_idx`` (V/δ) is below it. Box variables may still move
             along directions the data do not see (the common level of a node's
@@ -256,7 +260,8 @@ def solve_ipm_pd(
 
     Returns:
         :class:`~gridstate.algorithms.ipm.IPMResult`; ``status`` is ``"kkt"`` when
-        every stopping test holds, ``"stalled"`` at ``max_iter``, ``"error"`` on a
+        every stopping test holds, ``"stalled"`` at ``max_iter`` or after
+        ``max_search_failures``, ``"error"`` on a
         failed or non-finite solve. ``iterations_outer`` = ``iterations_inner_total``
         = the number of iterations.
     """
@@ -351,6 +356,7 @@ def solve_ipm_pd(
     nu = 0.0
     n_centering = 0
     n_ls_fail = 0
+    stop_search = False
 
     w = w_base
     mu = mu0 if n_pairs else 0.0
@@ -509,6 +515,8 @@ def solve_ipm_pd(
                 r_new = None
             else:
                 n_ls_fail += 1
+                if n_ls_fail >= max_search_failures:
+                    stop_search = True
             if r_new is None:
                 # No sufficient decrease: keep the last (shortest) trial step.
                 a_p /= armijo_backtrack
@@ -536,6 +544,8 @@ def solve_ipm_pd(
         lam = lam + a_d * dlam
         r = residual_fn(x) if r_new is None else r_new
         g = g_of(x, r)
+        if stop_search:
+            break
     else:
         it = max_iter
 
@@ -554,6 +564,9 @@ def solve_ipm_pd(
     elif status == "error":
         message = f"{message}: {detail}"
         solve_status = SolveStatus.ERROR
+    elif stop_search:
+        message = f"no merit decrease: {detail}"
+        solve_status = SolveStatus.STALLED
     else:
         message = f"iteration limit: {detail}"
         solve_status = SolveStatus.MAX_ITER

@@ -807,7 +807,10 @@ def _run_ipm(
             eq_tol=setup.balance_tol,
             mu_init=1.0,
             step_tol=max(tolerance, 1e-4),
-            max_iter=max(max_iterations, 300),
+            # Weakly determined units need up to ~260 iterations with separate
+            # injection parts; a hard balance does not converge in that budget
+            # either way, so it keeps the short one before the fallback.
+            max_iter=max(max_iterations, 100 if eq_idx is not None else 300),
             tr_radius=0.5,
             huber_c=huber_c,
             huber_mask=huber_mask,
