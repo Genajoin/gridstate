@@ -35,6 +35,7 @@ import numpy as np
 from scipy.sparse import csr_matrix, diags
 
 from gridstate._arrays import meas_mask
+from gridstate.bounds import resolve_bounds
 from gridstate.constants import MeasurementObjectType, MeasurementType
 from gridstate.utils import id_to_pos_map
 from gridstate.working import table_view
@@ -264,6 +265,52 @@ def build_z_and_r(
         meas_id=ids[used],
     )
     return z[used], r_matrix, meas_index
+
+
+def measurement_bounds_pu(
+    measurements: _ArrayCollection,
+    meas_index: MeasurementIndex,
+    network_pu: NetworkPU,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bounds ``[lo, hi]`` (p.u.) of the measured values of the rows of ``meas_index``.
+
+    Read from ``min_value`` / ``max_value`` and converted like the values in
+    :func:`build_z_and_r`. Unset sides (see :func:`gridstate.bounds.resolve_bounds`:
+    a both-zero or both-sentinel pair, an inverted pair) and rows without the
+    columns or without a measurement row (balance / prior rows) are ``∓inf``.
+    """
+    m = len(meas_index)
+    lo = np.full(m, -np.inf)
+    hi = np.full(m, np.inf)
+    arr = table_view(measurements)
+    names = arr.dtype.names or ()
+    if "min_value" not in names or "max_value" not in names:
+        return lo, hi
+    row_of = id_to_pos_map(arr["id"].astype(np.int64))
+    base_mva = float(network_pu.base_mva)
+    for k in range(m):
+        i = row_of.get(int(meas_index.meas_id[k]))
+        if i is None:
+            continue
+        lo_k, hi_k = resolve_bounds(arr["min_value"][i], arr["max_value"][i])
+        if not (np.isfinite(lo_k) or np.isfinite(hi_k)):
+            continue
+        kind = int(meas_index.kind[k])
+        pos = int(meas_index.object_pos[k])
+        if kind == KIND_VOLTAGE:
+            scale = float(network_pu.bus_vn_kv[pos])
+        elif kind == KIND_CURRENT:
+            end = (
+                network_pu.from_idx[pos]
+                if int(meas_index.branch_side[k]) == SIDE_FROM
+                else network_pu.to_idx[pos]
+            )
+            scale = base_mva * 1000.0 / (np.sqrt(3.0) * float(network_pu.bus_vn_kv[end]))
+        else:
+            scale = base_mva
+        lo[k] = lo_k / scale
+        hi[k] = hi_k / scale
+    return lo, hi
 
 
 def _warn_nonfinite(

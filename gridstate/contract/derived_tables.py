@@ -50,6 +50,7 @@ table and is absent from ``fields`` in the metadata):
 ``voltage_nominal``    ``voltage_nominal``    one node nominal voltage
 ``v_sigma2_scale``     ``v_sigma2_scale``     one node V variance factor
 ``flow_sigma2_scale``  ``flow_sigma2_scale``  one branch flow variance factor
+``telemetry_bounds``   ``telemetry_bounds``   one plausible range of a telemetry value
 ``telemetry_total_args``  (metadata)          integer, statistics only
 =====================  =====================  ======================================
 
@@ -324,6 +325,22 @@ FLOW_SIGMA2_SCALE = TableSchema(
     ),
 )
 
+TELEMETRY_BOUNDS = TableSchema(
+    name="telemetry_bounds",
+    key=("object_id", "kind", "component"),
+    doc=(
+        "Plausible range of telemetry values (DerivedInputs.telemetry_bounds). In memory: "
+        "{(object_id, kind): (lo, hi)}."
+    ),
+    columns=(
+        _col("object_id", "i4", "Object id (as in the telemetry table)."),
+        _col("kind", "i1", "Telemetry kind code (TELEMETRY_KINDS)."),
+        _col("component", "i4", "Component number of an injection kind; -1 for none."),
+        _col("lo", "f8", "Lower bound, units and sign of the value; -inf when unset."),
+        _col("hi", "f8", "Upper bound, units and sign of the value; +inf when unset."),
+    ),
+)
+
 #: All derived tables, in declaration order.
 DERIVED_TABLES: tuple[TableSchema, ...] = (
     TOPOLOGY,
@@ -333,6 +350,7 @@ DERIVED_TABLES: tuple[TableSchema, ...] = (
     VOLTAGE_NOMINAL,
     V_SIGMA2_SCALE,
     FLOW_SIGMA2_SCALE,
+    TELEMETRY_BOUNDS,
 )
 
 #: ``DerivedInputs`` plan field → name of the table that stores it.
@@ -344,6 +362,7 @@ FIELD_TABLES: dict[str, str] = {
     "voltage_nominal": VOLTAGE_NOMINAL.name,
     "v_sigma2_scale": V_SIGMA2_SCALE.name,
     "flow_sigma2_scale": FLOW_SIGMA2_SCALE.name,
+    "telemetry_bounds": TELEMETRY_BOUNDS.name,
 }
 
 #: Prefix of the derived table keys in the ``.npz`` file (``derived.topology`` …).
@@ -468,6 +487,14 @@ def derived_to_tables(derived: DerivedInputs) -> tuple[dict[str, np.ndarray], di
             "flow_sigma2_scale",
             ((int(b), _flow_code(k), float(f)) for (b, k), f in derived.flow_sigma2_scale.items()),
         )
+    if derived.telemetry_bounds is not None:
+        put(
+            "telemetry_bounds",
+            (
+                (*_key_columns(o, k), float(lo), float(hi))
+                for (o, k), (lo, hi) in derived.telemetry_bounds.items()
+            ),
+        )
     meta = {
         "fields": present,
         "telemetry_total_args": int(derived.telemetry_total_args),
@@ -588,6 +615,15 @@ def _flow_scale(arr: np.ndarray) -> dict[tuple[int, str], float]:
     return out
 
 
+def _telemetry_bounds(arr: np.ndarray) -> dict[tuple[int, str], tuple[float, float]]:
+    out: dict[tuple[int, str], tuple[float, float]] = {}
+    for object_id, code, comp, lo, hi in arr.tolist():
+        out[(object_id, _kind_name(code, comp))] = (lo, hi)
+    if len(out) != len(arr):
+        raise ValueError("derived table 'telemetry_bounds': duplicate keys")
+    return out
+
+
 def derived_from_tables(tables: Mapping[str, np.ndarray], meta: Mapping[str, Any]) -> DerivedInputs:
     """``({table name: structured array}, metadata)`` → ``DerivedInputs``.
 
@@ -636,6 +672,8 @@ def derived_from_tables(tables: Mapping[str, np.ndarray], meta: Mapping[str, Any
         derived.v_sigma2_scale = _by_node("v_sigma2_scale", arr)
     if (arr := table("flow_sigma2_scale")) is not None:
         derived.flow_sigma2_scale = _flow_scale(arr)
+    if (arr := table("telemetry_bounds")) is not None:
+        derived.telemetry_bounds = _telemetry_bounds(arr)
     return derived
 
 

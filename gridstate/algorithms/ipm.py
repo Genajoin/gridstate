@@ -33,6 +33,12 @@ changing the sparse structure. The step is limited to ``α_max·(1−ε)`` so th
 
 Sanity property: with ``box_idx=[]`` the IPM is equivalent to Gauss-Newton WLS
 (the barrier is zero, the outer loop makes a single pass).
+
+Equality rows (``eq_idx``, e.g. hard nodal balance) are handled by the method
+of multipliers: such a row ``c = h − z = −r`` enters Φ as
+``½ρ (r − λ/ρ)²`` (``ρ`` — its ``r_inv_diag`` entry, ``λ`` — its multiplier),
+and after every outer step ``λ ← λ + ρ·c``. At the fixed point ``c = 0``
+exactly, whatever ``ρ``; the Newton systems stay the normal equations.
 """
 
 from __future__ import annotations
@@ -98,6 +104,8 @@ class IPMResult:
     message: str = ""
     status: str = "error"
     solve_status: SolveStatus = SolveStatus.ERROR
+    # max |c| over the equality rows at the final point (p.u.); nan without them.
+    eq_inf_final: float = float("nan")
 
 
 def _project_to_interior(
@@ -269,6 +277,10 @@ def solve_ipm(
     huber_adaptive_k: float = 6.0,
     huber_warmup_iters: int = 5,
     kkt_solver: KKTSolver | None = None,
+    eq_idx: np.ndarray | None = None,
+    eq_tol: np.ndarray | None = None,
+    eq_extra_outer: int = 10,
+    eq_prox: float = 1e-9,
 ) -> IPMResult:
     """Primal log-barrier IPM for box-constrained WLS.
 
@@ -331,6 +343,17 @@ def solve_ipm(
             symbolic factorization between iterations (see
             ``gridstate.algorithms.kkt_solver``). ``None`` — scipy spsolve
             (the former behaviour, bit for bit).
+        eq_idx: rows of ``r`` that are equality constraints ``h = z`` (method of
+            multipliers, see the module docstring). ``None`` — none.
+        eq_tol: admissible ``|c|`` per row of ``eq_idx`` (p.u.). Once the μ
+            schedule is done, up to ``eq_extra_outer`` further outer steps at
+            ``μ_min`` update the multipliers until every row is within it.
+        eq_prox: with equality rows, a proximal term ``eq_prox·max(ρ)`` added to
+            the diagonal of the box coordinates of the Newton matrix. Equalities
+            on the net injection leave the common level of a node's generation
+            and load to the weak barrier curvature, which makes the matrix
+            numerically singular; the term shortens such steps only and does not
+            move the stationary point.
 
     Returns:
         ``IPMResult``.
@@ -354,6 +377,23 @@ def solve_ipm(
             raise ValueError("box_lo/box_hi contain pairs with lo >= hi")
 
     has_box = box_idx.size > 0
+    eq_rows = np.asarray(eq_idx, dtype=np.int64) if eq_idx is not None else None
+    has_eq = eq_rows is not None and eq_rows.size > 0
+    if has_eq:
+        assert eq_rows is not None
+        if eq_tol is None or np.shape(eq_tol) != eq_rows.shape:
+            raise ValueError("eq_tol must give one tolerance per row of eq_idx")
+        eq_tol_arr = np.asarray(eq_tol, dtype=np.float64)
+        # Target shift λ/ρ of the equality rows; residuals below are r − shift.
+        eq_shift = np.zeros(eq_rows.size, dtype=np.float64)
+        raw_residual_fn = residual_fn
+        eq_prox_diag = np.zeros(x_init.shape[0], dtype=np.float64)
+        eq_prox_diag[box_idx] = eq_prox * float(np.max(r_inv_diag[eq_rows]))
+
+        def residual_fn(x: np.ndarray) -> np.ndarray:
+            r_eff: np.ndarray = np.array(raw_residual_fn(x), dtype=np.float64)
+            r_eff[eq_rows] -= eq_shift
+            return r_eff
 
     solver = kkt_solver if kkt_solver is not None else KKTSolver("scipy")
 
@@ -399,6 +439,8 @@ def solve_ipm(
         mu = 0.0
 
     outer_iter = 0
+    eq_extra = 0
+    eq_inf = float("nan")
     schedule_done = False
     # Termination status only (never fed back into the iteration).
     outer_exhausted = False
@@ -442,6 +484,8 @@ def solve_ipm(
             grad_data = -np.asarray(HtRinv @ r, dtype=np.float64).ravel()
 
             grad_b, hess_b = _barrier_grad_hess(x, box_idx, box_lo, box_hi, mu)
+            if has_eq:
+                hess_b = hess_b + eq_prox_diag
             grad = grad_data + grad_b
             grad_inf = float(np.max(np.abs(grad))) if grad.size else 0.0
 
@@ -552,6 +596,24 @@ def solve_ipm(
             r_at_x = r_accepted
             any_inner_step = True
 
+        if has_eq:
+            assert eq_rows is not None and r_at_x is not None
+            # Constraint value c = −r_raw = −(r_eff + shift); λ/ρ ← λ/ρ + c.
+            raw_eq = r_at_x[eq_rows] + eq_shift
+            eq_inf = float(np.max(np.abs(raw_eq)))
+            eq_ok = bool(np.all(np.abs(raw_eq) <= eq_tol_arr))
+            if (mu <= mu_min or not has_box) and (eq_ok or eq_extra >= eq_extra_outer):
+                schedule_done = True
+                break
+            if not any_inner_step and not inner_converged:
+                break  # stuck: the multiplier update would not move x either
+            eq_shift = eq_shift - raw_eq
+            r_at_x = r_at_x.copy()
+            r_at_x[eq_rows] = raw_eq - eq_shift
+            if mu <= mu_min or not has_box:
+                eq_extra += 1
+                continue
+
         if not has_box:
             break  # WLS mode: a single outer pass.
 
@@ -575,6 +637,11 @@ def solve_ipm(
 
     # Final residual/objective
     r_final = r_at_x if r_at_x is not None else residual_fn(x)
+    if has_eq:
+        assert eq_rows is not None
+        r_final = r_final.copy()
+        r_final[eq_rows] += eq_shift  # report the true residual of the equality rows
+        eq_inf = float(np.max(np.abs(r_final[eq_rows])))
     obj_data = 0.5 * float(r_final @ (R_inv @ r_final))
 
     kkt = grad_inf < max(1e-2, inner_tol * 100)
@@ -596,6 +663,8 @@ def solve_ipm(
             f"outer={outer_iter + 1}, inner_total={iter_inner_total}, "
             f"μ_final={mu:.2e}, |grad|∞={grad_inf:.2e}"
         )
+        if has_eq:
+            detail += f", |c_eq|∞={eq_inf:.2e}"
         if status == "kkt":
             message = f"converged (kkt): {detail}"
         elif status == "completed":
@@ -614,6 +683,7 @@ def solve_ipm(
         message=message,
         status=status,
         solve_status=solve_status,
+        eq_inf_final=eq_inf,
     )
 
 

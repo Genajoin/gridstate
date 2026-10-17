@@ -43,7 +43,7 @@ from gridstate.working import Working, table_view
 def _effective_huber_c(cfg: PipelineConfig) -> float:
     if cfg.huber_c is not None:
         return float(cfg.huber_c)
-    return 2.0 if cfg.algorithm == "ipm" else 1.5
+    return 2.0 if cfg.algorithm in ("ipm", "ipm_pd") else 1.5
 
 
 def _ipm_kwargs(cfg: PipelineConfig) -> dict:
@@ -52,6 +52,12 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
         "prior_sigma2_bus_equiv_pu": cfg.ipm_prior_sigma2_bus_equiv_pu,
         "boxed_balance_weight_factor": cfg.ipm_boxed_balance_weight_factor,
         "trust_region_scope": cfg.ipm_trust_region_scope,
+        "balance_mode": cfg.ipm_balance_mode,
+        "balance_tol_p_mw": cfg.ipm_balance_tol_p_mw,
+        "balance_tol_q_mvar": cfg.ipm_balance_tol_q_mvar,
+        "fixed_injection_from_input": cfg.ipm_fixed_injection_from_input,
+        "measurement_bounds": cfg.ipm_measurement_bounds,
+        "injection_roles": cfg.ipm_injection_roles,
     }
 
 
@@ -78,7 +84,7 @@ def _estimate_kwargs(cfg: PipelineConfig, *, init: str, **overrides: Any) -> dic
         "success_policy": cfg.success_policy,
     }
     kw.update(overrides)
-    if cfg.algorithm == "ipm":
+    if cfg.algorithm in ("ipm", "ipm_pd"):
         kw.update(_ipm_kwargs(cfg))
     return kw
 

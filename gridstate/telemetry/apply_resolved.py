@@ -19,7 +19,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from gridstate._arrays import id_value_map
+from gridstate.bounds import SENTINEL_VALUE
 from gridstate.constants import (
+    SOURCE_INJ_GEN,
+    SOURCE_INJ_LOAD,
     FilterFlag,
     MeasurementObjectType,
     MeasurementQuality,
@@ -84,6 +87,8 @@ class TelemetryApplyConfig:
     q_loss_filter_rel_pct: float = 30.0
     q_loss_filter_action: str = "downweight"
     q_loss_filter_downweight_factor: float = 100.0
+    injection_roles: bool = False
+    telemetry_bounds: dict[tuple[int, str], tuple[float, float]] | None = None
 
 
 def apply_telemetry_resolved(
@@ -104,6 +109,8 @@ def apply_telemetry_resolved(
     q_loss_filter_rel_pct: float = 30.0,
     q_loss_filter_action: str = "downweight",
     q_loss_filter_downweight_factor: float = 100.0,
+    injection_roles: bool = False,
+    telemetry_bounds: dict[tuple[int, str], tuple[float, float]] | None = None,
 ) -> dict[str, int]:
     """Apply a ready ``resolved`` z-vector to ``measurements``.
 
@@ -112,6 +119,19 @@ def apply_telemetry_resolved(
     :func:`_apply_telemetry_on_arrays` → write-back + ``.add()`` of NODE
     injections. Called by the ``run()`` step at its own position (after
     ``apply_topology``/``apply_rpn``: the core reads branch ``status``/``susceptance``).
+
+    ``injection_roles`` additionally adds one row per measured part of a node
+    injection (the generation / load sum of the node, ``source_code``
+    :data:`~gridstate.constants.SOURCE_INJ_GEN` /
+    :data:`~gridstate.constants.SOURCE_INJ_LOAD`) after the net rows, for the
+    IPM ``injection_roles`` mode.
+
+    ``telemetry_bounds`` (``{(object_id, kind): (lo, hi)}``, see
+    :attr:`gridstate.contract.derived.DerivedInputs.telemetry_bounds`) is written
+    into ``min_value`` / ``max_value`` of the rows the values feed: as is for a
+    voltage / flow row, summed over the components for an injection row (the
+    net row combines the generation and load ranges). An unset side becomes the
+    ±9999 sentinel; rows without any range are left untouched.
     """
     config = TelemetryApplyConfig(
         questionable_sigma2_multiplier=questionable_sigma2_multiplier,
@@ -126,6 +146,8 @@ def apply_telemetry_resolved(
         q_loss_filter_rel_pct=q_loss_filter_rel_pct,
         q_loss_filter_action=q_loss_filter_action,
         q_loss_filter_downweight_factor=q_loss_filter_downweight_factor,
+        injection_roles=injection_roles,
+        telemetry_bounds=telemetry_bounds,
     )
     meas_arr = table_copy(model.measurements)
     nodes_arr = model.nodes.to_numpy()
@@ -300,11 +322,17 @@ def _apply_measurement_loop(
     config: TelemetryApplyConfig,
     stats: dict[str, int],
     inj_acc: dict[tuple[int, str], list[tuple[float, str, int]]],
+    role_acc: dict[tuple[int, str, int], list[tuple[float, str, int]]] | None = None,
+    bounds_acc: dict[tuple[int, str], list[tuple[int, float, float]]] | None = None,
 ) -> None:
     """Main application loop over ``arg_keys``.
 
     Mutates ``meas_arr`` (write-back of activated measurements), ``stats``
-    (counters) and ``inj_acc`` (accumulated NODE injections) in place.
+    (counters), ``inj_acc`` (accumulated NODE injections) and ``role_acc``
+    (the same per part, ``(node, "P"|"Q", sign)`` → unsigned readings) in place.
+    With ``config.telemetry_bounds`` the activated voltage / flow rows get their
+    ``min_value`` / ``max_value`` and ``bounds_acc`` collects the component
+    ranges of the node injections (``(sign, lo, hi)`` per component).
     """
     for obj_id, kind in arg_keys:
         # NODE injection component (p_gen/p_load/q_gen/q_load, optionally with a
@@ -325,6 +353,11 @@ def _apply_measurement_loop(
             pq, mult = NODE_INJ_MAP[base]
             val = value * mult
             inj_acc.setdefault((obj_id, pq), []).append((val, guid_first, q))
+            if role_acc is not None:
+                role_acc.setdefault((obj_id, pq, mult), []).append((value, guid_first, q))
+            if bounds_acc is not None:
+                lo, hi = (config.telemetry_bounds or {}).get((obj_id, kind), _NO_BOUNDS)
+                bounds_acc.setdefault((obj_id, pq), []).append((mult, float(lo), float(hi)))
             continue
 
         if kind not in KIND_MAP:
@@ -387,6 +420,8 @@ def _apply_measurement_loop(
                 stats["skipped_v_below_half_nominal"] += 1
                 meas_arr[idx]["filter_flag"] = int(FilterFlag.V_BELOW_HALF_NOMINAL)
                 continue
+        if config.telemetry_bounds is not None and (obj_id, kind) in config.telemetry_bounds:
+            _set_bounds(meas_arr, idx, [(1, *config.telemetry_bounds[(obj_id, kind)])])
         if meas_arr[idx]["status"]:
             meas_arr[idx]["value"] = float(meas_arr[idx]["value"]) + val
             # Worst-case accumulation of quality on repeated hits.
@@ -442,46 +477,114 @@ def _apply_measurement_loop(
             stats["applied"] += 1
 
 
+_NO_BOUNDS = (-np.inf, np.inf)
+
+
+def _sentinel(value: float) -> float:
+    """An unset (infinite) bound side as the contract sentinel ±9999."""
+    return float(value) if np.isfinite(value) else float(np.sign(value)) * SENTINEL_VALUE
+
+
+def _combined_bounds(comps: list[tuple[int, float, float]], sign: int) -> tuple[float, float]:
+    """``(min_value, max_value)`` of a sum of components with ranges ``(sign, lo, hi)``.
+
+    ``sign == 0``: the net injection, generation minus load (a load component
+    enters as ``[-hi, -lo]``); ``±1``: one part, its components summed as read.
+    A side is unset (sentinel) when any component leaves it unset.
+    """
+    lo_sum = hi_sum = 0.0
+    for comp_sign, lo, hi in comps:
+        if sign == 0 and comp_sign < 0:
+            lo, hi = -hi, -lo
+        lo_sum += lo
+        hi_sum += hi
+    return _sentinel(lo_sum), _sentinel(hi_sum)
+
+
+def _set_bounds(meas_arr: np.ndarray, idx: int, comps: list[tuple[int, float, float]]) -> None:
+    """Write the range of a voltage / flow row (accumulated over repeated hits)."""
+    lo, hi = _combined_bounds(comps, 1)
+    if meas_arr[idx]["status"]:
+        prev_lo, prev_hi = float(meas_arr[idx]["min_value"]), float(meas_arr[idx]["max_value"])
+        lo = (
+            -SENTINEL_VALUE
+            if abs(prev_lo) >= SENTINEL_VALUE or abs(lo) >= SENTINEL_VALUE
+            else prev_lo + lo
+        )
+        hi = (
+            SENTINEL_VALUE
+            if abs(prev_hi) >= SENTINEL_VALUE or abs(hi) >= SENTINEL_VALUE
+            else prev_hi + hi
+        )
+    meas_arr[idx]["min_value"] = lo
+    meas_arr[idx]["max_value"] = hi
+
+
 def _build_node_injection_rows(
     inj_acc: dict[tuple[int, str], list[tuple[float, str, int]]],
     meas_arr: np.ndarray,
     config: TelemetryApplyConfig,
     stats: dict[str, int],
+    role_acc: dict[tuple[int, str, int], list[tuple[float, str, int]]] | None = None,
+    bounds_acc: dict[tuple[int, str], list[tuple[int, float, float]]] | None = None,
 ) -> list[dict]:
     """Build NODE injections for the later .add() by the adapter.
 
     The variance is :func:`gridstate.telemetry.noise.variance_injection` (sigma
     5 % of the net value, see there), scaled for a QUESTIONABLE aggregate. The ids
     are assigned here (bit-identical to the former .add()).
+
+    With ``role_acc`` one row per measured part follows the net rows: the value is
+    the sum of the part readings, the variance is computed from it the same way,
+    and ``source_code`` names the part (generation / load).
+
+    With ``bounds_acc`` a row with at least one component range gets
+    ``min_value`` / ``max_value`` combined from its components (see
+    :func:`_combined_bounds`).
     """
     new_rows: list[dict] = []
     ids = IdAllocator.after_max(meas_arr["id"], name="apply_telemetry")
-    for (obj_id, pq), entries in inj_acc.items():
-        net = sum(v for v, _, _ in entries)
-        guid_first = entries[0][1]
-        net_q = aggregate_qualities([q for _, _, q in entries])
-        mt = INJ_MT[pq]
-        var = variance_injection(net, "P" if pq == "P" else "Q")
-        if net_q == _Q_QUESTIONABLE:
+
+    def _row(obj_id: int, pq: str, entries: list[tuple[float, str, int]]) -> dict:
+        value = sum(v for v, _, _ in entries)
+        quality = aggregate_qualities([q for _, _, q in entries])
+        var = variance_injection(value, "P" if pq == "P" else "Q")
+        if quality == _Q_QUESTIONABLE:
             var *= config.questionable_sigma2_multiplier
-        new_rows.append(
-            {
-                "id": ids.next(),
-                "object_type": _OT_NODE,
-                "object_id": int(obj_id),
-                "measurement_type": mt,
-                "branch_side": SIDE_NONE,
-                "value": float(net),
-                "variance": float(var),
-                "weight": 1.0 / float(var),
-                "status": True,
-                "quality": int(net_q),
-                "source_guid": guid_first,
-            }
-        )
-        stats["node_inj_added"] += 1
-        if net_q == _Q_QUESTIONABLE:
             stats["applied_questionable"] += 1
+        return {
+            "id": ids.next(),
+            "object_type": _OT_NODE,
+            "object_id": int(obj_id),
+            "measurement_type": INJ_MT[pq],
+            "branch_side": SIDE_NONE,
+            "value": float(value),
+            "variance": float(var),
+            "weight": 1.0 / float(var),
+            "status": True,
+            "quality": int(quality),
+            "source_guid": entries[0][1],
+        }
+
+    def _with_bounds(row: dict, comps: list[tuple[int, float, float]], sign: int) -> dict:
+        if any(np.isfinite(lo) or np.isfinite(hi) for _, lo, hi in comps):
+            row["min_value"], row["max_value"] = _combined_bounds(comps, sign)
+        return row
+
+    for (obj_id, pq), entries in inj_acc.items():
+        row = _row(obj_id, pq, entries)
+        if bounds_acc is not None:
+            _with_bounds(row, bounds_acc.get((obj_id, pq), []), 0)
+        new_rows.append(row)
+        stats["node_inj_added"] += 1
+    for (obj_id, pq, sign), entries in (role_acc or {}).items():
+        row = _row(obj_id, pq, entries)
+        row["source_code"] = SOURCE_INJ_GEN if sign > 0 else SOURCE_INJ_LOAD
+        if bounds_acc is not None:
+            comps = [c for c in bounds_acc.get((obj_id, pq), []) if c[0] == sign]
+            _with_bounds(row, comps, sign)
+        new_rows.append(row)
+        stats["node_inj_role_added"] = stats.get("node_inj_role_added", 0) + 1
 
     return new_rows
 
@@ -544,6 +647,12 @@ def _apply_telemetry_on_arrays(
     #   (obj_id, "P"|"Q") → list of (signed_val, guid, quality).
     # Net P_inj = sum(values), quality = max(qualities) (worst-case).
     inj_acc: dict[tuple[int, str], list[tuple[float, str, int]]] = {}
+    role_acc: dict[tuple[int, str, int], list[tuple[float, str, int]]] | None = (
+        {} if config.injection_roles else None
+    )
+    bounds_acc: dict[tuple[int, str], list[tuple[int, float, float]]] | None = (
+        {} if config.telemetry_bounds is not None else None
+    )
 
     # Per-branch nominal voltage / susceptance / reactance: feed the Q-physics
     # pre-pass and the charging-aware σ_Q. Vn is taken from the branch's from-node.
@@ -579,9 +688,11 @@ def _apply_telemetry_on_arrays(
         config,
         stats,
         inj_acc,
+        role_acc,
+        bounds_acc,
     )
 
-    new_rows = _build_node_injection_rows(inj_acc, meas_arr, config, stats)
+    new_rows = _build_node_injection_rows(inj_acc, meas_arr, config, stats, role_acc, bounds_acc)
 
     return stats, new_rows
 

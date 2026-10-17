@@ -86,6 +86,11 @@ def _full_derived() -> DerivedInputs:
         voltage_nominal={1: 110.0, 3: 220.0},
         v_sigma2_scale={1: 0.25, 4: 4.0},
         flow_sigma2_scale={(7, "q_from"): 100.0, (8, "p_to"): 0.5},
+        telemetry_bounds={
+            (1, "v"): (200.0, 250.0),
+            (7, "p_from"): (-np.inf, 300.0),
+            (5, "p_gen:0"): (0.0, 50.0),
+        },
     )
 
 
@@ -141,6 +146,7 @@ def test_empty_plans_are_not_none(tmp_path: Path) -> None:
         voltage_nominal={},
         v_sigma2_scale={},
         flow_sigma2_scale={},
+        telemetry_bounds={},
     )
     assert load_se_input_npz(_save(tmp_path, derived)).derived == derived
 
