@@ -209,3 +209,30 @@ def test_compensator_active_power_is_not_a_box_part():
     p_rows, q_rows = _setup(m, boxed_balance_weight_factor=10.0)
     assert p_rows[2] < SOFT
     assert q_rows[2] < SOFT
+
+
+def test_transit_weight_off_by_default():
+    assert PipelineConfig().ipm_transit_balance_weight_factor == 0.0
+
+
+def test_transit_nodes_get_the_weighted_row():
+    # Node order: 1 slack (generation box), 2 transit, 3 and 4 loads with a box.
+    p_rows, q_rows = _setup(_build_net_with_transit(), transit_balance_weight_factor=100.0)
+    tight = 2.5e-4 / 100.0
+    assert np.allclose(p_rows, [SOFT, tight, SOFT, SOFT])
+    assert np.allclose(q_rows, [SOFT, tight, SOFT, SOFT])
+
+
+def test_transit_row_never_looser_than_the_soft_row():
+    p_rows, q_rows = _setup(_build_net_with_transit(), transit_balance_weight_factor=0.01)
+    assert np.allclose(p_rows, SOFT)
+    assert np.allclose(q_rows, SOFT)
+
+
+def test_transit_and_boxed_weights_combine():
+    p_rows, _ = _setup(
+        _build_net_with_transit(),
+        boxed_balance_weight_factor=10.0,
+        transit_balance_weight_factor=100.0,
+    )
+    assert np.allclose(p_rows, [2.5e-5, 2.5e-6, 2.5e-5, 2.5e-5])

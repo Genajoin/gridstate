@@ -64,6 +64,7 @@ neither :data:`STEPS` nor the manifest and have no ``step_start``):
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -76,8 +77,12 @@ from gridstate.pipeline.context import Step, _Ctx, _no_solution
 from gridstate.pipeline.steps import STEPS
 from gridstate.resolve_pass import fail_out_of_range, state_range_violation
 from gridstate.result import SEResult
+from gridstate.solution_hints import transit_injection_hints
 from gridstate.state import InitialPoint
 from gridstate.working import Working
+
+
+logger = logging.getLogger(__name__)
 
 
 # Consistency guard between config and derived (the config is used twice): the
@@ -368,6 +373,10 @@ def run(
             "duration_ms": int((time.monotonic() - t0) * 1000),
         },
     )
+
+    hints = transit_injection_hints(ctx.model.nodes.to_numpy(), cfg.transit_injection_warn_mva)
+    if hints:
+        logger.warning("%s", "\n".join(hints))
 
     _emit(
         on_event,

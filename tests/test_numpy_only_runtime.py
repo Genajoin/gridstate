@@ -152,7 +152,8 @@ _RUN_SRC = textwrap.dedent(
     from gridstate.pipeline import run, PipelineConfig
 
     working = build_working()
-    cfg = PipelineConfig(materialize=False)
+    # The toy network leaves a transit injection; its WARNING would reach stderr.
+    cfg = PipelineConfig(materialize=False, transit_injection_warn_mva=0.0)
     res = run(working, config=cfg)
     vmax = float(np.max(res.v_pu)) if getattr(res, "v_pu", None) is not None and res.v_pu.size else float("nan")
     print(f"RUN_OK success={bool(res.success)} iters={int(res.iterations)} vmax={vmax:.6f}")
