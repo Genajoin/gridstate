@@ -385,6 +385,17 @@ class PipelineConfig:
         max=500,
         help="default региональной модели 80.",
     )
+    implausible_v_ratio: float = _param(
+        0.3,
+        group=_G_EST,
+        label="Implausible V/Vnom",
+        control="number",
+        min=0.0,
+        max=0.9,
+        help="A solved state with V/Vnom below this at any node is marked not converged "
+        "and logged with hints (e.g. the low-voltage root at a node whose V is barely "
+        "observable). 0 disables the check.",
+    )
     kkt_solver: str = _param(
         "auto",
         group=_G_EST,

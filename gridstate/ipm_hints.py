@@ -25,32 +25,14 @@ import numpy as np
 
 from gridstate.algorithms.ipm import IPMResult
 from gridstate.preprocessing.ipm_setup import IPMSetup
+from gridstate.solution_hints import KIND_NAMES, describe_row, residual_hints
 from gridstate.units import BASE_MVA, NetworkPU
 from gridstate.z_vector import (
     KIND_BOX_PRIOR_PGEN,
     KIND_BOX_PRIOR_PNAG,
     KIND_BOX_PRIOR_QGEN,
     KIND_BOX_PRIOR_QNAG,
-    KIND_NODE_BALANCE_P,
-    KIND_NODE_BALANCE_Q,
 )
-
-
-#: Row kinds by name (``MeasurementType`` plus the rows the IPM setup appends).
-_KIND_NAMES = {
-    0: "P flow",
-    1: "Q flow",
-    2: "V",
-    3: "I",
-    4: "P injection",
-    5: "Q injection",
-    KIND_NODE_BALANCE_P: "P balance",
-    KIND_NODE_BALANCE_Q: "Q balance",
-    KIND_BOX_PRIOR_PGEN: "Pgen",
-    KIND_BOX_PRIOR_QGEN: "Qgen",
-    KIND_BOX_PRIOR_PNAG: "Pload",
-    KIND_BOX_PRIOR_QNAG: "Qload",
-}
 
 
 def _box_sections(setup: IPMSetup) -> list[tuple[int, int, np.ndarray]]:
@@ -120,7 +102,7 @@ class _Context:
             for bkind, _off, _pos in _box_sections(self.setup):
                 rows = self.rows(pos, bkind)
                 if rows.size and not self.is_role[rows].any():
-                    free_parts.append(_KIND_NAMES[bkind])
+                    free_parts.append(KIND_NAMES[bkind])
             label = f"node {node} {var} ({n_nbr} neighbour node{'s' if n_nbr != 1 else ''})"
             if n_nbr <= 1 and free_parts:
                 hint = (
@@ -135,7 +117,7 @@ class _Context:
         lo = float(self.setup.box_lo[k]) * BASE_MVA if k is not None else float("nan")
         hi = float(self.setup.box_hi[k]) * BASE_MVA if k is not None else float("nan")
         measured, sigma = self.box_variable_state(pos, kind)
-        name = _KIND_NAMES[kind]
+        name = KIND_NAMES[kind]
         label = f"node {node} {name} range [{lo:.1f}, {hi:.1f}]"
         if measured:
             label += ", measured"
@@ -151,17 +133,7 @@ class _Context:
 
     def describe_row(self, row: int) -> str:
         mi = self.setup.meas_index
-        kind = int(mi.kind[row])
-        name = _KIND_NAMES.get(kind, f"kind {kind}")
-        okind, opos = int(mi.object_kind[row]), int(mi.object_pos[row])
-        if okind == 1:
-            side = "from" if int(mi.branch_side[row]) == 0 else "to"
-            obj = f"branch {int(self.net.branch_ids[opos])} ({side})"
-        else:
-            obj = f"node {self.node_id(opos)}"
-        mid = int(mi.meas_id[row])
-        what = "part measurement" if self.is_role[row] else ("measurement" if mid > 0 else "row")
-        return f"{name} {what} {mid} at {obj}" if mid > 0 else f"{name} {what} at {obj}"
+        return describe_row(mi, self.net, row, part=bool(self.is_role[row]))
 
 
 def _top(counts: Mapping[int, int], n: int, floor: float) -> list[tuple[int, int]]:
@@ -240,17 +212,18 @@ def ipm_convergence_hints(
         lines.extend(f"  {label}" for _, label in weak[:top])
 
     sigma = ctx.sigma
-    rn = np.abs(residual) / np.where(sigma > 0, sigma, np.inf)
-    if setup.balance_tol is not None:
-        # Equality rows: their σ is a penalty, not a measurement error.
-        rn[setup.balance_rows] = 0.0
-    order = np.argsort(-rn)[:top]
-    if order.size and rn[order[0]] > 0:
-        lines.append("largest normalized residuals |r|/σ:")
-        for i in order.tolist():
-            kind = int(setup.meas_index.kind[i])
-            r_txt = f"{residual[i]:.4f} p.u." if kind in (2, 3) else f"{residual[i] * BASE_MVA:.2f}"
-            lines.append(f"  {ctx.describe_row(i)}: {rn[i]:.1f}σ (r = {r_txt})")
+    lines.extend(
+        residual_hints(
+            residual,
+            sigma,
+            meas_index=setup.meas_index,
+            network_pu=network_pu,
+            # Equality rows: their σ is a penalty, not a measurement error.
+            skip=setup.balance_rows if setup.balance_tol is not None else None,
+            part_rows=setup.role_rows,
+            top=top,
+        )
+    )
 
     outside: list[tuple[float, str]] = []
     for row in setup.role_rows.tolist():
