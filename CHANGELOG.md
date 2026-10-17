@@ -9,6 +9,43 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.2.0 (2026-10-17)
+
+All new behaviour is opt-in; with the defaults the results are unchanged.
+
+### Feat
+
+- `algorithm="ipm_pd"`: Mehrotra predictor-corrector interior-point solver;
+  predictor and corrector share one factorization per iteration
+  (`KKTSolver.factor_normal`). About 5× less solver time than `ipm` on large
+  models, with closely matching estimates. A solve that does not reach its
+  KKT test is redone by the primal IPM from the same start (#103)
+- `balance_mode="hard"` (`ipm_balance_mode`): node balance rows become
+  equality constraints in both IPM solvers (method of multipliers,
+  quasi-definite step) with P / Q tolerances `balance_tol_p_mw` /
+  `balance_tol_q_mvar`. Experimental: it does not converge on every real
+  model yet (#103)
+- `fixed_injection_from_input` (`ipm_fixed_injection_from_input`): the input
+  injection of node parts without a box variable enters the balance as a
+  fixed term. Experimental (#103)
+- `measurement_bounds` (`ipm_measurement_bounds`, `ipm_pd` only):
+  `min_value` / `max_value` bound the estimated value of any measurement as
+  an inequality (#103)
+- `injection_roles` (`ipm_injection_roles`, `ipm` / `ipm_pd`): node injection
+  rows tagged `source_code` `"inj_gen"` / `"inj_load"`
+  (`SOURCE_INJ_GEN` / `SOURCE_INJ_LOAD`) measure the generation / load box
+  variable directly; the node box is narrowed by the measurement box, the
+  unmeasured part of a measured node gets a prior, and the net row stays only
+  where a measured part has no box variable. The telemetry kernel emits the
+  part rows when the mode is on; `release_load_only_injections` and
+  `widen_generation_only_injections` are skipped in it (#103)
+- `DerivedInputs.telemetry_bounds` (derived table `telemetry_bounds`):
+  optional plausible ranges of telemetry values, written by the telemetry
+  kernel into `min_value` / `max_value` (summed over components for
+  injection rows, generation minus load for the net row). Data contract
+  3.1.0, additive (#103)
+- `ipm_balance_weight_factor` accepts values up to 1e6 (was 10) (#103)
+
 ## v2.1.0 (2026-10-14)
 
 ### Feat
