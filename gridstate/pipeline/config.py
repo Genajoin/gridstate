@@ -94,6 +94,18 @@ class PipelineConfig:
         label="Нормализация X короткозамыкателей",
         help="volt-aware X_pu для R=X=0 ветвей (убирает β-выбросы dV_max на LV).",
     )
+    breaker_x_pu: float = _param(
+        1e-4,
+        group=_G_INPUT,
+        label="Breaker X, p.u.",
+        control="number",
+        min=1e-6,
+        max=1e-1,
+        depends={"normalize_breakers": True},
+        help="X of a normalized breaker branch (R=0, X=1 Ohm on input), p.u. on any "
+        "voltage class. 1e-3 p.u. is 5.6 Ohm at 750 kV and drops kilovolts at "
+        "shunt reactor nodes.",
+    )
     apply_voltage_nominal: bool = _toggle(
         False,
         group=_G_INPUT,
