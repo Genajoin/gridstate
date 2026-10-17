@@ -9,6 +9,32 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.3.0 (2026-10-17)
+
+### Behavior changes
+
+- `ipm_pd` uses a fixed Huber threshold `c_eff = huber_c` by default
+  (`ipm_huber_threshold="fixed"`). The previous per-iteration adaptive raise
+  made the estimate depend on the solver path; `"adaptive"` restores it. On
+  regional models the quality is unchanged; `ipm_pd` estimates move slightly
+  (≤ 6e-5 p.u. V on the test models). `wls` / `ipm` are unaffected (#111)
+- `ipm_pd` selects its step by Armijo backtracking on a merit function
+  (barrier objective, augmented Lagrangian of the equality rows, slack
+  penalty). It now converges on weakly determined cases (e.g. unmeasured
+  units with a wide box under `injection_roles`) that needed the primal
+  fallback; `ipm_pd` estimates can move slightly. The pipeline's `ipm_pd`
+  iteration limit is 300 (100 under a hard balance); the solve stops after
+  `max_search_failures` iterations without merit decrease (#106)
+
+### Feat
+
+- Convergence hints: a solve that does not converge, falls back from
+  `ipm_pd`, or takes more than `ipm_hint_iterations` iterations with a
+  dominant step limiter logs a WARNING naming the limiting nodes / variables
+  (with a suggestion), loose unmeasured box variables, the largest normalized
+  residuals and part measurements outside their range. `IPMResult` gains
+  `step_limiters` / `limiting_rows` (#110)
+
 ## v2.2.0 (2026-10-17)
 
 All new behaviour is opt-in; with the defaults the results are unchanged.
