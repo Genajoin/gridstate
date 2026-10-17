@@ -33,6 +33,22 @@ Iteration (one factorization, two solves)::
     σ      = clamp((μ_aff/μ)³, σ_min, 1)
     corrector:          target σμ − Δs_aff·Δy_aff, same factor → Δ
     αp, αd = separate fraction-to-boundary steps (τ = 0.99995) for (x, s) and (λ, y)
+    αp     ← Armijo backtracking on the merit φ (below)
+
+Step selection. The fraction-to-boundary rule alone lets the iteration cycle
+on weakly determined directions (e.g. an unmeasured unit with a wide box):
+long steps along them change neither the state estimate nor the residuals by
+much, yet they never settle. The primal step is therefore backtracked on the
+merit of the iteration (weights, ``λ`` and the target ``σμ`` fixed)::
+
+    φ(x, s) = ½ Σ w r² + λᵀc + ½ Σ ρ c² − σμ Σ log s + ν (‖g − l − s_l‖₁ + ‖u − g − s_u‖₁)
+
+with ``ν ≥ 2·max y`` kept non-decreasing. At consistent slacks the pure
+centering direction (target ``σμ − s·y``) is the Newton step on ``φ`` with the
+positive definite primal-dual Hessian, hence a descent direction; the
+corrector's second-order term may spoil descent, and then the centering
+direction is taken instead (one more solve on the same factor). The dual step
+keeps its own fraction-to-boundary length.
 
 Start on the central path: ``s`` = half-range of a two-sided constraint (the
 distance for a one-sided one), ``y = μ0/s``; the initial point need not satisfy
@@ -42,6 +58,7 @@ distance for a one-sided one), ``y = μ0/s``; the initial point need not satisfy
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -120,6 +137,44 @@ class _Linearization:
         return dx, ds_l, ds_u, dy_l, dy_u, dlam
 
 
+@dataclass
+class _Merit:
+    """The merit ``φ`` of one iteration (see the module docstring); ``mu`` is the target ``σμ``."""
+
+    w_data: np.ndarray
+    lam: np.ndarray
+    rho: np.ndarray
+    eq_rows: np.ndarray
+    mu: float
+    nu: float
+    lo_l: np.ndarray
+    hi_u: np.ndarray
+    il: np.ndarray
+    iu: np.ndarray
+
+    def value(self, r: np.ndarray, g: np.ndarray, s_l: np.ndarray, s_u: np.ndarray) -> float:
+        c = -r[self.eq_rows]
+        phi = 0.5 * float(r @ (self.w_data * r)) + float(self.lam @ c)
+        phi += 0.5 * float(c @ (self.rho * c))
+        if self.mu > 0.0:
+            phi -= self.mu * (float(np.sum(np.log(s_l))) + float(np.sum(np.log(s_u))))
+        phi += self.nu * (
+            float(np.sum(np.abs(g[self.il] - self.lo_l - s_l)))
+            + float(np.sum(np.abs(self.hi_u - g[self.iu] - s_u)))
+        )
+        return phi
+
+    def slope(
+        self, lin: _Linearization, hdx: np.ndarray, ds_l: np.ndarray, ds_u: np.ndarray
+    ) -> float:
+        """Directional derivative of :meth:`value` along a direction at the linearization point."""
+        d = -float((self.w_data * lin.r) @ hdx)
+        d += float((self.lam + self.rho * lin.c) @ hdx[self.eq_rows])
+        d -= self.mu * (float(np.sum(ds_l / lin.s_l)) + float(np.sum(ds_u / lin.s_u)))
+        d -= self.nu * (float(np.sum(np.abs(lin.r_l))) + float(np.sum(np.abs(lin.r_u))))
+        return d
+
+
 def solve_ipm_pd(
     x_init: np.ndarray,
     residual_fn: Callable[[np.ndarray], np.ndarray],
@@ -138,6 +193,10 @@ def solve_ipm_pd(
     mu_min: float = 1e-6,
     sigma_min: float = 1e-3,
     fraction_to_boundary: float = 0.99995,
+    armijo_c: float = 1e-4,
+    armijo_backtrack: float = 0.5,
+    armijo_max: int = 10,
+    max_search_failures: int = 20,
     step_tol: float = 1e-4,
     feas_tol: float = 1e-6,
     max_iter: int = 100,
@@ -168,6 +227,12 @@ def solve_ipm_pd(
         mu_min: stop once the complementarity μ is below it (with the other tests).
         sigma_min: lower clamp of the centering parameter σ.
         fraction_to_boundary: τ of the step-length rule.
+        armijo_c, armijo_backtrack, armijo_max: Armijo backtracking of the
+            primal step on the merit (see the module docstring); at most
+            ``armijo_max`` trial points, ``0`` disables the search.
+        max_search_failures: stop (``"stalled"``) once this many iterations found
+            no sufficient decrease: the iteration is not converging and the
+            remaining budget would be spent for nothing.
         step_tol: stop once the last primal step ``|αp·Δx|∞`` over the coordinates
             outside ``box_idx`` (V/δ) is below it. Box variables may still move
             along directions the data do not see (the common level of a node's
@@ -195,7 +260,8 @@ def solve_ipm_pd(
 
     Returns:
         :class:`~gridstate.algorithms.ipm.IPMResult`; ``status`` is ``"kkt"`` when
-        every stopping test holds, ``"stalled"`` at ``max_iter``, ``"error"`` on a
+        every stopping test holds, ``"stalled"`` at ``max_iter`` or after
+        ``max_search_failures``, ``"error"`` on a
         failed or non-finite solve. ``iterations_outer`` = ``iterations_inner_total``
         = the number of iterations.
     """
@@ -287,6 +353,10 @@ def solve_ipm_pd(
     y_l = mu0 / s_l
     y_u = mu0 / s_u
     lam = np.zeros(eq_rows.size, dtype=np.float64)
+    nu = 0.0
+    n_centering = 0
+    n_ls_fail = 0
+    stop_search = False
 
     w = w_base
     mu = mu0 if n_pairs else 0.0
@@ -388,6 +458,35 @@ def solve_ipm_pd(
             status, message = "error", f"non-finite step (iteration {it})"
             break
 
+        # ---- merit backtracking ----
+        mu_t = target if n_pairs else 0.0
+        nu = max(nu, 2.0 * float(max(np.max(y_l, initial=0.0), np.max(y_u, initial=0.0))))
+        merit = _Merit(
+            w_data=w_data,
+            lam=lam,
+            rho=rho,
+            eq_rows=eq_rows,
+            mu=mu_t,
+            nu=nu,
+            lo_l=lo[il],
+            hi_u=hi[iu],
+            il=il,
+            iu=iu,
+        )
+        slope = merit.slope(lin, H @ dx, ds_l, ds_u)
+        if slope >= 0.0 and n_pairs:
+            # The corrector's second-order term can spoil descent; the pure
+            # centering direction is a Newton step on the merit and descends
+            # whenever the slacks are consistent.
+            dx_c, ds_l_c, ds_u_c, dy_l_c, dy_u_c, dlam_c = lin.direction(
+                target - s_l * y_l, target - s_u * y_u
+            )
+            slope_c = merit.slope(lin, H @ dx_c, ds_l_c, ds_u_c)
+            if slope_c < 0.0 and np.all(np.isfinite(dx_c)):
+                dx, ds_l, ds_u, dy_l, dy_u, dlam = dx_c, ds_l_c, ds_u_c, dy_l_c, dy_u_c, dlam_c
+                slope = slope_c
+                n_centering += 1
+
         tau = fraction_to_boundary
         a_p = min(_max_step(s_l, ds_l / tau), _max_step(s_u, ds_u / tau)) if n_pairs else 1.0
         a_d = min(_max_step(y_l, dy_l / tau), _max_step(y_u, dy_u / tau)) if n_pairs else 1.0
@@ -395,14 +494,41 @@ def solve_ipm_pd(
         a_bound = a_p
         if free_inf * a_p > tr_radius:
             a_p = tr_radius / free_inf
+        # The stopping test measures the Newton step, not how far the search cut it.
+        step_inf = a_p * free_inf
+        a_full = a_p
+        r_new = None
+        # A direction that does not descend (inconsistent slacks of a nonlinear
+        # measurement box) is taken unsearched, as without the merit.
+        if slope < 0.0 and armijo_max > 0:
+            phi0 = merit.value(r, g, s_l, s_u)
+            for _ in range(armijo_max):
+                x_try = x + a_p * dx
+                r_try = residual_fn(x_try)
+                s_l_try = s_l + a_p * ds_l
+                s_u_try = s_u + a_p * ds_u
+                phi = merit.value(r_try, g_of(x_try, r_try), s_l_try, s_u_try)
+                r_new = r_try
+                if math.isfinite(phi) and phi <= phi0 + armijo_c * a_p * slope:
+                    break
+                a_p *= armijo_backtrack
+                r_new = None
+            else:
+                n_ls_fail += 1
+                if n_ls_fail >= max_search_failures:
+                    stop_search = True
+            if r_new is None:
+                # No sufficient decrease: keep the last (shortest) trial step.
+                a_p /= armijo_backtrack
 
         logger.debug(
-            "ipm_pd it=%d μ=%.2e σ=%.2e αp=%.3f (bound %.3f) αd=%.3f |Δx_free|∞=%.2e "
+            "ipm_pd it=%d μ=%.2e σ=%.2e αp=%.3f (before search %.3f, bound %.3f) αd=%.3f |Δx_free|∞=%.2e "
             "|Δx|∞=%.2e |c|∞=%.2e feas=%.2e",
             it,
             mu,
             sigma,
             a_p,
+            a_full,
             a_bound,
             a_d,
             free_inf,
@@ -416,9 +542,10 @@ def solve_ipm_pd(
         y_l = y_l + a_d * dy_l
         y_u = y_u + a_d * dy_u
         lam = lam + a_d * dlam
-        step_inf = a_p * free_inf
-        r = residual_fn(x)
+        r = residual_fn(x) if r_new is None else r_new
         g = g_of(x, r)
+        if stop_search:
+            break
     else:
         it = max_iter
 
@@ -429,12 +556,17 @@ def solve_ipm_pd(
     detail = f"it={iterations}, μ={mu:.2e}, |step|∞={step_inf:.2e}, |grad|∞={grad_inf:.2e}" + (
         f", |c_eq|∞={eq_inf:.2e}" if eq_rows.size else ""
     )
+    if n_centering or n_ls_fail:
+        detail += f", centering={n_centering}, search failures={n_ls_fail}"
     if status == "kkt":
         message = f"converged (kkt): {detail}"
         solve_status = SolveStatus.KKT
     elif status == "error":
         message = f"{message}: {detail}"
         solve_status = SolveStatus.ERROR
+    elif stop_search:
+        message = f"no merit decrease: {detail}"
+        solve_status = SolveStatus.STALLED
     else:
         message = f"iteration limit: {detail}"
         solve_status = SolveStatus.MAX_ITER

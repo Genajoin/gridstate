@@ -807,7 +807,10 @@ def _run_ipm(
             eq_tol=setup.balance_tol,
             mu_init=1.0,
             step_tol=max(tolerance, 1e-4),
-            max_iter=max(max_iterations, 100),
+            # Weakly determined units need up to ~260 iterations with separate
+            # injection parts; a hard balance does not converge in that budget
+            # either way, so it keeps the short one before the fallback.
+            max_iter=max(max_iterations, 100 if eq_idx is not None else 300),
             tr_radius=0.5,
             huber_c=huber_c,
             huber_mask=huber_mask,
@@ -818,9 +821,9 @@ def _run_ipm(
             kkt_solver=kkt,
         )
         if result.solve_status is not SolveStatus.KKT:
-            # The primal-dual iteration has no merit line search and may cycle
-            # on a weakly determined direction; the primal solver's Armijo
-            # search does not. Measurement boxes have no primal counterpart.
+            # Safety net: on a weakly determined direction (e.g. an unmeasured
+            # unit with a wide box) the primal-dual iteration can still crawl
+            # past its limit. Measurement boxes have no primal counterpart.
             logger.warning(
                 "ipm_pd did not converge (%s), falling back to the primal IPM", result.message
             )
