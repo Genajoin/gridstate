@@ -34,6 +34,7 @@ from gridstate.algebra.base import (
     BaseAlgebra,
 )
 from gridstate.bounds import is_reactive_only_generation, resolve_bounds
+from gridstate.load_characteristics import QUANTITY_P, QUANTITY_Q, segment_factor, segment_plan
 from gridstate.measurement_ids import ANTI_OVERSHOOT_ID_BASE, IdAllocator
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.resolve_pass import (
@@ -618,6 +619,14 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
     no binding). For PQ-const models (a0=1, a1=a2=0, b0=1, b1=b2=0) the recomputation
     yields exactly ``load_*_nominal``.
 
+    A characteristic with rows in ``load_characteristic_segments`` for P (resp.
+    Q) is piecewise: the segment containing ``V_pu`` (a value on a boundary
+    belongs to the lower segment) replaces the quadratic P (resp. Q) row, with
+    a polynomial up to ``V_pu⁴`` (see :mod:`gridstate.load_characteristics`).
+    A piecewise P (Q) is applied only where the nominal ``load_p`` (``load_q``)
+    is positive; elsewhere the estimate is kept. The quadratic rows keep their
+    previous behaviour.
+
     Applied **only in the WLS mode** (see ``gridstate/api.py::estimate``)
     after ``write_node_estimates_from_inj``. The IPM box vars already account for
     V at the final state — no repeated recomputation is needed.
@@ -637,6 +646,12 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
               ``load_characteristics`` table (a dangling reference).
             * ``no_load_models`` — 1 if the model has no
               ``load_characteristics`` table (then zeros are returned).
+            * ``piecewise_p`` / ``piecewise_q`` — loads recomputed through a
+              piecewise P / Q characteristic.
+
+    Raises:
+        ValueError: ``load_characteristic_segments`` violates the contract
+            (unknown ``load_model_id``, bad ``quantity``, non-increasing ``v_lo``).
     """
     out = {
         "updated": 0,
@@ -644,6 +659,8 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
         "skipped_no_load": 0,
         "skipped_bad_sxn": 0,
         "no_load_models": 0,
+        "piecewise_p": 0,
+        "piecewise_q": 0,
     }
 
     # The source of the load-characteristic coefficients is the ``load_characteristics`` table; nodes carry
@@ -662,6 +679,9 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
     b0 = np.asarray(coeff["coeff_q_b0"], dtype=np.float64)
     b1 = np.asarray(coeff["coeff_q_b1"], dtype=np.float64)
     b2 = np.asarray(coeff["coeff_q_b2"], dtype=np.float64)
+    seg_coll = getattr(model, "load_characteristic_segments", None)
+    seg_arr = seg_coll.to_numpy() if seg_coll is not None else None
+    plan = segment_plan(seg_arr, n_lm) if seg_arr is not None else {}
 
     for row in nodes_arr:
         if not bool(row["status"]):
@@ -699,6 +719,20 @@ def apply_load_characteristic(model: Working) -> dict[str, int]:
 
         load_p_est = load_p_nom * factor_p
         load_q_est = load_q_nom * factor_q
+        seg_p = plan.get((idx, QUANTITY_P))
+        if seg_p is not None:
+            if load_p_nom > 0.0:
+                load_p_est = load_p_nom * segment_factor(*seg_p, v_pu)
+                out["piecewise_p"] += 1
+            else:
+                load_p_est = float(row["load_p_estimated"])
+        seg_q = plan.get((idx, QUANTITY_Q))
+        if seg_q is not None:
+            if load_q_nom > 0.0:
+                load_q_est = load_q_nom * segment_factor(*seg_q, v_pu)
+                out["piecewise_q"] += 1
+            else:
+                load_q_est = float(row["load_q_estimated"])
 
         try:
             model.nodes.update(

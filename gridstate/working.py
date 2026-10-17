@@ -414,8 +414,8 @@ def table_replace(collection: Any, array: np.ndarray) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Working: the SE working layer = 4 main collections + 3 domain
-# input tables (tap_steps / load_characteristics / shunts).
+# Working: the SE working layer = 4 main collections + 4 domain input tables
+# (tap_steps / load_characteristics / shunts / load_characteristic_segments).
 # ---------------------------------------------------------------------------
 
 
@@ -434,8 +434,9 @@ def _empty_domain(name: str) -> _ArrayCollection:
 class Working:
     """numpy-backed SE working layer.
 
-    Holds 4 main collections (:class:`_ArrayCollection`) and 3 domain
-    input tables (``tap_steps`` / ``load_characteristics`` / ``shunts``) —
+    Holds 4 main collections (:class:`_ArrayCollection`) and 4 domain
+    input tables (``tap_steps`` / ``load_characteristics`` / ``shunts`` /
+    ``load_characteristic_segments``) —
     the surface that preprocessing and the solver read and write.
     """
 
@@ -449,6 +450,7 @@ class Working:
         tap_steps: _ArrayCollection | None = None,
         load_characteristics: _ArrayCollection | None = None,
         shunts: _ArrayCollection | None = None,
+        load_characteristic_segments: _ArrayCollection | None = None,
     ) -> None:
         self.nodes = nodes
         self.branches = branches
@@ -463,6 +465,11 @@ class Working:
             else _empty_domain("load_characteristics")
         )
         self.shunts = shunts if shunts is not None else _empty_domain("shunts")
+        self.load_characteristic_segments = (
+            load_characteristic_segments
+            if load_characteristic_segments is not None
+            else _empty_domain("load_characteristic_segments")
+        )
 
     def copy(self) -> Working:
         """Deep independent copy of the working layer.
@@ -482,6 +489,7 @@ class Working:
             tap_steps=self.tap_steps.copy(),
             load_characteristics=self.load_characteristics.copy(),
             shunts=self.shunts.copy(),
+            load_characteristic_segments=self.load_characteristic_segments.copy(),
         )
 
     @classmethod
@@ -515,6 +523,7 @@ class Working:
             tap_steps=_domain("tap_steps"),
             load_characteristics=_domain("load_characteristics"),
             shunts=_domain("shunts"),
+            load_characteristic_segments=_domain("load_characteristic_segments"),
         )
 
     @classmethod
@@ -528,6 +537,7 @@ class Working:
         tap_steps: np.ndarray | None = None,
         load_characteristics: np.ndarray | None = None,
         shunts: np.ndarray | None = None,
+        load_characteristic_segments: np.ndarray | None = None,
     ) -> Working:
         """Build a ``Working`` directly from contract numpy arrays.
 
@@ -556,6 +566,9 @@ class Working:
             tap_steps=_domain(tap_steps, "tap_steps"),
             load_characteristics=_domain(load_characteristics, "load_characteristics"),
             shunts=_domain(shunts, "shunts"),
+            load_characteristic_segments=_domain(
+                load_characteristic_segments, "load_characteristic_segments"
+            ),
         )
 
     @classmethod
@@ -584,5 +597,6 @@ class Working:
             f"measurements={len(self.measurements)}, generators={len(self.generators)}, "
             f"tap_steps={len(self.tap_steps)}, "
             f"load_characteristics={len(self.load_characteristics)}, "
-            f"shunts={len(self.shunts)})"
+            f"shunts={len(self.shunts)}, "
+            f"load_characteristic_segments={len(self.load_characteristic_segments)})"
         )

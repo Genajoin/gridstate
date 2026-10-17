@@ -670,6 +670,41 @@ LOAD_CHARACTERISTICS = TableSchema(
     ),
 )
 
+# Piecewise segments of the static load characteristics, one row per segment.
+# Optional: a (characteristic, quantity) pair with segments replaces its quadratic
+# coefficients of LOAD_CHARACTERISTICS; a pair without segments keeps them.
+LOAD_CHARACTERISTIC_SEGMENTS = TableSchema(
+    name="load_characteristic_segments",
+    key=("load_model_id", "quantity", "v_lo"),
+    doc=(
+        "Piecewise P(V)/Q(V) load characteristics: segment k of a (load_model_id, quantity) "
+        "pair applies for v_lo[k] < V ≤ v_lo[k+1] (V = |V|/Vnom; a value on a boundary "
+        "belongs to the lower segment); the first segment extends to V = 0 whatever its "
+        "v_lo. Factor = c0 + c1·V + c2·V² + c3·V³ + c4·V⁴ (1.0 = nominal)."
+    ),
+    columns=(
+        ColumnSpec(
+            "load_model_id",
+            "i4",
+            Role.KEY,
+            doc="Characteristic (load_characteristics.id, 0-based); must exist there.",
+        ),
+        ColumnSpec("quantity", "i1", Role.KEY, doc="0 = P, 1 = Q."),
+        ColumnSpec(
+            "v_lo",
+            "f8",
+            Role.KEY,
+            doc="Lower bound of |V|/Vnom; strictly increasing within a pair; "
+            "treated as -inf for the first segment.",
+        ),
+        ColumnSpec("c0", "f8", Role.INPUT, doc="Coefficient of V⁰."),
+        ColumnSpec("c1", "f8", Role.INPUT, doc="Coefficient of V¹."),
+        ColumnSpec("c2", "f8", Role.INPUT, doc="Coefficient of V²."),
+        ColumnSpec("c3", "f8", Role.INPUT, doc="Coefficient of V³."),
+        ColumnSpec("c4", "f8", Role.INPUT, doc="Coefficient of V⁴."),
+    ),
+)
+
 # Shunt devices (reactors/capacitor banks), per device. The core aggregates the active ones
 # into node.shunt_g/b for the Y-bus (a numeric step, replacing apply_reactors_to_node_shunt) and
 # in the future switches steps (group_id/step — reserved).
@@ -708,7 +743,8 @@ SHUNTS = TableSchema(
 class SEInputSchema:
     """Input contract schema: a set of tables (roles KEY/INPUT/WORKING).
 
-    The domain tables ``tap_steps``/``load_characteristics``/``shunts`` are
+    The domain tables ``tap_steps``/``load_characteristics``/``shunts``/
+    ``load_characteristic_segments`` are
     format-agnostic numeric inputs (tap changer position selection, unit conversion,
     aggregation of shunts are done in an external data source). Input-only
     (roles KEY/INPUT).
@@ -721,6 +757,7 @@ class SEInputSchema:
     tap_steps: TableSchema
     load_characteristics: TableSchema
     shunts: TableSchema
+    load_characteristic_segments: TableSchema
 
     def tables(self) -> tuple[TableSchema, ...]:
         """All tables in the order of field declaration (single source — the dataclass)."""
@@ -748,6 +785,7 @@ SE_INPUT = SEInputSchema(
     tap_steps=TAP_STEPS,
     load_characteristics=LOAD_CHARACTERISTICS,
     shunts=SHUNTS,
+    load_characteristic_segments=LOAD_CHARACTERISTIC_SEGMENTS,
 )
 
 SE_OUTPUT = SEOutputSchema(
