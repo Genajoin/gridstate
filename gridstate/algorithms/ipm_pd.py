@@ -66,7 +66,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 
 from gridstate.algebra.estimators import HuberReweighter
-from gridstate.algorithms.ipm import IPMResult, _project_to_interior
+from gridstate.algorithms.ipm import IPMResult, _count, _project_to_interior
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.status import SolveStatus
 
@@ -80,6 +80,20 @@ def _max_step(v: np.ndarray, dv: np.ndarray) -> float:
     if not np.any(neg):
         return 1.0
     return min(1.0, float(np.min(-v[neg] / dv[neg])))
+
+
+def _blocking_constraint(
+    s_l: np.ndarray, ds_l: np.ndarray, s_u: np.ndarray, ds_u: np.ndarray
+) -> tuple[int, bool]:
+    """Position (in ``il`` or ``iu``) of the slack that first reaches zero, and whether it is lower."""
+    with np.errstate(divide="ignore"):
+        rl = np.where(ds_l < 0, -s_l / ds_l, np.inf)
+        ru = np.where(ds_u < 0, -s_u / ds_u, np.inf)
+    kl = int(np.argmin(rl)) if rl.size else -1
+    ku = int(np.argmin(ru)) if ru.size else -1
+    if ku < 0 or (kl >= 0 and rl[kl] <= ru[ku]):
+        return kl, True
+    return ku, False
 
 
 Direction = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
@@ -333,6 +347,9 @@ def solve_ipm_pd(
 
     tr_mask = np.ones(n, dtype=bool)
     tr_mask[box_idx] = False
+    tr_pos = np.flatnonzero(tr_mask)
+    limiters: dict[int, int] = {}
+    limiting_rows: dict[int, int] = {}
 
     def g_of(xv: np.ndarray, r: np.ndarray) -> np.ndarray:
         return np.concatenate([xv[box_idx], -r[mb_rows]])
@@ -492,6 +509,14 @@ def solve_ipm_pd(
         a_d = min(_max_step(y_l, dy_l / tau), _max_step(y_u, dy_u / tau)) if n_pairs else 1.0
         free_inf = float(np.max(np.abs(dx[tr_mask]))) if tr_mask.any() else 0.0
         a_bound = a_p
+        if a_bound < 1.0:
+            k, lower = _blocking_constraint(s_l, ds_l, s_u, ds_u)
+            if k >= 0:
+                kc = int(il[k] if lower else iu[k])
+                if kc < nb:
+                    _count(limiters, int(box_idx[kc]))
+                else:
+                    _count(limiting_rows, int(mb_rows[kc - nb]))
         if free_inf * a_p > tr_radius:
             a_p = tr_radius / free_inf
         # The stopping test measures the Newton step, not how far the search cut it.
@@ -520,6 +545,8 @@ def solve_ipm_pd(
             if r_new is None:
                 # No sufficient decrease: keep the last (shortest) trial step.
                 a_p /= armijo_backtrack
+        if (a_p < a_full or a_full < a_bound) and tr_pos.size:
+            _count(limiters, int(tr_pos[np.argmax(np.abs(dx[tr_pos]))]))
 
         logger.debug(
             "ipm_pd it=%d μ=%.2e σ=%.2e αp=%.3f (before search %.3f, bound %.3f) αd=%.3f |Δx_free|∞=%.2e "
@@ -582,6 +609,8 @@ def solve_ipm_pd(
         status=status,
         solve_status=solve_status,
         eq_inf_final=eq_inf,
+        step_limiters=limiters,
+        limiting_rows=limiting_rows,
     )
 
 

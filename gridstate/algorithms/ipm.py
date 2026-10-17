@@ -46,7 +46,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -106,6 +106,26 @@ class IPMResult:
     solve_status: SolveStatus = SolveStatus.ERROR
     # max |c| over the equality rows at the final point (p.u.); nan without them.
     eq_inf_final: float = float("nan")
+    # Diagnostics of slow solves (see :mod:`gridstate.ipm_hints`): state index →
+    # number of iterations whose step that coordinate limited (it set the
+    # trust-region clip or the boundary rule, or dominated a step the line
+    # search cut).
+    step_limiters: dict[int, int] = field(default_factory=dict)
+    # ipm_pd only: measurement-box row → iterations whose step its bound limited.
+    limiting_rows: dict[int, int] = field(default_factory=dict)
+
+
+def _count(counts: dict[int, int], key: int) -> None:
+    counts[key] = counts.get(key, 0) + 1
+
+
+def _blocking(cur: np.ndarray, step: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> int:
+    """Position of the coordinate that first reaches its bound along ``step`` (−1: none)."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(step < 0, (lo - cur) / step, np.where(step > 0, (hi - cur) / step, np.inf))
+    ratio = np.where(ratio > 0, ratio, np.inf)
+    k = int(np.argmin(ratio)) if ratio.size else -1
+    return k if k >= 0 and np.isfinite(ratio[k]) else -1
 
 
 def _project_to_interior(
@@ -450,6 +470,15 @@ def solve_ipm(
     # it, so the next iteration (and the final objective) reuse it instead of
     # calling residual_fn again at the same point.
     r_at_x: np.ndarray | None = None
+    limiters: dict[int, int] = {}
+    tr_pos = np.flatnonzero(tr_mask) if tr_mask is not None else None
+
+    def _dominant(step: np.ndarray) -> int:
+        """State index of the largest step component inside the trust region."""
+        if tr_pos is None:
+            return int(np.argmax(np.abs(step)))
+        return int(tr_pos[np.argmax(np.abs(step[tr_pos]))]) if tr_pos.size else 0
+
     for outer_iter in range(outer_max):
         any_inner_step = False  # Lazy outer: if no step was made → break.
         # inner exited by tolerance (grad/step < inner_tol) — a stationary
@@ -536,6 +565,7 @@ def solve_ipm(
                 step_inf_raw = float(np.max(np.abs(dx_tr))) if dx_tr.size else 0.0
             if step_inf_raw > tr_radius:
                 dx = dx * (tr_radius / step_inf_raw)
+                _count(limiters, _dominant(dx))
             step_inf = float(np.max(np.abs(dx))) if dx.size else 0.0
             if step_inf < inner_tol:
                 inner_converged = True
@@ -551,6 +581,11 @@ def solve_ipm(
                 fraction_to_boundary,
             )
             alpha = min(alpha_max, 1.0) if math.isfinite(alpha_max) else 1.0
+            if alpha < 1.0:
+                k = _blocking(x[box_idx], dx[box_idx], box_lo, box_hi)
+                if k >= 0:
+                    _count(limiters, int(box_idx[k]))
+            alpha_first = alpha
 
             phi_cur = 0.5 * float(r @ (R_inv @ r)) + _barrier_value(
                 x,
@@ -584,6 +619,8 @@ def solve_ipm(
                     break
 
             iter_inner_total += 1
+            if not accepted or alpha < alpha_first:
+                _count(limiters, _dominant(dx))
             if not accepted:
                 inner_stalled = True
                 # No admissible step found — the outer loop will increase μ and try again.
@@ -684,6 +721,7 @@ def solve_ipm(
         status=status,
         solve_status=solve_status,
         eq_inf_final=eq_inf,
+        step_limiters=limiters,
     )
 
 
