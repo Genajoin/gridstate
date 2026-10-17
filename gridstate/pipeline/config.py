@@ -541,6 +541,16 @@ class PipelineConfig:
         "N iterations. Non-converged solves and ipm_pd fallbacks always get the "
         "hints; 0 = only those.",
     )
+    ipm_huber_threshold: str = _param(
+        "fixed",
+        group=_G_IPM,
+        label="Huber threshold (ipm_pd)",
+        control="select",
+        choices=["fixed", "adaptive"],
+        help="ipm_pd only (ignored by the other algorithms): fixed — c_eff = c; "
+        "adaptive — c_eff = max(c, k·median|r/σ|) recomputed every iteration, which "
+        "makes the estimate depend on the solver path. Default fixed.",
+    )
     ipm_boxed_balance_weight_factor: float = _param(
         0.0,
         group=_G_IPM,

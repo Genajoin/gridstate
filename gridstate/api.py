@@ -678,6 +678,7 @@ def _run_ipm(
     injection_roles: bool = False,
     role_estimates: dict[int, float] | None = None,
     hint_iterations: int = 100,
+    huber_threshold: str = "fixed",
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM mode: extends the state vector with box-vars and solves the primal log-barrier WLS.
@@ -716,7 +717,14 @@ def _run_ipm(
     A solve that does not converge, falls back from ``ipm_pd`` or takes more
     than ``hint_iterations`` iterations (``0`` — no iteration trigger) logs a
     WARNING with convergence hints (:mod:`gridstate.ipm_hints`).
+
+    ``huber_threshold`` (``"ipm_pd"`` only): ``"fixed"`` keeps the Huber
+    threshold at ``huber_c``; ``"adaptive"`` raises it to ``k·median|r/σ|``,
+    recomputed every iteration, so the estimate follows the solver path. The
+    primal IPM keeps its adaptive threshold (recomputed once per outer step).
     """
+    if huber_threshold not in ("fixed", "adaptive"):
+        raise ValueError(f"huber_threshold={huber_threshold!r} is not one of fixed/adaptive")
     if measurement_bounds and solver != "ipm_pd":
         raise ValueError("measurement_bounds requires algorithm='ipm_pd'")
     if trust_region_scope not in ("all", "state"):
@@ -824,7 +832,7 @@ def _run_ipm(
             huber_w_floor=huber_w_floor,
             huber_use_mad=huber_use_mad,
             huber_warmup_iters=2,
-            huber_adaptive_k=2.0,
+            huber_adaptive_k=0.0 if huber_threshold == "fixed" else 2.0,
             kkt_solver=kkt,
         )
         pd_result = result
