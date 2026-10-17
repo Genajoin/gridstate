@@ -89,7 +89,7 @@ def test_subclass_field_with_metadata_is_checked() -> None:
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"algorithm": "IPM"}, "algorithm='IPM' is not one of ['wls', 'ipm']"),
+        ({"algorithm": "IPM"}, "algorithm='IPM' is not one of ['wls', 'ipm', 'ipm_pd']"),
         ({"init": "dc"}, "init='dc' is not one of"),
         ({"kkt_solver": "umfpack"}, "kkt_solver='umfpack' is not one of"),
         (

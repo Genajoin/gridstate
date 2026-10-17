@@ -188,6 +188,25 @@ def write_measurement_estimates(
     return {"updated": int(valid.sum()), "missing": int((~valid).sum())}
 
 
+def write_part_estimates(measurements: _ArrayCollection, estimates: dict[int, float]) -> None:
+    """Overwrite ``estimated_si`` / ``residual`` of the part rows of node injections.
+
+    ``estimates`` maps a measurement id to the estimate of its part (MW / MVAr;
+    ``nan`` — not estimated on its own). Written after
+    :func:`write_measurement_estimates`, which evaluates every injection row as a
+    net injection.
+    """
+    arr = table_copy(measurements)
+    row_of = id_to_pos_map(arr["id"])
+    for mid, value in estimates.items():
+        i = row_of.get(int(mid))
+        if i is None:
+            continue
+        arr["estimated_si"][i] = value
+        arr["residual"][i] = arr["value"][i] - value
+    table_replace(measurements, arr)
+
+
 def write_node_estimates(
     model: Working,
     *,

@@ -124,6 +124,8 @@ def _s_telemetry(ctx: _Ctx) -> dict:
             total_args=ctx.derived.telemetry_total_args,
             v_sigma2_scale_by_node=ctx.derived.v_sigma2_scale,
             flow_sigma2_scale_by_branch=ctx.derived.flow_sigma2_scale,
+            injection_roles=ctx.cfg.ipm_injection_roles,
+            telemetry_bounds=ctx.derived.telemetry_bounds,
         )
         or {}
     )
@@ -147,6 +149,9 @@ def _s_aggregate_generators(ctx: _Ctx) -> dict:
 
 
 def _s_release_load_only_injections(ctx: _Ctx) -> dict:
+    if ctx.cfg.ipm_injection_roles:
+        # The parts are measured separately: a partial net injection does not arise.
+        return {"skipped_injection_roles": 1}
     if (
         ctx.derived is None
         or ctx.derived.telemetry_resolved is None
@@ -178,6 +183,9 @@ def _s_relax_generation_min_to_injection(ctx: _Ctx) -> dict:
 
 
 def _s_widen_generation_only_injections(ctx: _Ctx) -> dict:
+    if ctx.cfg.ipm_injection_roles:
+        # The parts are measured separately: a partial net injection does not arise.
+        return {"skipped_injection_roles": 1}
     if (
         ctx.derived is None
         or ctx.derived.telemetry_resolved is None

@@ -19,8 +19,14 @@ from gridstate.algebra.normalized_residuals import (
     compute_normalized_residuals,
 )
 from gridstate.algorithms.ipm import IPMResult, solve_ipm
+from gridstate.algorithms.ipm_pd import solve_ipm_pd
 from gridstate.algorithms.kkt_solver import KKTSolver
-from gridstate.algorithms.status import SUCCESS_POLICIES, SuccessPolicy, success_from_status
+from gridstate.algorithms.status import (
+    SUCCESS_POLICIES,
+    SolveStatus,
+    SuccessPolicy,
+    success_from_status,
+)
 from gridstate.algorithms.wls import solve_wls
 from gridstate.post_processing import (
     apply_load_characteristic,
@@ -28,6 +34,7 @@ from gridstate.post_processing import (
     write_measurement_estimates,
     write_node_estimates,
     write_node_estimates_from_inj,
+    write_part_estimates,
 )
 from gridstate.preprocessing.ipm_setup import build_ipm_setup
 from gridstate.quality_summary import (
@@ -52,7 +59,7 @@ from gridstate.state import (
 from gridstate.units import BASE_MVA, model_to_pu, write_results_to_model
 from gridstate.utils import floored_sigma2, id_to_pos_map
 from gridstate.ybus import build_ybus
-from gridstate.z_vector import build_z_and_r
+from gridstate.z_vector import build_z_and_r, measurement_bounds_pu
 
 
 if TYPE_CHECKING:
@@ -66,7 +73,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-Algorithm = Literal["wls", "ipm"]
+Algorithm = Literal["wls", "ipm", "ipm_pd"]
 InitMode = Literal["flat", "results", "slack"]
 ZeroInjectionMode = Literal["aux_bus", "no_inj_bus", "zero_pwr_bus"]
 
@@ -105,8 +112,10 @@ def estimate(
         model: working network model — the carrier of the contract input tables.
         measurements: measurement collection. If ``None``,
             ``model.measurements``.
-        algorithm: SE algorithm: ``"wls"`` (Gauss-Newton) or ``"ipm"``
-            (primal log-barrier with box load/generation variables).
+        algorithm: SE algorithm: ``"wls"`` (Gauss-Newton), ``"ipm"``
+            (primal log-barrier with box load/generation variables) or
+            ``"ipm_pd"`` (the same problem by the primal-dual Mehrotra
+            predictor-corrector, :mod:`gridstate.algorithms.ipm_pd`).
         init: initial guess strategy:
             - ``"flat"`` — V=1 p.u., δ=0 for all nodes;
             - ``"results"`` — take the current ``voltage_magnitude``/``voltage_angle``
@@ -189,9 +198,9 @@ def estimate(
     """
     if include_quality_summary:
         check_rn_options(quality_summary_rn_method, quality_summary_rn_refine_below)
-    if algorithm not in ("wls", "ipm"):
+    if algorithm not in ("wls", "ipm", "ipm_pd"):
         raise NotImplementedError(
-            f"Algorithm {algorithm!r} is not implemented yet; available: 'wls' and 'ipm'."
+            f"Algorithm {algorithm!r} is not implemented yet; available: 'wls', 'ipm' and 'ipm_pd'."
         )
     if zero_injection is not None:
         raise NotImplementedError(f"zero_injection={zero_injection!r} is not implemented yet.")
@@ -220,7 +229,8 @@ def estimate(
     # factorization between iterations (the structure of G is unchanged).
     kkt = KKTSolver(kkt_solver)
 
-    if algorithm == "ipm":
+    role_estimates: dict[int, float] = {}
+    if algorithm in ("ipm", "ipm_pd"):
         # IPM mode: extend layout/state/measurements with box variables and
         # nodal balance equations. ipm_kwargs are passed on to build_ipm_setup
         # (prior_sigma2_*, balance_weight_factor, ...) for A/B
@@ -241,6 +251,9 @@ def estimate(
             huber_c=huber_c,
             huber_use_mad=huber_use_mad,
             kkt=kkt,
+            solver=algorithm,
+            measurements=measurements,
+            role_estimates=role_estimates,
             **ipm_kwargs,
         )
         # _run_ipm has already written *_estimated into model.nodes; the layout
@@ -310,6 +323,9 @@ def estimate(
         meas_index=meas_index,
         z=z,
     )
+    if role_estimates:
+        # The part rows measure box variables, not the net injection.
+        write_part_estimates(measurements, role_estimates)
     # 8. In WLS mode spread p_inj_calc over load_*_estimated /
     # generation_*_estimated. For IPM this is already done via box-vars in
     # _run_ipm (write_node_estimates), no need to repeat.
@@ -655,6 +671,11 @@ def _run_ipm(
     huber_w_floor: float = 0.05,
     kkt: KKTSolver | None = None,
     trust_region_scope: str = "state",
+    solver: str = "ipm",
+    measurements: _ArrayCollection | None = None,
+    measurement_bounds: bool = False,
+    injection_roles: bool = False,
+    role_estimates: dict[int, float] | None = None,
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM mode: extends the state vector with box-vars and solves the primal log-barrier WLS.
@@ -670,10 +691,28 @@ def _run_ipm(
     the step keeps its direction (one scaling factor for the whole step); with
     ``"state"`` the factor comes from V/δ, so a generation/load box variable
     that has to move tens of p.u. no longer shrinks the V/δ step. The box
-    variables stay protected by the fraction-to-boundary rule. Note that the
+    variables stay protected by the fraction-to-boundary rule (``"ipm"``; with
+    ``"ipm_pd"`` the box variables are never in the trust region). Note that the
     Huber reweighting starts after ``huber_warmup_iters`` inner iterations, so
     a solve that converges in fewer steps may finish before it engages.
+
+    ``solver`` — ``"ipm"`` (:func:`solve_ipm`) or ``"ipm_pd"``
+    (:func:`solve_ipm_pd`). ``measurement_bounds`` (``"ipm_pd"`` only) bounds
+    the estimated value of every measurement with ``min_value`` /
+    ``max_value`` set (see :func:`gridstate.z_vector.measurement_bounds_pu`).
+    A hard balance (``balance_mode="hard"``, forwarded to ``build_ipm_setup``)
+    makes the balance rows equality constraints of either solver. An ``"ipm_pd"``
+    solve that does not reach its KKT test is redone by :func:`solve_ipm` from
+    the same start (without the measurement boxes); the message says so.
+
+    ``injection_roles`` (forwarded to ``build_ipm_setup`` with ``measurements``)
+    lets the generation / load part rows of node injections measure their box
+    variables; ``role_estimates`` (when given) receives the estimate of each
+    part row in MW / MVAr by measurement id, ``nan`` for a part row folded into a
+    net injection.
     """
+    if measurement_bounds and solver != "ipm_pd":
+        raise ValueError("measurement_bounds requires algorithm='ipm_pd'")
     if trust_region_scope not in ("all", "state"):
         raise ValueError(
             f"trust_region_scope={trust_region_scope!r} is not one of ['all', 'state']"
@@ -685,6 +724,8 @@ def _run_ipm(
         r_matrix,
         meas_index,
         layout_base=layout_base,
+        injection_roles=injection_roles,
+        measurements=measurements if injection_roles else None,
         **ipm_kwargs,
     )
     layout_ipm = setup.layout
@@ -738,41 +779,100 @@ def _run_ipm(
         delta, v, _pg, _qg, _pn, _qn = unpack_full(x, layout_ipm)
         return algebra.evaluate_jacobian(v, delta)
 
-    result = solve_ipm(
-        x_init=e_init_ipm,
-        residual_fn=residual_fn,
-        jacobian_fn=jacobian_fn,
-        r_inv_diag=r_inv_diag,
-        box_idx=setup.box_idx_in_state,
-        box_lo=setup.box_lo,
-        box_hi=setup.box_hi,
-        inner_tol=max(tolerance, 1e-4),
-        inner_max=max_iterations,
-        outer_max=20,
-        mu_init=0.1,
-        tr_radius=0.5,
-        # The box sections are the only boxed coordinates of layout_ipm, so
-        # "outside the boxes" is exactly V/δ.
-        tr_exclude_box=trust_region_scope == "state",
-        huber_c=huber_c,
-        huber_mask=huber_mask,
-        huber_w_floor=huber_w_floor,
-        huber_use_mad=huber_use_mad,
-        # On average IPM makes 1 inner step per outer (lazy-outer break). Over
-        # 9-12 outers on large models warmup=5 (as in WLS) gives Huber
-        # 0-3 effective iterations. We reduce it to 2 — Huber activates
-        # from the 3rd outer iteration, leaving headroom before μ_min for the downweight of
-        # outliers.
-        huber_warmup_iters=2,
-        # adaptive_k=2.0 (Abur & Exposito ch.6 standard): c_eff =
-        # max(c, 2·median(|r/σ|)). In solve_ipm adaptive_applied is reset
-        # on every outer — c_eff is recomputed from the current residuals.
-        huber_adaptive_k=2.0,
-        kkt_solver=kkt,
-    )
+    eq_idx = setup.balance_rows if setup.balance_tol is not None else None
+    if solver == "ipm_pd":
+        mb_rows = mb_lo = mb_hi = None
+        if measurement_bounds and measurements is not None:
+            lo, hi = measurement_bounds_pu(measurements, setup.meas_index, network_pu)
+            # A part row's box is already the box of its variable.
+            lo[setup.role_rows] = -np.inf
+            hi[setup.role_rows] = np.inf
+            boxed = np.isfinite(lo) | np.isfinite(hi)
+            # Bounds on h − z, the value the solver constrains (−r).
+            mb_rows = np.flatnonzero(boxed)
+            mb_lo = lo[boxed] - setup.z[boxed]
+            mb_hi = hi[boxed] - setup.z[boxed]
+        result = solve_ipm_pd(
+            x_init=e_init_ipm,
+            residual_fn=residual_fn,
+            jacobian_fn=jacobian_fn,
+            r_inv_diag=r_inv_diag,
+            box_idx=setup.box_idx_in_state,
+            box_lo=setup.box_lo,
+            box_hi=setup.box_hi,
+            meas_box_rows=mb_rows,
+            meas_box_lo=mb_lo,
+            meas_box_hi=mb_hi,
+            eq_idx=eq_idx,
+            eq_tol=setup.balance_tol,
+            mu_init=1.0,
+            step_tol=max(tolerance, 1e-4),
+            max_iter=max(max_iterations, 100),
+            tr_radius=0.5,
+            huber_c=huber_c,
+            huber_mask=huber_mask,
+            huber_w_floor=huber_w_floor,
+            huber_use_mad=huber_use_mad,
+            huber_warmup_iters=2,
+            huber_adaptive_k=2.0,
+            kkt_solver=kkt,
+        )
+        if result.solve_status is not SolveStatus.KKT:
+            # The primal-dual iteration has no merit line search and may cycle
+            # on a weakly determined direction; the primal solver's Armijo
+            # search does not. Measurement boxes have no primal counterpart.
+            logger.warning(
+                "ipm_pd did not converge (%s), falling back to the primal IPM", result.message
+            )
+            pd_message = result.message
+    if solver != "ipm_pd" or result.solve_status is not SolveStatus.KKT:
+        result = solve_ipm(
+            x_init=e_init_ipm,
+            residual_fn=residual_fn,
+            jacobian_fn=jacobian_fn,
+            r_inv_diag=r_inv_diag,
+            box_idx=setup.box_idx_in_state,
+            box_lo=setup.box_lo,
+            box_hi=setup.box_hi,
+            inner_tol=max(tolerance, 1e-4),
+            inner_max=max_iterations,
+            outer_max=20,
+            mu_init=0.1,
+            tr_radius=0.5,
+            # The box sections are the only boxed coordinates of layout_ipm, so
+            # "outside the boxes" is exactly V/δ.
+            tr_exclude_box=trust_region_scope == "state",
+            huber_c=huber_c,
+            huber_mask=huber_mask,
+            huber_w_floor=huber_w_floor,
+            huber_use_mad=huber_use_mad,
+            # On average IPM makes 1 inner step per outer (lazy-outer break). Over
+            # 9-12 outers on large models warmup=5 (as in WLS) gives Huber
+            # 0-3 effective iterations. We reduce it to 2 — Huber activates
+            # from the 3rd outer iteration, leaving headroom before μ_min for the downweight of
+            # outliers.
+            huber_warmup_iters=2,
+            # adaptive_k=2.0 (Abur & Exposito ch.6 standard): c_eff =
+            # max(c, 2·median(|r/σ|)). In solve_ipm adaptive_applied is reset
+            # on every outer — c_eff is recomputed from the current residuals.
+            huber_adaptive_k=2.0,
+            kkt_solver=kkt,
+            eq_idx=eq_idx,
+            eq_tol=setup.balance_tol,
+        )
+        if solver == "ipm_pd":
+            result.message = f"ipm_pd fallback to ipm ({pd_message}): {result.message}"
 
     # Extract the box-vars and write them into the node table (MW/MVAr = p.u. * BASE_MVA).
     _, _, pgen, qgen, pnag, qnag = unpack_full(result.x, layout_ipm)
+
+    if role_estimates is not None:
+        if setup.role_rows.size > 0:
+            h_role = setup.z[setup.role_rows] - residual_fn(result.x)[setup.role_rows]
+            role_estimates.update(
+                zip(setup.role_meas_ids.tolist(), (h_role * BASE_MVA).tolist(), strict=True)
+            )
+        role_estimates.update(dict.fromkeys(setup.role_dropped_ids.tolist(), float("nan")))
 
     if pgen.size > 0:
         write_node_estimates(

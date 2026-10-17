@@ -95,3 +95,14 @@ class MeasurementObjectType(IntEnum):
     REMONT = 10
     LPA_SUBELEMENT = 11
     NONE = -1
+
+
+#: ``source_code`` of a node injection measurement (``POWER_INJECTION_P`` /
+#: ``POWER_INJECTION_Q``) that measures one part of the node injection instead of
+#: the net value: the generation (``"inj_gen"``) or the load (``"inj_load"``).
+#: Its value is the part itself (positive generation, positive load); the map
+#: gives the sign of the part in the net injection. The IPM uses such rows with
+#: ``injection_roles`` (see :func:`gridstate.preprocessing.ipm_setup.build_ipm_setup`).
+SOURCE_INJ_GEN = "inj_gen"
+SOURCE_INJ_LOAD = "inj_load"
+INJECTION_ROLE_SIGN: dict[str, int] = {SOURCE_INJ_GEN: +1, SOURCE_INJ_LOAD: -1}

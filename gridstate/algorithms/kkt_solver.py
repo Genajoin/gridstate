@@ -49,7 +49,7 @@ from typing import Any
 
 import numpy as np
 from scipy.sparse import csc_matrix, csr_matrix, diags, tril
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import factorized, spsolve
 
 from gridstate.utils import scale_csr_rows
 
@@ -295,26 +295,52 @@ class KKTSolver:
         on the fixed pattern of ``H`` (see the module docstring). ``HtW`` —
         the caller's ``scale_csr_rows(H, w).T``, reused by the scipy path.
         """
+        return self._factor_normal(H, w, diag, HtW, scipy_lu=False)(rhs)
+
+    def factor_normal(
+        self,
+        H: csr_matrix,
+        w: np.ndarray,
+        *,
+        diag: np.ndarray | None = None,
+        HtW: Any = None,
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        """Factorize ``Hᵀ·diag(w)·H + diag(diag)`` once; return a solve for any rhs.
+
+        For methods that solve several right-hand sides with one matrix
+        (predictor and corrector of a primal-dual IPM). The returned callable
+        is valid until the next factorization by this solver: the CHOLMOD
+        factor is updated in place. The matrix, the pattern bookkeeping and
+        the stability cascade are those of :meth:`solve_normal`; the
+        ``scipy`` backend keeps a SuperLU factor instead of calling
+        ``spsolve`` per rhs.
+        """
+        return self._factor_normal(H, w, diag, HtW, scipy_lu=True)
+
+    def _factor_normal(
+        self, H: csr_matrix, w: np.ndarray, diag: np.ndarray | None, HtW: Any, *, scipy_lu: bool
+    ) -> Callable[[np.ndarray], np.ndarray]:
         gram = self._gram_pattern_for(H)
         kernel = _load_gram_kernel() if gram is not None else None
         if gram is None or kernel is None:
-            return self.solve(gram_scipy(H, w, diag, HtW), rhs)
+            return self._factor(gram_scipy(H, w, diag, HtW), scipy_lu=scipy_lu)
         values = gram.assemble(kernel, H, w, diag)
         # Same stability cascade as solve(): cached pattern, fresh pattern,
         # then a one-off spsolve of the full matrix.
         try:
-            return self._solve_gram_cholmod(gram, values, rhs)
+            self._factor_gram_cholmod(gram, values)
+            return self._cholmod_solve
         except ArithmeticError:
             pass
         try:
             self._seen = None
-            return self._solve_gram_cholmod(gram, values, rhs)
+            self._factor_gram_cholmod(gram, values)
+            return self._cholmod_solve
         except ArithmeticError:
             logger.warning(
                 "kkt cholmod: matrix is not PD even on a fresh analysis — falling back to spsolve"
             )
-            G = gram_scipy(H, w, diag, HtW)
-            return np.asarray(spsolve(G, rhs), dtype=np.float64).ravel()
+            return _spsolve_with(gram_scipy(H, w, diag, HtW))
 
     def _gram_pattern_for(self, H: Any) -> _GramPattern | None:
         """Fixed Gram structure for ``H`` when the numba path applies."""
@@ -334,10 +360,8 @@ class KKTSolver:
         self._mode = "gram"
         return self._gram
 
-    def _solve_gram_cholmod(
-        self, gram: _GramPattern, values: np.ndarray, rhs: np.ndarray
-    ) -> np.ndarray:
-        """``_solve_cholmod`` on lower-triangle values of the fixed pattern.
+    def _factor_gram_cholmod(self, gram: _GramPattern, values: np.ndarray) -> None:
+        """``_factor_cholmod`` on lower-triangle values of the fixed pattern.
 
         ``_seen`` is the lower triangle of the superset pattern the scipy path
         accumulates: positions nonzero at least once since the last reset.
@@ -362,6 +386,11 @@ class KKTSolver:
         else:
             self._A.V = matrix(data)
         cholmod.numeric(self._A, self._F)
+
+    def _cholmod_solve(self, rhs: np.ndarray) -> np.ndarray:
+        """Solve with the current numeric CHOLMOD factor."""
+        from cvxopt import cholmod, matrix
+
         b = matrix(np.asarray(rhs, dtype=np.float64))
         cholmod.solve(self._F, b)
         return np.asarray(b, dtype=np.float64).ravel()
@@ -413,25 +442,31 @@ class KKTSolver:
         systems, and IPM on a large model stalled (it=4 instead of 9 with a
         failure-free factorisation).
         """
+        return self._factor(G, scipy_lu=False)(rhs)
+
+    def _factor(self, G: csc_matrix, *, scipy_lu: bool) -> Callable[[np.ndarray], np.ndarray]:
+        """Factorize ``G`` (see :meth:`solve`); return the solve for a rhs."""
         if self.backend == "scipy":
-            return np.asarray(spsolve(G, rhs), dtype=np.float64).ravel()
+            return factorized(G.tocsc()) if scipy_lu else _spsolve_with(G)
         if self._mode == "gram":
             self._gram_to_matrix_mode()
         self._mode = "matrix"
         try:
-            return self._solve_cholmod(G, rhs)
+            self._factor_cholmod(G)
+            return self._cholmod_solve
         except ArithmeticError:
             pass
         try:
             self._pattern = None  # retry: fresh symbolic from the current G
-            return self._solve_cholmod(G, rhs)
+            self._factor_cholmod(G)
+            return self._cholmod_solve
         except ArithmeticError:
             logger.warning(
                 "kkt cholmod: matrix is not PD even on a fresh analysis — falling back to spsolve"
             )
-            return np.asarray(spsolve(G, rhs), dtype=np.float64).ravel()
+            return _spsolve_with(G)
 
-    def _solve_cholmod(self, G: csc_matrix, rhs: np.ndarray) -> np.ndarray:
+    def _factor_cholmod(self, G: csc_matrix) -> None:
         from cvxopt import cholmod, matrix, spmatrix
 
         if self._pattern is None:
@@ -467,9 +502,15 @@ class KKTSolver:
             # The order of data in cvxopt CSC matches scipy canonical csc.
             self._A.V = matrix(P.data)
         cholmod.numeric(self._A, self._F)
-        b = matrix(np.asarray(rhs, dtype=np.float64))
-        cholmod.solve(self._F, b)
-        return np.asarray(b, dtype=np.float64).ravel()
+
+
+def _spsolve_with(G: csc_matrix) -> Callable[[np.ndarray], np.ndarray]:
+    """``rhs → spsolve(G, rhs)`` (the former single-solve path, bit for bit)."""
+
+    def _solve(rhs: np.ndarray) -> np.ndarray:
+        return np.asarray(spsolve(G, rhs), dtype=np.float64).ravel()
+
+    return _solve
 
 
 __all__ = [

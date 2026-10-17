@@ -327,8 +327,10 @@ class PipelineConfig:
         group=_G_EST,
         label="Алгоритм",
         control="select",
-        choices=["wls", "ipm"],
-        help="wls — Gauss-Newton (надёжно сходится); ipm — primal log-barrier с box-vars.",
+        choices=["wls", "ipm", "ipm_pd"],
+        help="wls — Gauss-Newton (надёжно сходится); ipm — primal log-barrier с box-vars; "
+        "ipm_pd — the same problem by the primal-dual Mehrotra predictor-corrector "
+        "(adaptive μ, one factorization per iteration).",
     )
     init: str = _param(
         "flat",
@@ -464,9 +466,68 @@ class PipelineConfig:
         label="Вес balance-pseudo",
         control="number",
         min=1e-4,
-        max=10.0,
+        max=1e6,
         depends={"algorithm": "ipm"},
-        help="Меньше → balance мягче. default 0.1.",
+        help="Меньше → balance мягче. default 0.1. Soft balance only (ipm_balance_mode=soft).",
+    )
+    ipm_balance_mode: str = _param(
+        "soft",
+        group=_G_IPM,
+        label="Balance mode",
+        control="select",
+        choices=["soft", "hard"],
+        depends={"algorithm": "ipm"},
+        help="soft — the nodal P/Q balance is a weighted pseudo-measurement "
+        "(ipm_balance_weight_factor); hard — an equality constraint enforced with "
+        "Lagrange multipliers (ipm: method of multipliers; ipm_pd: regularised KKT) "
+        "to ipm_balance_tol_p_mw / ipm_balance_tol_q_mvar.",
+    )
+    ipm_balance_tol_p_mw: float = _param(
+        1.0,
+        group=_G_IPM,
+        label="Hard balance tolerance P, MW",
+        control="number",
+        min=1e-6,
+        max=1e3,
+        depends={"ipm_balance_mode": "hard"},
+        help="Admissible |P imbalance| of a node under the hard balance.",
+    )
+    ipm_balance_tol_q_mvar: float = _param(
+        10.0,
+        group=_G_IPM,
+        label="Hard balance tolerance Q, MVAr",
+        control="number",
+        min=1e-6,
+        max=1e3,
+        depends={"ipm_balance_mode": "hard"},
+        help="Admissible |Q imbalance| of a node under the hard balance.",
+    )
+    ipm_fixed_injection_from_input: bool = _toggle(
+        False,
+        group=_G_IPM,
+        label="Fixed injection of non-estimated parts",
+        help="The balance of a node carries the input generation/load of its parts "
+        "without exist_gen/exist_load as a fixed term instead of zero. Default OFF.",
+    )
+    ipm_measurement_bounds: bool = _toggle(
+        False,
+        group=_G_IPM,
+        label="Measurement value bounds (ipm_pd)",
+        help="ipm_pd only: the estimated value of every measurement with "
+        "min_value/max_value set is kept within [min_value, max_value] as an "
+        "inequality of the interior-point problem. Default OFF.",
+    )
+    ipm_injection_roles: bool = _toggle(
+        False,
+        group=_G_IPM,
+        label="Separate generation / load injection measurements",
+        help="ipm/ipm_pd only: telemetry keeps the generation and the load part of "
+        "a node injection as separate measurements; each measures the box "
+        "variable of its part; its node box is narrowed by the measurement "
+        "box (min_value/max_value) when set, and the unmeasured other part of "
+        "the node gets a loose prior. The net row stays only where a measured "
+        "part has no box variable. release_load_only_injections and "
+        "widen_generation_only_injections do not apply. Default OFF.",
     )
     ipm_boxed_balance_weight_factor: float = _param(
         0.0,
@@ -821,6 +882,13 @@ class PipelineConfig:
                 problems.append(f"{f.name}={value!r} is below the minimum {lo!r}")
             elif hi is not None and value > hi:
                 problems.append(f"{f.name}={value!r} is above the maximum {hi!r}")
+        if getattr(self, "ipm_measurement_bounds", False) and self.algorithm != "ipm_pd":
+            problems.append("ipm_measurement_bounds requires algorithm='ipm_pd'")
+        if getattr(self, "ipm_injection_roles", False) and self.algorithm not in (
+            "ipm",
+            "ipm_pd",
+        ):
+            problems.append("ipm_injection_roles requires algorithm='ipm' or 'ipm_pd'")
         if problems:
             raise ValueError(f"invalid {type(self).__name__}: " + "; ".join(problems))
 

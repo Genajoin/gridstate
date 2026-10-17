@@ -27,6 +27,9 @@ TelemetryKey = tuple[int, str]
 TelemetryValue = tuple[float | None, int, str, int]
 #: Flow variance factor key: ``(branch_id, flow_kind)``.
 FlowKey = tuple[int, str]
+#: Plausible range of a telemetry value: ``(lo, hi)``, same units and sign as the
+#: value; an unset side is ``-inf`` / ``+inf``.
+TelemetryBounds = tuple[float, float]
 
 
 @dataclass
@@ -47,7 +50,11 @@ class DerivedInputs:
     * ``v_sigma2_scale`` — ``{node_id → factor}`` of the per-node σ² scale for nodal
       V measurements (factor<1 increases trust in the measurement); ``None`` = no scaling;
     * ``flow_sigma2_scale`` — ``{(branch_id, flow_kind) → factor}`` of the same scale
-      for branch flow measurements (flow_kind ∈ ``p_from``/``p_to``/``q_from``/``q_to``).
+      for branch flow measurements (flow_kind ∈ ``p_from``/``p_to``/``q_from``/``q_to``);
+    * ``telemetry_bounds`` — ``{TelemetryKey: TelemetryBounds}``, the plausible
+      range of a telemetry value (e.g. the range of its source channel); the
+      telemetry kernel writes it into ``min_value`` / ``max_value`` of the
+      measurement row the value feeds. ``None`` = no ranges.
 
     The vocabulary, dtypes and meaning of every field are specified in
     :mod:`gridstate.contract.derived_tables`. Tap changer positions are applied
@@ -63,3 +70,4 @@ class DerivedInputs:
     voltage_nominal: dict[int, float] | None = None
     v_sigma2_scale: dict[int, float] | None = None
     flow_sigma2_scale: dict[FlowKey, float] | None = None
+    telemetry_bounds: dict[TelemetryKey, TelemetryBounds] | None = None

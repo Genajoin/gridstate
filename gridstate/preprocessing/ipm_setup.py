@@ -21,10 +21,17 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from gridstate.bounds import declared_box, is_reactive_only_generation, resolve_bounds
+from gridstate.bounds import (
+    declared_box,
+    is_reactive_only_generation,
+    is_sentinel,
+    resolve_bounds,
+)
+from gridstate.constants import INJECTION_ROLE_SIGN
 from gridstate.state import StateLayout
 from gridstate.units import BASE_MVA
 from gridstate.utils import id_to_pos_map
+from gridstate.working import table_view
 from gridstate.z_vector import (
     KIND_BOX_PRIOR_PGEN,
     KIND_BOX_PRIOR_PNAG,
@@ -32,6 +39,8 @@ from gridstate.z_vector import (
     KIND_BOX_PRIOR_QNAG,
     KIND_NODE_BALANCE_P,
     KIND_NODE_BALANCE_Q,
+    KIND_POWER_INJECTION_P,
+    KIND_POWER_INJECTION_Q,
     OBJ_NODE,
     SIDE_NONE,
     MeasurementIndex,
@@ -40,7 +49,7 @@ from gridstate.z_vector import (
 
 if TYPE_CHECKING:
     from gridstate.units import NetworkPU
-    from gridstate.working import Working
+    from gridstate.working import Working, _ArrayCollection
 
 
 __all__ = [
@@ -68,6 +77,7 @@ class _BoxSection:
     hi: list[float] = field(default_factory=list)
     init: list[float] = field(default_factory=list)
     prior_s2: list[float] = field(default_factory=list)
+    default: list[bool] = field(default_factory=list)  # bounds unset: a wide default box
 
 
 def _collect_box_sections(
@@ -241,6 +251,7 @@ def _collect_box_sections(
             sec.hi.append(hi)
             sec.init.append(_init_in_box(float(row[sec.init_col]) / BASE_MVA, (lo, hi)))
             sec.prior_s2.append(_resolve_prior_sigma2((lo, hi), is_default_box=dflt))
+            sec.default.append(dflt)
 
     return sections
 
@@ -263,6 +274,211 @@ class IPMSetup:
     z: np.ndarray
     r_matrix: csr_matrix
     meas_index: MeasurementIndex
+    # Balance rows: ``z[balance_start : balance_start + 2 * n_balance]`` (P block, then Q).
+    balance_start: int = 0
+    n_balance: int = 0
+    # Hard balance: the balance rows are equality constraints (their R entry is
+    # the penalty 1/ρ of the solver, not a measurement variance) and
+    # ``balance_tol`` holds the admissible |imbalance| per balance row in p.u.
+    # ``None`` in the soft mode.
+    balance_tol: np.ndarray | None = None
+    # ``injection_roles``: rows of ``z`` that measure a box variable directly
+    # (a generation / load part of a node injection) and their measurement ids;
+    # ``role_dropped_ids`` — part rows folded back into a net injection row.
+    role_rows: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))
+    role_meas_ids: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))
+    role_dropped_ids: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))
+
+    @property
+    def balance_rows(self) -> np.ndarray:
+        """Row indices of the balance measurements (P block, then Q)."""
+        return np.arange(self.balance_start, self.balance_start + 2 * self.n_balance)
+
+
+@dataclass
+class _RolePlan:
+    """Outcome of :func:`_plan_injection_roles` over the base (WLS) rows."""
+
+    keep: np.ndarray  # mask over the base rows that stay
+    z: np.ndarray  # base z with the folded net values written in
+    sigma2: np.ndarray  # base σ² likewise
+    rows: list[tuple[int, int, float, float, int]]  # (kind, node pos, z, σ², meas id)
+    dropped_ids: list[int]
+
+
+def _plan_injection_roles(
+    measurements: _ArrayCollection,
+    meas_index: MeasurementIndex,
+    z: np.ndarray,
+    sigma2: np.ndarray,
+    sections: list[_BoxSection],
+) -> _RolePlan:
+    """Map the part rows of node injections onto the box variables.
+
+    A part row is a node injection row whose ``source_code`` names the
+    generation or the load (:data:`gridstate.constants.INJECTION_ROLE_SIGN`); its
+    value is the part itself. For each node and P / Q:
+
+    * every measured part has a box variable at the node → the part rows become
+      direct measurements of their variable (several rows of one part share it)
+      and the net injection rows of the node are dropped; the node box of the
+      variable is narrowed by the part rows' ``[min_value, max_value]`` where set
+      (a sensor range narrows the physical range, it does not replace it) and its
+      prior row is dropped. The other part of the node, when it has a box
+      variable but no measurement, gets a prior at its start (see
+      :func:`_prior_unmeasured_part`);
+    * otherwise the part rows are dropped; when the node has no net row, the
+      first part row is turned into one (signed sum of the parts, summed σ²).
+
+    ``sections`` (the ``[pgen, qgen, pnag, qnag]`` order) are updated in place.
+    """
+    arr = table_view(measurements)
+    names = arr.dtype.names or ()
+    keep = np.ones(len(z), dtype=bool)
+    z = np.array(z, dtype=np.float64, copy=True)
+    sigma2 = np.array(sigma2, dtype=np.float64, copy=True)
+    plan = _RolePlan(keep=keep, z=z, sigma2=sigma2, rows=[], dropped_ids=[])
+    if "source_code" not in names:
+        return plan
+    row_of = id_to_pos_map(arr["id"].astype(np.int64))
+    has_bounds = "min_value" in names and "max_value" in names
+
+    # (node pos, axis) -> part rows [(k, sign)] and net rows [k]; axis 0 = P, 1 = Q.
+    parts: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    nets: dict[tuple[int, int], list[int]] = {}
+    for k in range(len(z)):
+        kind = int(meas_index.kind[k])
+        if int(meas_index.object_kind[k]) != OBJ_NODE or kind not in (
+            KIND_POWER_INJECTION_P,
+            KIND_POWER_INJECTION_Q,
+        ):
+            continue
+        key = (int(meas_index.object_pos[k]), 0 if kind == KIND_POWER_INJECTION_P else 1)
+        i = row_of.get(int(meas_index.meas_id[k]))
+        sign = INJECTION_ROLE_SIGN.get(str(arr["source_code"][i])) if i is not None else None
+        if sign is None:
+            nets.setdefault(key, []).append(k)
+        else:
+            parts.setdefault(key, []).append((k, sign))
+
+    index = [{pos: j for j, pos in enumerate(sec.pos)} for sec in sections]
+    # Section of a part: [pgen, qgen, pnag, qnag][2·(load) + axis].
+    prior_kinds = (
+        KIND_BOX_PRIOR_PGEN,
+        KIND_BOX_PRIOR_QGEN,
+        KIND_BOX_PRIOR_PNAG,
+        KIND_BOX_PRIOR_QNAG,
+    )
+    for (pos, axis), rows in parts.items():
+        sec_of = {sign: (0 if sign > 0 else 2) + axis for _, sign in rows}
+        if all(pos in index[s] for s in sec_of.values()):
+            keep[[k for k, _ in rows]] = False
+            keep[nets.get((pos, axis), [])] = False
+            boxes: dict[int, list[tuple[float, float]]] = {}
+            for k, sign in rows:
+                s = sec_of[sign]
+                plan.rows.append(
+                    (prior_kinds[s], pos, float(z[k]), float(sigma2[k]), int(meas_index.meas_id[k]))
+                )
+                if has_bounds:
+                    i = row_of[int(meas_index.meas_id[k])]
+                    lo_m, hi_m = resolve_bounds(arr["min_value"][i], arr["max_value"][i])
+                    # A sentinel side is unset here: the node box keeps that side.
+                    boxes.setdefault(s, []).append(
+                        (
+                            -np.inf if is_sentinel(lo_m) else lo_m,
+                            np.inf if is_sentinel(hi_m) else hi_m,
+                        )
+                    )
+                else:
+                    boxes.setdefault(s, [])
+            for s, pairs in boxes.items():
+                _apply_measured_box(sections[s], index[s][pos], pairs)
+            measured_s2 = min(float(sigma2[k]) for k, _ in rows)
+            for s in {(2 if sg > 0 else 0) + axis for sg in sec_of} - set(sec_of.values()):
+                j = index[s].get(pos)
+                if j is not None:
+                    _prior_unmeasured_part(
+                        sections[s], j, generation=s < 2, measured_s2=measured_s2
+                    )
+            continue
+        # A part without a box variable: the parts do not split; keep a net row.
+        plan.dropped_ids.extend(int(meas_index.meas_id[k]) for k, _ in rows)
+        keep[[k for k, _ in rows]] = False
+        if not nets.get((pos, axis)):
+            k0 = rows[0][0]
+            z[k0] = sum(sign * float(z[k]) for k, sign in rows)
+            sigma2[k0] = sum(float(sigma2[k]) for k, _ in rows)
+            keep[k0] = True
+            plan.dropped_ids.remove(int(meas_index.meas_id[k0]))
+    return plan
+
+
+def _prior_unmeasured_part(
+    sec: _BoxSection, j: int, *, generation: bool, measured_s2: float
+) -> None:
+    """Prior of the unmeasured part of a node whose other part is measured.
+
+    Only the balance ties it, and with the net row gone nothing else does; the
+    prior sits at its start (the materialized value) and follows what the net
+    row used to imply:
+
+    * generation with a declared range: free within it, σ = the half-width;
+    * generation with an unset range (``exist_gen`` without a range: boundary
+      equivalents, compensators): it stays at its start with the variance of
+      the measured part, as the net row held it;
+    * load with a declared box: a value uniform in the box, ``(hi - lo)² / 12``;
+    * load with an unset box: unknown, the same uniform variance of the wide
+      default box (practically free, but the step stays well-defined).
+    """
+    width = sec.hi[j] - sec.lo[j]
+    if generation:
+        s2 = measured_s2 if sec.default[j] else (0.5 * width) ** 2
+    else:
+        s2 = width**2 / 12.0
+    sec.prior_s2[j] = max(sec.prior_s2[j], s2)
+
+
+def _apply_measured_box(sec: _BoxSection, j: int, pairs: list[tuple[float, float]]) -> None:
+    """Box of a measured box variable: the node box narrowed by the measurement boxes.
+
+    An unset side (``∓inf``) leaves the node box side; an empty or degenerate
+    intersection keeps the node box. The prior row of the variable is dropped
+    (the measurement anchors it) and its start is clamped into the new box.
+    """
+    sec.prior_s2[j] = 0.0
+    lo_m = max((lo for lo, _ in pairs), default=-np.inf)
+    hi_m = min((hi for _, hi in pairs), default=np.inf)
+    lo = max(sec.lo[j], lo_m / BASE_MVA)
+    hi = min(sec.hi[j], hi_m / BASE_MVA)
+    if hi - lo < 1e-9:
+        return
+    sec.lo[j], sec.hi[j] = lo, hi
+    margin = max((hi - lo) * 0.01, 1e-6)
+    sec.init[j] = min(max(sec.init[j], lo + margin), hi - margin)
+
+
+def _fixed_injection_pu(
+    nodes_arr: np.ndarray, node_ids: list[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """P / Q injection (p.u.) of the node parts that carry no box variable.
+
+    A part without its ``exist_*`` flag is not estimated, so its input value
+    (``generation_*`` / ``load_*``) is a fixed term of the node balance. The
+    active power of reactive-only generation is zero by definition.
+    """
+    rows = {int(r["id"]): r for r in nodes_arr}
+    fixed = np.zeros((2, len(node_ids)), dtype=np.float64)
+    for k, nid in enumerate(node_ids):
+        r = rows[nid]
+        for axis, sfx in ((0, "p"), (1, "q")):
+            value = 0.0
+            if not bool(r["exist_gen"]):
+                value += float(r[f"generation_{sfx}"])
+            if not bool(r["exist_load"]):
+                value -= float(r[f"load_{sfx}"])
+            fixed[axis, k] = value / BASE_MVA
+    return fixed[0], fixed[1]
 
 
 def _boxed_balance_masks(
@@ -326,6 +542,13 @@ def build_ipm_setup(
     prior_sigma2_normal_pu: float = 0.0,
     prior_sigma2_bus_equiv_pu: float = 0.01,
     bus_equiv_width_threshold_pu: float = 100.0,
+    balance_mode: str = "soft",
+    hard_balance_rho_factor: float = 1e3,
+    balance_tol_p_mw: float = 1.0,
+    balance_tol_q_mvar: float = 10.0,
+    fixed_injection_from_input: bool = False,
+    injection_roles: bool = False,
+    measurements: _ArrayCollection | None = None,
 ) -> IPMSetup:
     """Assemble the IPM setup on top of ready WLS data.
 
@@ -377,6 +600,30 @@ def build_ipm_setup(
             BASE_MVA=100 -> 100 p.u. = 10 GW of MW equivalent).
             Default ``100`` p.u. covers large BUS equivalents
             and does not affect ordinary nodes (typical width 5–50 p.u.).
+        balance_mode: ``"soft"`` (default) — the balance rows are
+            pseudo-measurements weighted as above; ``"hard"`` — they are
+            equality constraints the solver enforces with Lagrange multipliers
+            (see :func:`gridstate.algorithms.ipm.solve_ipm` and
+            :func:`gridstate.algorithms.ipm_pd.solve_ipm_pd`). Their R entry is
+            then the solver penalty ``1/ρ``, ``ρ`` = median data weight ×
+            ``hard_balance_rho_factor``: it sets the convergence speed of the
+            multipliers, not the solution; ``balance_sigma2`` and the weight
+            factors do not apply.
+        hard_balance_rho_factor: see ``balance_mode``.
+        balance_tol_p_mw, balance_tol_q_mvar: admissible |imbalance| of a hard
+            P / Q balance row (MW / MVAr).
+        fixed_injection_from_input: the balance row of a node carries the
+            input injection of its parts without a box variable (no
+            ``exist_gen`` / ``exist_load``) as a fixed term instead of zero.
+            ``False`` (default): such parts inject nothing.
+        injection_roles: node injection rows that measure the generation or the
+            load part (``source_code``, see
+            :data:`gridstate.constants.INJECTION_ROLE_SIGN`) measure the box
+            variable of that part directly, with the measurement box as the
+            variable box (see :func:`_plan_injection_roles`). Needs
+            ``measurements``. ``False`` (default): every injection row is a net
+            injection.
+        measurements: the measurement collection ``meas_index`` was built from.
 
     Returns:
         ``IPMSetup`` with the extended layout and augmented z/R/meas_index.
@@ -394,6 +641,30 @@ def build_ipm_setup(
         prior_sigma2_bus_equiv_pu=prior_sigma2_bus_equiv_pu,
         bus_equiv_width_threshold_pu=bus_equiv_width_threshold_pu,
     )
+    role_plan: _RolePlan | None = None
+    if injection_roles:
+        if measurements is None:
+            raise ValueError("injection_roles requires measurements")
+        role_plan = _plan_injection_roles(
+            measurements,
+            meas_index,
+            z,
+            r_matrix.diagonal(),
+            [pgen_sec, qgen_sec, pnag_sec, qnag_sec],
+        )
+        keep = role_plan.keep
+        z = role_plan.z[keep]
+        r_matrix = csr_matrix(
+            (role_plan.sigma2[keep], (np.arange(int(keep.sum())), np.arange(int(keep.sum())))),
+            shape=(int(keep.sum()), int(keep.sum())),
+        )
+        meas_index = MeasurementIndex(
+            kind=meas_index.kind[keep],
+            object_kind=meas_index.object_kind[keep],
+            object_pos=meas_index.object_pos[keep],
+            branch_side=meas_index.branch_side[keep],
+            meas_id=meas_index.meas_id[keep],
+        )
     pgen_node_pos = np.asarray(pgen_sec.pos, dtype=np.int64)
     qgen_node_pos = np.asarray(qgen_sec.pos, dtype=np.int64)
     pnag_node_pos = np.asarray(pnag_sec.pos, dtype=np.int64)
@@ -442,6 +713,9 @@ def build_ipm_setup(
             active_positions.append(active_pos)
             active_ids.append(int(nid))
     n_balance = len(active_positions)
+    if balance_mode not in ("soft", "hard"):
+        raise ValueError(f"balance_mode={balance_mode!r} is not one of ['soft', 'hard']")
+    hard = balance_mode == "hard"
 
     # ---- Prior measurements: z=0, individual σ². Only for box-vars with σ²>0 ----
     pgen_prior_arr = np.asarray(pgen_sec.prior_s2, dtype=np.float64)
@@ -459,11 +733,18 @@ def build_ipm_setup(
         + qnag_prior_mask.sum()
     )
 
+    role_rows = role_plan.rows if role_plan is not None else []
+    n_role = len(role_rows)
     n_old = int(z.shape[0])
-    n_new = n_old + 2 * n_balance + n_prior
+    n_new = n_old + 2 * n_balance + n_prior + n_role
+    role_start = n_new - n_role
 
     z_aug = np.zeros(n_new, dtype=np.float64)
     z_aug[:n_old] = z
+    if fixed_injection_from_input and n_balance > 0:
+        fixed_p, fixed_q = _fixed_injection_pu(nodes_arr, active_ids)
+        z_aug[n_old : n_old + n_balance] = fixed_p
+        z_aug[n_old + n_balance : n_old + 2 * n_balance] = fixed_q
     # Prior rows are anchored to the INIT box-var (materialized load/gen in p.u.),
     # NOT to zero: a BUS equivalent with a fictitious gross pair (10 GW load +
     # 12 GW generation at one node) lost its anchor at z=0: a tight prior
@@ -479,7 +760,9 @@ def build_ipm_setup(
                 np.asarray(qnag_sec.init, dtype=np.float64)[qnag_prior_mask],
             ]
         )
-        z_aug[n_old + 2 * n_balance :] = prior_z
+        z_aug[n_old + 2 * n_balance : role_start] = prior_z
+    if n_role > 0:
+        z_aug[role_start:] = [r[2] for r in role_rows]
 
     # R: extend the diagonal.
     # Adaptive balance_sigma2: take the median (not min) σ² of the data measurements as a
@@ -488,7 +771,9 @@ def build_ipm_setup(
     # overrides the other data by 4 orders of magnitude, so the solver sacrifices
     # data fit for the balance.
     sigma2_old = r_matrix.diagonal()
-    if balance_sigma2 is None:
+    if hard:
+        balance_sigma2_eff = _adaptive_balance_sigma2(sigma2_old, hard_balance_rho_factor)
+    elif balance_sigma2 is None:
         balance_sigma2_eff = _adaptive_balance_sigma2(sigma2_old, balance_weight_factor)
     else:
         balance_sigma2_eff = float(balance_sigma2)
@@ -496,7 +781,7 @@ def build_ipm_setup(
     sigma2_new = np.empty(n_new, dtype=np.float64)
     sigma2_new[:n_old] = sigma2_old
     sigma2_new[n_old : n_old + 2 * n_balance] = balance_sigma2_eff
-    if boxed_balance_weight_factor > 0.0 and n_balance > 0:
+    if boxed_balance_weight_factor > 0.0 and n_balance > 0 and not hard:
         median_sigma2 = _median_measurement_sigma2(sigma2_old)
         if median_sigma2 is not None:
             boxed_s2 = min(median_sigma2 / float(boxed_balance_weight_factor), balance_sigma2_eff)
@@ -514,7 +799,9 @@ def build_ipm_setup(
                 qnag_prior_arr[qnag_prior_mask],
             ]
         )
-        sigma2_new[n_old + 2 * n_balance :] = prior_sigmas
+        sigma2_new[n_old + 2 * n_balance : role_start] = prior_sigmas
+    if n_role > 0:
+        sigma2_new[role_start:] = [r[3] for r in role_rows]
     r_aug = csr_matrix(
         (sigma2_new, (np.arange(n_new), np.arange(n_new))),
         shape=(n_new, n_new),
@@ -555,13 +842,22 @@ def build_ipm_setup(
         obj_pos_blocks.append(np.asarray(prior_pos_list, dtype=meas_index.object_pos.dtype))
         side_blocks.append(np.full(n_prior, SIDE_NONE, dtype=meas_index.branch_side.dtype))
 
+    if n_role > 0:
+        kind_blocks.append(np.asarray([r[0] for r in role_rows], dtype=meas_index.kind.dtype))
+        obj_kind_blocks.append(np.full(n_role, OBJ_NODE, dtype=meas_index.object_kind.dtype))
+        obj_pos_blocks.append(
+            np.asarray([r[1] for r in role_rows], dtype=meas_index.object_pos.dtype)
+        )
+        side_blocks.append(np.full(n_role, SIDE_NONE, dtype=meas_index.branch_side.dtype))
+
     new_kind = np.concatenate(kind_blocks)
     new_object_kind = np.concatenate(obj_kind_blocks)
     new_object_pos = np.concatenate(obj_pos_blocks)
     new_branch_side = np.concatenate(side_blocks)
     # Negative ids for balance + prior (do not collide with real measurement.id).
     pseudo_ids = -(np.arange(2 * n_balance + n_prior, dtype=meas_index.meas_id.dtype) + 1)
-    new_meas_id = np.concatenate([meas_index.meas_id, pseudo_ids])
+    role_ids = np.asarray([r[4] for r in role_rows], dtype=meas_index.meas_id.dtype)
+    new_meas_id = np.concatenate([meas_index.meas_id, pseudo_ids, role_ids])
 
     meas_index_aug = MeasurementIndex(
         kind=new_kind,
@@ -583,4 +879,21 @@ def build_ipm_setup(
         z=z_aug,
         r_matrix=r_aug,
         meas_index=meas_index_aug,
+        balance_start=n_old,
+        n_balance=n_balance,
+        balance_tol=(
+            np.concatenate(
+                [
+                    np.full(n_balance, balance_tol_p_mw / BASE_MVA),
+                    np.full(n_balance, balance_tol_q_mvar / BASE_MVA),
+                ]
+            )
+            if hard
+            else None
+        ),
+        role_rows=np.arange(role_start, n_new, dtype=np.int64),
+        role_meas_ids=role_ids.astype(np.int64),
+        role_dropped_ids=np.asarray(
+            role_plan.dropped_ids if role_plan is not None else [], dtype=np.int64
+        ),
     )

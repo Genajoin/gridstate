@@ -311,7 +311,7 @@ class SEResult:
         objective_wls: plain WLS objective ``Σ (z − h)² / σ²`` of the
             measurement vector at the final state (comparable between WLS
             and IPM).
-        algorithm: name of the algorithm used ("wls" / "ipm").
+        algorithm: name of the algorithm used ("wls" / "ipm" / "ipm_pd").
         v_pu: (n_nodes,) — voltage magnitudes in p.u. (duplicating
             ``model.nodes.voltage_magnitude / voltage_nominal``).
         delta_rad: (n_nodes,) — voltage angles in radians.

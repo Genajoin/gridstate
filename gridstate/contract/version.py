@@ -46,7 +46,9 @@ from dataclasses import dataclass
 #     node, in the from-side base, before the ideal transformer (tap-independent).
 # Data of major 2 fails the compatibility check; it is read only through the
 # explicit legacy path ``load_se_input_npz(path, trusted=True)``.
-CONTRACT_VERSION = "3.0.0"
+# 3.1.0 (MINOR): the optional derived table ``telemetry_bounds``
+#   (``DerivedInputs.telemetry_bounds``).
+CONTRACT_VERSION = "3.1.0"
 
 # Major of the data the explicit legacy path of the ``.npz`` loader still reads
 # (``load_se_input_npz(path, trusted=True)``).
