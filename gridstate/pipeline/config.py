@@ -529,6 +529,18 @@ class PipelineConfig:
         "part has no box variable. release_load_only_injections and "
         "widen_generation_only_injections do not apply. Default OFF.",
     )
+    ipm_hint_iterations: int = _param(
+        100,
+        group=_G_IPM,
+        label="Convergence hints after N iterations",
+        control="number",
+        min=0,
+        max=10000,
+        help="ipm/ipm_pd: log a WARNING with convergence hints (the nodes and "
+        "measurements that held the iteration back) when a solve takes more than "
+        "N iterations. Non-converged solves and ipm_pd fallbacks always get the "
+        "hints; 0 = only those.",
+    )
     ipm_boxed_balance_weight_factor: float = _param(
         0.0,
         group=_G_IPM,

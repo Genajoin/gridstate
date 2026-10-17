@@ -58,6 +58,7 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
         "fixed_injection_from_input": cfg.ipm_fixed_injection_from_input,
         "measurement_bounds": cfg.ipm_measurement_bounds,
         "injection_roles": cfg.ipm_injection_roles,
+        "hint_iterations": cfg.ipm_hint_iterations,
     }
 
 

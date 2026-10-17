@@ -28,6 +28,7 @@ from gridstate.algorithms.status import (
     success_from_status,
 )
 from gridstate.algorithms.wls import solve_wls
+from gridstate.ipm_hints import has_dominant_limiter, ipm_convergence_hints
 from gridstate.post_processing import (
     apply_load_characteristic,
     reconcile_node_balance,
@@ -676,6 +677,7 @@ def _run_ipm(
     measurement_bounds: bool = False,
     injection_roles: bool = False,
     role_estimates: dict[int, float] | None = None,
+    hint_iterations: int = 100,
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM mode: extends the state vector with box-vars and solves the primal log-barrier WLS.
@@ -710,6 +712,10 @@ def _run_ipm(
     variables; ``role_estimates`` (when given) receives the estimate of each
     part row in MW / MVAr by measurement id, ``nan`` for a part row folded into a
     net injection.
+
+    A solve that does not converge, falls back from ``ipm_pd`` or takes more
+    than ``hint_iterations`` iterations (``0`` — no iteration trigger) logs a
+    WARNING with convergence hints (:mod:`gridstate.ipm_hints`).
     """
     if measurement_bounds and solver != "ipm_pd":
         raise ValueError("measurement_bounds requires algorithm='ipm_pd'")
@@ -780,6 +786,7 @@ def _run_ipm(
         return algebra.evaluate_jacobian(v, delta)
 
     eq_idx = setup.balance_rows if setup.balance_tol is not None else None
+    pd_result: IPMResult | None = None
     if solver == "ipm_pd":
         mb_rows = mb_lo = mb_hi = None
         if measurement_bounds and measurements is not None:
@@ -820,6 +827,7 @@ def _run_ipm(
             huber_adaptive_k=2.0,
             kkt_solver=kkt,
         )
+        pd_result = result
         if result.solve_status is not SolveStatus.KKT:
             # Safety net: on a weakly determined direction (e.g. an unmeasured
             # unit with a wide box) the primal-dual iteration can still crawl
@@ -865,6 +873,26 @@ def _run_ipm(
         )
         if solver == "ipm_pd":
             result.message = f"ipm_pd fallback to ipm ({pd_message}): {result.message}"
+
+    slow: IPMResult | None = None
+    if pd_result is not None and pd_result is not result:
+        slow, reason = pd_result, "ipm_pd fell back to the primal IPM"
+    elif not result.success:
+        slow, reason = result, f"not converged ({result.status})"
+    elif 0 < hint_iterations < result.iterations_inner_total and has_dominant_limiter(
+        result, result.iterations_inner_total
+    ):
+        slow, reason = result, f"{result.iterations_inner_total} iterations > {hint_iterations}"
+    if slow is not None:
+        hints = ipm_convergence_hints(
+            setup=setup,
+            network_pu=network_pu,
+            result=slow,
+            residual=residual_fn(result.x),
+            iterations=slow.iterations_inner_total,
+        )
+        if hints:
+            logger.warning("%s convergence hints (%s):\n%s", solver, reason, "\n".join(hints))
 
     # Extract the box-vars and write them into the node table (MW/MVAr = p.u. * BASE_MVA).
     _, _, pgen, qgen, pnag, qnag = unpack_full(result.x, layout_ipm)
