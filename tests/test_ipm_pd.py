@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 from scipy.sparse import csr_matrix
 
 from gridstate.algorithms.ipm import solve_ipm
-from gridstate.algorithms.ipm_pd import solve_ipm_pd
+from gridstate.algorithms.ipm_pd import _Merit, solve_ipm_pd
 from gridstate.algorithms.kkt_solver import KKTSolver, resolve_backend
 from gridstate.algorithms.status import SolveStatus
 
@@ -144,6 +146,89 @@ def test_equality_rows_with_a_box_free_common_level() -> None:
     for out in (pd, primal):
         assert out.eq_inf_final <= 1e-6
         assert out.x[1] - out.x[2] == pytest.approx(0.7, abs=1e-5)
+
+
+def test_pd_merit_search_stops_gauss_newton_overshoot() -> None:
+    # h = atan(x), z = 0 from x0 = 1.5: the Gauss-Newton step −(1 + x²)·atan(x)
+    # overshoots and the full-step iteration diverges; the merit search does not.
+    def residual_fn(x: np.ndarray) -> np.ndarray:
+        return -np.arctan(x)
+
+    def jacobian_fn(x: np.ndarray) -> csr_matrix:
+        return csr_matrix(np.array([[1.0 / (1.0 + x[0] ** 2)]]))
+
+    kw = {"tr_radius": 1e6, "step_tol": 1e-10, "max_iter": 50}
+    no_search = solve_ipm_pd(
+        np.array([1.5]), residual_fn, jacobian_fn, np.ones(1), armijo_max=0, **kw
+    )
+    out = solve_ipm_pd(np.array([1.5]), residual_fn, jacobian_fn, np.ones(1), **kw)
+    assert no_search.solve_status is not SolveStatus.KKT
+    assert out.solve_status is SolveStatus.KKT
+    assert out.x[0] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_pd_merit_slope_matches_finite_difference() -> None:
+    # Nonlinear rows, a variable box, a one-sided measurement box and an
+    # equality row; the slack step is Newton-consistent (Δs = G·Δx + r_s).
+    rng = np.random.default_rng(3)
+    z = np.array([0.3, -0.2, 0.5, 0.1])
+
+    def residual_fn(x: np.ndarray) -> np.ndarray:
+        return z - np.array([np.sin(x[0]) + x[1], x[1] * x[2], np.cos(x[2]), x[0] + x[2]])
+
+    def jacobian(x: np.ndarray) -> np.ndarray:
+        return np.array(
+            [
+                [np.cos(x[0]), 1.0, 0.0],
+                [0.0, x[2], x[1]],
+                [0.0, 0.0, -np.sin(x[2])],
+                [1.0, 0.0, 1.0],
+            ]
+        )
+
+    box_idx, mb_rows, eq_rows = np.array([1]), np.array([2]), np.array([3])
+    lo = np.array([-1.0, -np.inf])
+    hi = np.array([2.0, 0.4])
+    il, iu = np.array([0]), np.array([0, 1])
+    w_data = np.array([2.0, 3.0, 1.5, 0.0])
+
+    def g_of(x: np.ndarray, r: np.ndarray) -> np.ndarray:
+        return np.concatenate([x[box_idx], -r[mb_rows]])
+
+    x = rng.normal(size=3)
+    r = residual_fn(x)
+    g = g_of(x, r)
+    s_l = np.array([0.7])
+    s_u = np.array([0.9, 0.3])
+    r_l = g[il] - lo[il] - s_l
+    r_u = hi[iu] - g[iu] - s_u
+    merit = _Merit(
+        w_data=w_data,
+        lam=np.array([0.4]),
+        rho=np.array([50.0]),
+        eq_rows=eq_rows,
+        mu=0.05,
+        nu=3.0,
+        lo_l=lo[il],
+        hi_u=hi[iu],
+        il=il,
+        iu=iu,
+    )
+    lin = SimpleNamespace(r=r, c=-r[eq_rows], s_l=s_l, s_u=s_u, r_l=r_l, r_u=r_u)
+    dx = rng.normal(size=3)
+    hdx = jacobian(x) @ dx
+    gdx = np.concatenate([dx[box_idx], hdx[mb_rows]])
+    ds_l = gdx[il] + r_l
+    ds_u = -gdx[iu] + r_u
+
+    def phi(a: float) -> float:
+        xa = x + a * dx
+        ra = residual_fn(xa)
+        return merit.value(ra, g_of(xa, ra), s_l + a * ds_l, s_u + a * ds_u)
+
+    eps = 1e-7
+    fd = (phi(eps) - phi(0.0)) / eps
+    assert merit.slope(lin, hdx, ds_l, ds_u) == pytest.approx(fd, rel=1e-4, abs=1e-6)  # type: ignore[arg-type]
 
 
 def test_pd_rejects_inconsistent_inputs() -> None:
