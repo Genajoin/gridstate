@@ -2,7 +2,7 @@
  "format": 1,
  "environment": {
   "gridstate": "2.2.0.dev1",
-  "git_sha": "ef79dd7f7f92da401ece63a3d3db92869f6962dd",
+  "git_sha": "bd15b1695b11e3a9eed6d6e5a238d6d440d62fba",
   "git_dirty": true,
   "python": "3.12.3",
   "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.39",
@@ -19,7 +19,7 @@
    "description": "library defaults (WLS)",
    "config": {
     "normalize_breakers": true,
-    "breaker_x_pu": 0.0001,
+    "breaker_x_pu": null,
     "apply_voltage_nominal": false,
     "apply_topology": true,
     "apply_rpn": true,
@@ -103,7 +103,7 @@
    "description": "IPM, all post-solve passes, merged refine re-solve",
    "config": {
     "normalize_breakers": true,
-    "breaker_x_pu": 0.0001,
+    "breaker_x_pu": null,
     "apply_voltage_nominal": false,
     "apply_topology": true,
     "apply_rpn": true,
@@ -187,7 +187,7 @@
    "description": "ipm_full with one re-solve per refine pass (refine_merge=False)",
    "config": {
     "normalize_breakers": true,
-    "breaker_x_pu": 0.0001,
+    "breaker_x_pu": null,
     "apply_voltage_nominal": false,
     "apply_topology": true,
     "apply_rpn": true,
@@ -271,7 +271,7 @@
    "description": "ipm_full plus anti-overshoot; ceiling lowered to 1.04 so that IEEE operating points cross it",
    "config": {
     "normalize_breakers": true,
-    "breaker_x_pu": 0.0001,
+    "breaker_x_pu": null,
     "apply_voltage_nominal": false,
     "apply_topology": true,
     "apply_rpn": true,
@@ -355,7 +355,7 @@
    "description": "ipm_full plus shunt sanity trial runs",
    "config": {
     "normalize_breakers": true,
-    "breaker_x_pu": 0.0001,
+    "breaker_x_pu": null,
     "apply_voltage_nominal": false,
     "apply_topology": true,
     "apply_rpn": true,
@@ -439,7 +439,7 @@
    "description": "ipm_full warm-started from a default (WLS) solve of the same input",
    "config": {
     "normalize_breakers": true,
-    "breaker_x_pu": 0.0001,
+    "breaker_x_pu": null,
     "apply_voltage_nominal": false,
     "apply_topology": true,
     "apply_rpn": true,
@@ -520,7 +520,7 @@
    },
    "warm_start_from": {
     "normalize_breakers": true,
-    "breaker_x_pu": 0.0001,
+    "breaker_x_pu": null,
     "apply_voltage_nominal": false,
     "apply_topology": true,
     "apply_rpn": true,
