@@ -48,6 +48,7 @@ from gridstate.quality_summary import (
     top_worst_residuals,
 )
 from gridstate.result import MeasurementNormalizedResiduals, SEResult, extract_output_tables
+from gridstate.solution_hints import low_voltage_hints, low_voltage_nodes, residual_hints
 from gridstate.state import (
     InitialPoint,
     StateLayout,
@@ -100,6 +101,7 @@ def estimate(
     quality_summary_rn_refine_below: float = SELINV_REFINE_BELOW,
     quality_summary_near_critical: float = NEAR_CRITICAL_THRESHOLD,
     success_policy: SuccessPolicy = "legacy",
+    implausible_v_ratio: float = 0.3,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Run state estimation for a model and telemetry.
@@ -181,6 +183,13 @@ def estimate(
             :func:`gridstate.algorithms.status.success_from_status`
             (``kkt`` or ``mu_schedule_done`` only). ``solve_status`` and
             ``objective_wls`` are reported under both policies.
+        implausible_v_ratio: a solved state with ``V/Vnom`` below it at any
+            node is not a usable estimate whatever the solver reports (e.g. the
+            low-voltage root at a node whose V is barely observable):
+            ``success`` becomes ``False``, the message names the nodes and a
+            WARNING lists hints (:mod:`gridstate.solution_hints`). ``0``
+            disables the check. A WLS solve that does not converge logs its
+            largest normalized residuals.
         **ipm_kwargs: IPM-mode knobs, ignored for WLS. ``trust_region_scope``
             (``"state"`` default | ``"all"``) selects the coordinates the IPM
             trust region is measured on (see ``_run_ipm``); everything else is
@@ -310,6 +319,30 @@ def estimate(
     )
     if success_policy == "status" and not success:
         message = f"solve status {solve_status.value}: {message}"
+    low_v = low_voltage_nodes(v_pu, implausible_v_ratio)
+    if low_v.size:
+        ids = network_pu.bus_ids[low_v][:5].tolist()
+        more = ", ..." if low_v.size > 5 else ""
+        note = (
+            f"implausible solution: V/Vnom < {implausible_v_ratio:g} at "
+            f"{low_v.size} node(s) {ids}{more}"
+        )
+        success = False
+        message = f"{note}; {message}" if message else note
+        hints = low_voltage_hints(
+            low_v, v_pu=v_pu, network_pu=network_pu, meas_index=meas_index, z=z
+        )
+        logger.warning("%s %s:\n%s", algorithm, note, "\n".join(hints))
+    elif not success and algorithm == "wls" and z.shape[0]:
+        algebra = BaseAlgebra(ybus, yf, yt, meas_index, layout, network_pu)
+        hints = residual_hints(
+            z - algebra.evaluate_h(v_pu, delta),
+            np.sqrt(floored_sigma2(r_matrix.diagonal())),
+            meas_index=meas_index,
+            network_pu=network_pu,
+        )
+        if hints:
+            logger.warning("wls did not converge (%s):\n%s", message, "\n".join(hints))
     write_results_to_model(model, v_pu, delta, network_pu, yf=yf, yt=yt, ybus=ybus)
     # 7. Post-processing of measurements: estimated_si/value/residual.
     write_measurement_estimates(

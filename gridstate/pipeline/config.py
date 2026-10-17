@@ -94,6 +94,19 @@ class PipelineConfig:
         label="Нормализация X короткозамыкателей",
         help="volt-aware X_pu для R=X=0 ветвей (убирает β-выбросы dV_max на LV).",
     )
+    breaker_x_pu: float | None = _param(
+        None,
+        group=_G_INPUT,
+        label="Breaker X, p.u.",
+        control="number",
+        min=1e-6,
+        max=1e-1,
+        depends={"normalize_breakers": True},
+        help="X of a breaker branch given by the input format's marker (R=0, X=1 Ohm). "
+        "Unset (default): X = 110·min_x·Vnom Ohm with min_x = 4e-6 (≈0.044/Vnom p.u.: "
+        "8.8e-5 at 500 kV, 4e-4 at 110 kV). A number: that X in p.u. on any voltage "
+        "class. Breaker branches with any other X are taken from the model as they are.",
+    )
     apply_voltage_nominal: bool = _toggle(
         False,
         group=_G_INPUT,
@@ -371,6 +384,17 @@ class PipelineConfig:
         min=1,
         max=500,
         help="default региональной модели 80.",
+    )
+    implausible_v_ratio: float = _param(
+        0.3,
+        group=_G_EST,
+        label="Implausible V/Vnom",
+        control="number",
+        min=0.0,
+        max=0.9,
+        help="A solved state with V/Vnom below this at any node is marked not converged "
+        "and logged with hints (e.g. the low-voltage root at a node whose V is barely "
+        "observable). 0 disables the check.",
     )
     kkt_solver: str = _param(
         "auto",

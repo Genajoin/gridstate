@@ -29,7 +29,7 @@
     "name": "normalize_breakers",
     "stats": {
      "normalized": 0,
-     "eps_pu": 0.001
+     "eps_pu": null
     }
    },
    {
@@ -346,7 +346,7 @@
     "name": "normalize_breakers",
     "stats": {
      "normalized": 0,
-     "eps_pu": 0.001
+     "eps_pu": null
     }
    },
    {
@@ -700,7 +700,7 @@
     "name": "normalize_breakers",
     "stats": {
      "normalized": 0,
-     "eps_pu": 0.001
+     "eps_pu": null
     }
    },
    {
@@ -1047,7 +1047,7 @@
     "name": "normalize_breakers",
     "stats": {
      "normalized": 0,
-     "eps_pu": 0.001
+     "eps_pu": null
     }
    },
    {
@@ -1411,7 +1411,7 @@
     "name": "normalize_breakers",
     "stats": {
      "normalized": 0,
-     "eps_pu": 0.001
+     "eps_pu": null
     }
    },
    {
@@ -1778,7 +1778,7 @@
     "name": "normalize_breakers",
     "stats": {
      "normalized": 0,
-     "eps_pu": 0.001
+     "eps_pu": null
     }
    },
    {

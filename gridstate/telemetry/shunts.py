@@ -25,6 +25,10 @@ if TYPE_CHECKING:
 # node's voltage class. The constant must match the input format's sentinel X;
 # the name is public: the data producer checks its convention with a cross-test.
 BREAKER_X_SENTINEL_OHM = 1.0
+#: Breaker reactance rule ``X = BREAKER_X_OHM_PER_KV·BREAKER_MIN_X·Vn`` Ohm (when no
+#: explicit p.u. value is given): ≈0.044/Vn p.u.
+BREAKER_X_OHM_PER_KV = 110.0
+BREAKER_MIN_X = 4e-6
 
 
 def apply_reactors_to_node_shunt(model: Working) -> dict[str, int | float]:
@@ -86,8 +90,10 @@ def _aggregate_shunts_on_arrays(nodes_arr: Any, shunts_arr: Any) -> dict[str, in
     return {"applied": applied, "sum_b_added_S": sum_b, "sum_g_added_S": sum_g}
 
 
-def normalize_breaker_reactance(model: Working, *, eps_pu: float = 1e-3) -> dict[str, int | float]:
-    """Bring the X of "breaker" branches to a volt-aware value ``X_pu=eps_pu``.
+def normalize_breaker_reactance(
+    model: Working, *, eps_pu: float | None = None
+) -> dict[str, int | float | None]:
+    """Replace the X of "breaker" branches marked by the input format with a volt-aware value.
 
     The input format replaces branches with ``R=X=0`` (bus sections, breakers,
     block ties) by ``R=0, X=1.0 Ohm`` -- FIXED in Ohms, regardless of the voltage
@@ -98,10 +104,14 @@ def normalize_breaker_reactance(model: Working, *, eps_pu: float = 1e-3) -> dict
     β outliers of ``dV_max`` occur precisely on the 6-16 kV LV classes (generator
     block buses after ``aggregate_generators_to_node``).
 
-    The fix (``x=1e-3 p.u.``, NOT ``1.0 Ohm``):
-    for each such branch ``X = eps_pu·(Vn²/S_base)`` -> ``X_pu=eps_pu`` on any
-    class. ``Vn`` is taken from the ``from`` node (or ``to``). ``R=0`` is kept.
-    Branches without a defined ``Vn>0`` are left untouched.
+    The fix: by default ``X = 110·min_x·Vn`` Ohm with ``min_x = 4e-6``
+    (:data:`BREAKER_X_OHM_PER_KV`, :data:`BREAKER_MIN_X`), i.e. ``X_pu ≈ 0.044/Vn``
+    (8.8e-5 at 500 kV, 4e-4 at 110 kV, 7.3e-3 at 6 kV) — the same rule the data
+    producers use for breakers they build themselves. With an explicit
+    ``eps_pu``: ``X = eps_pu·(Vn²/S_base)`` -> ``X_pu=eps_pu`` on any class.
+    ``Vn`` is taken from the ``from`` node (or ``to``). ``R=0`` is kept.
+    Branches without a defined ``Vn>0`` are left untouched; breaker branches
+    with any other X are not touched either.
 
     Apply **right after** the model is loaded, before telemetry is applied.
     Reduces false rejection of V measurements on LV classes; on models without
@@ -109,7 +119,7 @@ def normalize_breaker_reactance(model: Working, *, eps_pu: float = 1e-3) -> dict
 
     Args:
         model: the working model (Working).
-        eps_pu: target ``X_pu`` (default ``1e-3``).
+        eps_pu: target ``X_pu``; ``None`` (default) — the ``110·min_x·Vn`` rule.
 
     Returns:
         ``{"normalized": N, "eps_pu": eps_pu}``.
@@ -127,7 +137,7 @@ def normalize_breaker_reactance(model: Working, *, eps_pu: float = 1e-3) -> dict
 
 
 def _normalize_breaker_reactance_on_arrays(
-    branches_arr: Any, nodes_arr: Any, *, eps_pu: float = 1e-3
+    branches_arr: Any, nodes_arr: Any, *, eps_pu: float | None = None
 ) -> int:
     """Bring the X of sentinel branches (R=0, X=1.0 Ohm) to ``X_pu=eps_pu`` (mutates ``branches_arr``).
 
@@ -145,9 +155,9 @@ def _normalize_breaker_reactance_on_arrays(
         # Loader sentinel: R exactly 0 and X exactly 1.0 Ohm. Real branches
         # always have R>0, so a match uniquely identifies the substituted
         # "breaker" branch.
-        # Idempotence: after normalization X = eps_pu·(Vn²/S_base) ≠ 1.0
-        # on all classes EXCEPT the coincidence Vn²=S_base/eps_pu (with the
-        # default 1e-3 and S_base=100 that is Vn≈316 kV -- not a real class).
+        # Idempotence: after normalization X ≠ 1.0 Ohm on all classes EXCEPT a
+        # coincidence (the default rule gives 1.0 Ohm at Vn ≈ 2273 kV, an
+        # explicit eps_pu at Vn² = S_base/eps_pu) -- not a real class.
         # Even at that point a repeated match recomputes X to the same value
         # (value-idempotent), only inflating the "normalized" counter.
         if abs(r) > 1e-12 or abs(x - BREAKER_X_SENTINEL_OHM) > 1e-9:
@@ -157,7 +167,10 @@ def _normalize_breaker_reactance_on_arrays(
             vn = vn_by_id.get(int(branches_arr[i]["to_node"]), 0.0)
         if vn <= 0.0:
             continue
-        branches_arr[i]["reactance"] = eps_pu * (vn * vn / BASE_MVA)
+        if eps_pu is None:
+            branches_arr[i]["reactance"] = BREAKER_X_OHM_PER_KV * BREAKER_MIN_X * vn
+        else:
+            branches_arr[i]["reactance"] = eps_pu * (vn * vn / BASE_MVA)
         n += 1
 
     return n

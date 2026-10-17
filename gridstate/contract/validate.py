@@ -18,6 +18,7 @@ from typing import Any
 
 from gridstate.contract.tables import SE_INPUT, Role, SEInputSchema
 from gridstate.contract.version import CONTRACT_VERSION_KEY, check_compatibility
+from gridstate.load_characteristics import segment_problems
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ class ValidationIssue:
     """A single input validation problem."""
 
     table: str
-    kind: str  # "missing_column" | "missing_table" | "version_incompatible"
+    kind: str  # "missing_column" | "missing_table" | "version_incompatible" | "invalid_rows"
     detail: str
     column: str | None = None
 
@@ -73,6 +74,20 @@ def _available_columns(source: Any, table_name: str) -> set[str] | None:
         return None
     names = collection.to_numpy().dtype.names
     return set(names or ())
+
+
+#: Input tables a source may omit (added in a minor contract version).
+_OPTIONAL_TABLES = frozenset({"load_characteristic_segments"})
+
+
+def _table_array(source: Any, table_name: str) -> Any:
+    """The structured array of table ``table_name`` (``None`` if absent)."""
+    if isinstance(source, Mapping):
+        return source.get(table_name)
+    collection = getattr(source, table_name, None)
+    if collection is None or not hasattr(collection, "to_numpy"):
+        return None
+    return collection.to_numpy()
 
 
 def _data_version(source: Any, explicit: str | None) -> str | None:
@@ -128,6 +143,8 @@ def validate_input(
     for table in schema.tables():
         available = _available_columns(source, table.name)
         if available is None:
+            if table.name in _OPTIONAL_TABLES:
+                continue
             report.add(
                 ValidationIssue(table.name, "missing_table", "table is missing from the input")
             )
@@ -142,6 +159,13 @@ def validate_input(
                         col,
                     )
                 )
+
+    # --- row-level rules of the piecewise load characteristics ---
+    segments = _table_array(source, "load_characteristic_segments")
+    if segments is not None and len(segments) > 0:
+        lc = _table_array(source, "load_characteristics")
+        for problem in segment_problems(segments, 0 if lc is None else len(lc)):
+            report.add(ValidationIssue("load_characteristic_segments", "invalid_rows", problem))
 
     if strict:
         report.raise_if_invalid()

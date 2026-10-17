@@ -84,6 +84,7 @@ def _estimate_kwargs(cfg: PipelineConfig, *, init: str, **overrides: Any) -> dic
         "reconcile_balance": cfg.reconcile_balance,
         "reconcile_respect_bounds": cfg.reconcile_respect_bounds,
         "success_policy": cfg.success_policy,
+        "implausible_v_ratio": cfg.implausible_v_ratio,
     }
     kw.update(overrides)
     if cfg.algorithm in ("ipm", "ipm_pd"):

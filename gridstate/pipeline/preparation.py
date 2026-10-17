@@ -46,7 +46,7 @@ from gridstate.topology import (
 
 
 def _s_normalize_breakers(ctx: _Ctx) -> dict:
-    return dict(normalize_breaker_reactance(ctx.model) or {})
+    return dict(normalize_breaker_reactance(ctx.model, eps_pu=ctx.cfg.breaker_x_pu) or {})
 
 
 def _s_voltage_nominal(ctx: _Ctx) -> dict:

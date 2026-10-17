@@ -97,6 +97,19 @@ def test_normalize_breaker_reactance_synthetic():
     assert float(by_id[200]["resistance"]) == 0.0
 
 
+def test_normalize_breaker_reactance_default_rule():
+    """Without eps_pu: X = 110·min_x·Vn Ohm (min_x = 4e-6), i.e. X_pu ≈ 0.044/Vn."""
+    m = _toy_model_with_breakers()
+    stats = normalize_breaker_reactance(m)
+    assert stats["normalized"] == 3
+    assert stats["eps_pu"] is None
+    by_id = {int(b["id"]): b for b in m.branches.to_numpy()}
+    assert float(by_id[100]["reactance"]) == pytest.approx(110.0 * 4e-6 * 10.5)
+    x200 = float(by_id[200]["reactance"])
+    assert x200 == pytest.approx(110.0 * 4e-6 * 500.0)
+    assert x200 / (500.0**2 / BASE_MVA) == pytest.approx(8.8e-5)
+
+
 def test_normalize_breaker_reactance_idempotent():
     """A repeated call is a no-op (after normalisation X≠1.0 Ohm, so the sentinel no longer matches)."""
     m = _toy_model_with_breakers()
