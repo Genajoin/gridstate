@@ -175,3 +175,28 @@ def test_config_defaults_and_ranges():
     dataclasses.replace(cfg, ipm_balance_weight_factor=1e3)
     with pytest.raises(ValueError, match="ipm_balance_mode"):
         dataclasses.replace(cfg, ipm_balance_mode="strict")
+
+
+def test_huber_threshold_modes(monkeypatch):
+    import gridstate.api as api
+    from gridstate.pipeline import PipelineConfig
+
+    assert PipelineConfig().ipm_huber_threshold == "fixed"
+    with pytest.raises(ValueError, match="ipm_huber_threshold"):
+        PipelineConfig(algorithm="ipm_pd", ipm_huber_threshold="frozen")
+    seen = []
+    real = api.solve_ipm_pd
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs["huber_adaptive_k"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(api, "solve_ipm_pd", spy)
+    for mode in ("fixed", "adaptive"):
+        api.estimate(
+            _build_net_with_transit(),
+            algorithm="ipm_pd",
+            include_quality_summary=False,
+            huber_threshold=mode,
+        )
+    assert seen == [0.0, 2.0]
