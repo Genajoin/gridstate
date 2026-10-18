@@ -219,7 +219,7 @@ def ipm_convergence_hints(
             meas_index=setup.meas_index,
             network_pu=network_pu,
             # Equality rows: their σ is a penalty, not a measurement error.
-            skip=setup.balance_rows if setup.balance_tol is not None else None,
+            skip=setup.eq_rows,
             part_rows=setup.role_rows,
             top=top,
         )

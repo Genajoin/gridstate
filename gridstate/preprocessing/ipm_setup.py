@@ -282,6 +282,11 @@ class IPMSetup:
     # ``balance_tol`` holds the admissible |imbalance| per balance row in p.u.
     # ``None`` in the soft mode.
     balance_tol: np.ndarray | None = None
+    # Rows the solver enforces as equalities and their admissible |c| (p.u.):
+    # every balance row in the hard mode, the transit balance rows with
+    # ``transit_balance_mode="hard"``; ``None`` — no equality rows.
+    eq_rows: np.ndarray | None = None
+    eq_tol: np.ndarray | None = None
     # ``injection_roles``: rows of ``z`` that measure a box variable directly
     # (a generation / load part of a node injection) and their measurement ids;
     # ``role_dropped_ids`` — part rows folded back into a net injection row.
@@ -556,6 +561,9 @@ def build_ipm_setup(
     hard_balance_rho_factor: float = 1e3,
     balance_tol_p_mw: float = 1.0,
     balance_tol_q_mvar: float = 10.0,
+    transit_balance_mode: str = "soft",
+    transit_balance_tol_p_mw: float = 0.01,
+    transit_balance_tol_q_mvar: float = 0.1,
     fixed_injection_from_input: bool = False,
     injection_roles: bool = False,
     measurements: _ArrayCollection | None = None,
@@ -628,6 +636,14 @@ def build_ipm_setup(
         hard_balance_rho_factor: see ``balance_mode``.
         balance_tol_p_mw, balance_tol_q_mvar: admissible |imbalance| of a hard
             P / Q balance row (MW / MVAr).
+        transit_balance_mode: ``"soft"`` (default) — the balance rows of transit
+            nodes (no ``exist_gen`` / ``exist_load``) are weighted like the
+            others (see ``transit_balance_weight_factor``); ``"hard"`` — they are
+            equality constraints with the penalty of ``balance_mode="hard"``,
+            the other balance rows stay soft. Ignored when ``balance_mode`` is
+            already ``"hard"``.
+        transit_balance_tol_p_mw, transit_balance_tol_q_mvar: admissible
+            |injection| of a transit node in the hard transit mode (MW / MVAr).
         fixed_injection_from_input: the balance row of a node carries the
             input injection of its parts without a box variable (no
             ``exist_gen`` / ``exist_load``) as a fixed term instead of zero.
@@ -732,6 +748,11 @@ def build_ipm_setup(
     if balance_mode not in ("soft", "hard"):
         raise ValueError(f"balance_mode={balance_mode!r} is not one of ['soft', 'hard']")
     hard = balance_mode == "hard"
+    if transit_balance_mode not in ("soft", "hard"):
+        raise ValueError(
+            f"transit_balance_mode={transit_balance_mode!r} is not one of ['soft', 'hard']"
+        )
+    transit_hard = transit_balance_mode == "hard" and not hard and n_balance > 0
 
     # ---- Prior measurements: z=0, individual σ². Only for box-vars with σ²>0 ----
     pgen_prior_arr = np.asarray(pgen_sec.prior_s2, dtype=np.float64)
@@ -816,6 +837,12 @@ def build_ipm_setup(
             for start in (n_old, n_old + n_balance):
                 rows = sigma2_new[start : start + n_balance]
                 rows[transit] = np.minimum(rows[transit], transit_s2)
+    transit_eq = np.zeros(0, dtype=np.int64)
+    if transit_hard:
+        transit = _transit_mask(nodes_arr, active_ids)
+        pos = np.flatnonzero(transit)
+        transit_eq = np.concatenate([n_old + pos, n_old + n_balance + pos]).astype(np.int64)
+        sigma2_new[transit_eq] = _adaptive_balance_sigma2(sigma2_old, hard_balance_rho_factor)
     if n_prior > 0:
         prior_sigmas = np.concatenate(
             [
@@ -893,6 +920,31 @@ def build_ipm_setup(
         meas_id=new_meas_id,
     )
 
+    balance_tol = (
+        np.concatenate(
+            [
+                np.full(n_balance, balance_tol_p_mw / BASE_MVA),
+                np.full(n_balance, balance_tol_q_mvar / BASE_MVA),
+            ]
+        )
+        if hard
+        else None
+    )
+    eq_rows: np.ndarray | None = None
+    eq_tol: np.ndarray | None = None
+    if hard:
+        eq_rows = np.arange(n_old, n_old + 2 * n_balance, dtype=np.int64)
+        eq_tol = balance_tol
+    elif transit_eq.size:
+        n_t = transit_eq.size // 2
+        eq_rows = transit_eq
+        eq_tol = np.concatenate(
+            [
+                np.full(n_t, transit_balance_tol_p_mw / BASE_MVA),
+                np.full(n_t, transit_balance_tol_q_mvar / BASE_MVA),
+            ]
+        )
+
     return IPMSetup(
         layout=layout,
         box_idx_in_state=box_idx_arr,
@@ -907,16 +959,9 @@ def build_ipm_setup(
         meas_index=meas_index_aug,
         balance_start=n_old,
         n_balance=n_balance,
-        balance_tol=(
-            np.concatenate(
-                [
-                    np.full(n_balance, balance_tol_p_mw / BASE_MVA),
-                    np.full(n_balance, balance_tol_q_mvar / BASE_MVA),
-                ]
-            )
-            if hard
-            else None
-        ),
+        balance_tol=balance_tol,
+        eq_rows=eq_rows,
+        eq_tol=eq_tol,
         role_rows=np.arange(role_start, n_new, dtype=np.int64),
         role_meas_ids=role_ids.astype(np.int64),
         role_dropped_ids=np.asarray(
