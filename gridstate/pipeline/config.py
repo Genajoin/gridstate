@@ -396,6 +396,17 @@ class PipelineConfig:
         "and logged with hints (e.g. the low-voltage root at a node whose V is barely "
         "observable). 0 disables the check.",
     )
+    transit_injection_warn_mva: float = _param(
+        5.0,
+        group=_G_EST,
+        label="Transit injection warning, MVA",
+        control="number",
+        min=0.0,
+        max=1e4,
+        help="After the run, transit nodes (no exist_gen/exist_load) whose solved "
+        "injection exceeds this are listed in a WARNING: a data conflict or an "
+        "undescribed generation, load or shunt. 0 disables the warning.",
+    )
     kkt_solver: str = _param(
         "auto",
         group=_G_EST,
@@ -586,6 +597,18 @@ class PipelineConfig:
         help="Nodes whose injection range is fully set by their generation/load boxes get a "
         "balance row with variance median(σ²_data) / factor. The box carries the node's "
         "freedom; a loose balance only hides data conflicts as an imbalance. 0 — off.",
+    )
+    ipm_transit_balance_weight_factor: float = _param(
+        0.0,
+        group=_G_IPM,
+        label="Balance weight of transit nodes",
+        control="number",
+        min=0.0,
+        max=1e6,
+        depends={"algorithm": "ipm"},
+        help="Transit nodes (no exist_gen/exist_load) get a balance row with variance "
+        "median(σ²_data) / factor. Their injection is known to be zero; a loose balance "
+        "turns data conflicts into a fictitious injection. 0 — off.",
     )
     ipm_prior_sigma2_bus_equiv_pu: float = _param(
         0.01,

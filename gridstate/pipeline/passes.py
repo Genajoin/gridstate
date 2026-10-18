@@ -51,6 +51,7 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
         "balance_weight_factor": cfg.ipm_balance_weight_factor,
         "prior_sigma2_bus_equiv_pu": cfg.ipm_prior_sigma2_bus_equiv_pu,
         "boxed_balance_weight_factor": cfg.ipm_boxed_balance_weight_factor,
+        "transit_balance_weight_factor": cfg.ipm_transit_balance_weight_factor,
         "trust_region_scope": cfg.ipm_trust_region_scope,
         "balance_mode": cfg.ipm_balance_mode,
         "balance_tol_p_mw": cfg.ipm_balance_tol_p_mw,

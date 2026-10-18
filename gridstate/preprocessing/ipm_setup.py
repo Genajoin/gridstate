@@ -511,6 +511,15 @@ def _boxed_balance_masks(
     return boxed[0], boxed[1]
 
 
+def _transit_mask(nodes_arr: np.ndarray, node_ids: list[int]) -> np.ndarray:
+    """Mask over ``node_ids``: transit nodes (neither ``exist_gen`` nor ``exist_load``)."""
+    rows = {int(r["id"]): r for r in nodes_arr}
+    return np.array(
+        [not (bool(rows[nid]["exist_gen"]) or bool(rows[nid]["exist_load"])) for nid in node_ids],
+        dtype=bool,
+    )
+
+
 def _median_measurement_sigma2(sigma2: np.ndarray) -> float | None:
     """Median variance (p.u.²) of the data rows; ``None`` when there are none."""
     positive = sigma2[sigma2 > 1e-15]
@@ -538,6 +547,7 @@ def build_ipm_setup(
     balance_sigma2: float | None = None,
     balance_weight_factor: float = 0.1,
     boxed_balance_weight_factor: float = 0.0,
+    transit_balance_weight_factor: float = 0.0,
     default_box_halfwidth_pu: float = 50.0,
     prior_sigma2_normal_pu: float = 0.0,
     prior_sigma2_bus_equiv_pu: float = 0.01,
@@ -576,6 +586,12 @@ def build_ipm_setup(
             ``median(σ²_data) / boxed_balance_weight_factor`` (never looser than
             the soft one): the box already carries the node's freedom, so a
             loose balance only hides data conflicts as an imbalance. ``0`` — off.
+        transit_balance_weight_factor: balance weight for transit nodes (no
+            ``exist_gen`` / ``exist_load``): their injection is known to be
+            zero, so a loose balance turns data conflicts into a fictitious
+            injection. Their variance is ``median(σ²_data) /
+            transit_balance_weight_factor`` (never looser than the soft one).
+            ``0`` — off.
         default_box_halfwidth_pu: half-width (p.u.) of the default box
             ``[-hw, +hw]`` for an exist_* node with unset bounds.
             Default 50 p.u. (±5 GW/GVAr), deliberately wider than any
@@ -790,6 +806,16 @@ def build_ipm_setup(
             q_rows = sigma2_new[n_old + n_balance : n_old + 2 * n_balance]
             p_rows[boxed_p] = np.minimum(p_rows[boxed_p], boxed_s2)
             q_rows[boxed_q] = np.minimum(q_rows[boxed_q], boxed_s2)
+    if transit_balance_weight_factor > 0.0 and n_balance > 0 and not hard:
+        median_sigma2 = _median_measurement_sigma2(sigma2_old)
+        if median_sigma2 is not None:
+            transit_s2 = min(
+                median_sigma2 / float(transit_balance_weight_factor), balance_sigma2_eff
+            )
+            transit = _transit_mask(nodes_arr, active_ids)
+            for start in (n_old, n_old + n_balance):
+                rows = sigma2_new[start : start + n_balance]
+                rows[transit] = np.minimum(rows[transit], transit_s2)
     if n_prior > 0:
         prior_sigmas = np.concatenate(
             [

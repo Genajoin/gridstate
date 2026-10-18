@@ -6,7 +6,9 @@ wrong. A typical case is a node whose voltage magnitude is barely observable
 problem then has a second, low-voltage root, and a change of the solver path
 can land on it while the solver reports success. :func:`low_voltage_nodes`
 finds such nodes; :func:`low_voltage_hints` and :func:`residual_hints` turn
-the solved state into readable lines for the log.
+the solved state into readable lines for the log. :func:`transit_injection_hints`
+lists transit nodes left with an injection, which points at a data conflict or
+at a node whose generation, load or shunt is not described in the model.
 """
 
 from __future__ import annotations
@@ -162,10 +164,47 @@ def residual_hints(
     return lines
 
 
+def transit_injection_hints(nodes: np.ndarray, threshold_mva: float, *, top: int = 10) -> list[str]:
+    """Transit nodes with a solved injection above ``threshold_mva``, largest first.
+
+    A transit node (active, neither ``exist_gen`` nor ``exist_load``) injects
+    nothing, so ``|p_inj_calc + j·q_inj_calc|`` there is what the estimate
+    could not fit elsewhere. ``nodes`` is a solved node table; empty when no
+    node exceeds the threshold or ``threshold_mva <= 0``.
+    """
+    if threshold_mva <= 0.0 or not len(nodes):
+        return []
+    transit = (
+        nodes["status"].astype(bool)
+        & ~nodes["exist_gen"].astype(bool)
+        & ~nodes["exist_load"].astype(bool)
+    )
+    s_mva = np.hypot(nodes["p_inj_calc"], nodes["q_inj_calc"])
+    hit = np.flatnonzero(transit & np.isfinite(s_mva) & (s_mva > threshold_mva))
+    if not hit.size:
+        return []
+    order = hit[np.argsort(-s_mva[hit])]
+    lines = [
+        f"{hit.size} transit node(s) (no exist_gen/exist_load) inject more than "
+        f"{threshold_mva:g} MVA; a data conflict or an undescribed generation, load or "
+        "shunt at the node:"
+    ]
+    for k in order[:top].tolist():
+        lines.append(
+            f"  node {int(nodes['id'][k])} ({float(nodes['voltage_nominal'][k]):g} kV): "
+            f"P = {float(nodes['p_inj_calc'][k]):.1f} MW, "
+            f"Q = {float(nodes['q_inj_calc'][k]):.1f} MVAr"
+        )
+    if hit.size > top:
+        lines.append(f"  ... and {hit.size - top} more")
+    return lines
+
+
 __all__ = [
     "KIND_NAMES",
     "describe_row",
     "low_voltage_hints",
     "low_voltage_nodes",
     "residual_hints",
+    "transit_injection_hints",
 ]
