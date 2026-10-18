@@ -50,6 +50,19 @@ corrector's second-order term may spoil descent, and then the centering
 direction is taken instead (one more solve on the same factor). The dual step
 keeps its own fraction-to-boundary length.
 
+Adaptive box regularisation. A box variable seen only through rows of
+negligible weight (a load whose injection row is a near-zero-weight pseudo
+measurement) or through a combination the data do not resolve (a reactive flow
+circulating between two such loads) has no curvature but the barrier's, and
+the Newton step along it is orders of magnitude longer than the box. The
+fraction-to-boundary rule then cuts every step to ``αp ≪ 1``, the
+complementarity stops decreasing and the iteration crawls to its limit. The
+proximal term on the box diagonal is therefore raised tenfold after every
+step shorter than 0.1 (up to ``box_prox_max``) and lowered tenfold after
+every step of 0.5 or longer (down to ``box_prox``). The term damps the step
+only, so the fixed point is unchanged; a well-scaled problem takes long steps
+and keeps the base term.
+
 Start on the central path: ``s`` = half-range of a two-sided constraint (the
 distance for a one-sided one), ``y = μ0/s``; the initial point need not satisfy
 ``g − l = s``.
@@ -94,6 +107,14 @@ def _blocking_constraint(
     if ku < 0 or (kl >= 0 and rl[kl] <= ru[ku]):
         return kl, True
     return ku, False
+
+
+# Adaptive box regularisation (see the module docstring): a primal step shorter
+# than _PROX_SHORT raises the term by _PROX_GROW, one of _PROX_LONG or longer
+# lowers it by the same factor.
+_PROX_SHORT = 0.1
+_PROX_LONG = 0.5
+_PROX_GROW = 10.0
 
 
 Direction = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
@@ -212,6 +233,7 @@ def solve_ipm_pd(
     armijo_max: int = 10,
     max_search_failures: int = 20,
     step_tol: float = 1e-4,
+    fit_tol: float = 1e-2,
     feas_tol: float = 1e-6,
     max_iter: int = 100,
     box_eps: float = 1e-3,
@@ -225,6 +247,7 @@ def solve_ipm_pd(
     kkt_solver: KKTSolver | None = None,
     eq_prox: float = 1e-9,
     box_prox: float = 1e-6,
+    box_prox_max: float = 1e-2,
 ) -> IPMResult:
     """Mehrotra predictor-corrector IPM (see the module docstring).
 
@@ -251,6 +274,11 @@ def solve_ipm_pd(
             outside ``box_idx`` (V/δ) is below it. Box variables may still move
             along directions the data do not see (the common level of a node's
             generation and load), which change neither the state nor the residuals.
+        fit_tol: alternatively, stop once that step moves no data row by more
+            than ``fit_tol`` of its sigma (``max √w·|H·αp·Δx|``). A state the data
+            do not determine (a node behind loads whose injection rows carry
+            near-zero weight) can keep moving, or cycle, without changing any
+            estimated measurement; the fit has converged all the same.
         feas_tol: admissible primal infeasibility of the inequalities (p.u.).
         max_iter: iteration limit (one factorization each).
         box_eps: margin from the bounds when projecting ``x_init``.
@@ -271,6 +299,9 @@ def solve_ipm_pd(
             has no curvature along that common level but the barrier's, so a
             cold start produces huge box steps cut to tiny ``αp`` by the boundary
             rule; the term bounds those steps without moving the fixed point.
+        box_prox_max: ceiling of the adaptive box term (same units as
+            ``box_prox``, see the module docstring); a value not above
+            ``box_prox`` keeps the term fixed.
 
     Returns:
         :class:`~gridstate.algorithms.ipm.IPMResult`; ``status`` is ``"kkt"`` when
@@ -325,10 +356,9 @@ def solve_ipm_pd(
     is_eq = np.zeros(m, dtype=bool)
     is_eq[eq_rows] = True
     rho = w_base[eq_rows]
-    prox = max(
-        eq_prox * float(np.max(rho)) if rho.size else 0.0,
-        box_prox * float(np.median(w_base[~is_eq])) if (~is_eq).any() else 0.0,
-    )
+    eq_prox_abs = eq_prox * float(np.max(rho)) if rho.size else 0.0
+    w_median = float(np.median(w_base[~is_eq])) if (~is_eq).any() else 0.0
+    box_scale = box_prox
 
     huber_mask_arr = (
         np.asarray(huber_mask, dtype=bool) if huber_mask is not None else np.zeros(m, dtype=bool)
@@ -378,6 +408,7 @@ def solve_ipm_pd(
     w = w_base
     mu = mu0 if n_pairs else 0.0
     step_inf = float("inf")
+    fit_inf = float("inf")
     eq_inf = 0.0
     grad_inf = float("inf")
     status = "stalled"
@@ -399,7 +430,7 @@ def solve_ipm_pd(
             and mu <= mu_min
             and feas_inf <= feas_tol
             and bool(np.all(np.abs(c) <= eq_tol_arr))
-            and step_inf <= step_tol
+            and (step_inf <= step_tol or fit_inf <= fit_tol)
         ):
             status = "kkt"
             break
@@ -413,7 +444,7 @@ def solve_ipm_pd(
         w_mat[eq_rows] = rho
         w_mat[mb_rows] += d_k[nb:]
         diag = np.zeros(n)
-        diag[box_idx] = d_k[:nb] + prox
+        diag[box_idx] = d_k[:nb] + max(eq_prox_abs, box_scale * w_median)
         # Stationarity residual of the current point (for reporting).
         y_dual = np.zeros(nb + mb_rows.size)
         y_dual[il] += y_l
@@ -490,7 +521,8 @@ def solve_ipm_pd(
             il=il,
             iu=iu,
         )
-        slope = merit.slope(lin, H @ dx, ds_l, ds_u)
+        hdx = H @ dx
+        slope = merit.slope(lin, hdx, ds_l, ds_u)
         if slope >= 0.0 and n_pairs:
             # The corrector's second-order term can spoil descent; the pure
             # centering direction is a Newton step on the merit and descends
@@ -498,9 +530,11 @@ def solve_ipm_pd(
             dx_c, ds_l_c, ds_u_c, dy_l_c, dy_u_c, dlam_c = lin.direction(
                 target - s_l * y_l, target - s_u * y_u
             )
-            slope_c = merit.slope(lin, H @ dx_c, ds_l_c, ds_u_c)
+            hdx_c = H @ dx_c
+            slope_c = merit.slope(lin, hdx_c, ds_l_c, ds_u_c)
             if slope_c < 0.0 and np.all(np.isfinite(dx_c)):
                 dx, ds_l, ds_u, dy_l, dy_u, dlam = dx_c, ds_l_c, ds_u_c, dy_l_c, dy_u_c, dlam_c
+                hdx = hdx_c
                 slope = slope_c
                 n_centering += 1
 
@@ -521,6 +555,7 @@ def solve_ipm_pd(
             a_p = tr_radius / free_inf
         # The stopping test measures the Newton step, not how far the search cut it.
         step_inf = a_p * free_inf
+        fit_inf = a_p * float(np.max(np.sqrt(w_data) * np.abs(hdx))) if m else 0.0
         a_full = a_p
         r_new = None
         # A direction that does not descend (inconsistent slacks of a nonlinear
@@ -563,6 +598,11 @@ def solve_ipm_pd(
             eq_inf,
             feas_inf,
         )
+        if box_prox_max > box_prox:
+            if a_p < _PROX_SHORT:
+                box_scale = min(box_scale * _PROX_GROW, box_prox_max)
+            elif a_p >= _PROX_LONG:
+                box_scale = max(box_scale / _PROX_GROW, box_prox)
         x = x + a_p * dx
         s_l = s_l + a_p * ds_l
         s_u = s_u + a_p * ds_u
