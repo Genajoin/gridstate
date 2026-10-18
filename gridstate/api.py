@@ -55,6 +55,7 @@ from gridstate.state import (
     flat_start,
     flat_start_with_box,
     pack,
+    tap_consistent_voltages,
     unpack,
     unpack_full,
 )
@@ -120,7 +121,9 @@ def estimate(
             ``"ipm_pd"`` (the same problem by the primal-dual Mehrotra
             predictor-corrector, :mod:`gridstate.algorithms.ipm_pd`).
         init: initial guess strategy:
-            - ``"flat"`` — V=1 p.u., δ=0 for all nodes;
+            - ``"flat"`` — δ=0 for all nodes, V consistent with the
+              transformer ratios (:func:`gridstate.state.tap_consistent_voltages`;
+              1 p.u. without off-nominal ratios);
             - ``"results"`` — take the current ``voltage_magnitude``/``voltage_angle``
               from ``model``;
             - ``"slack"`` — V=V_slack for all nodes, δ=0.
@@ -651,7 +654,9 @@ def _initial_state_from_mode(
 ) -> np.ndarray:
     """``e_init`` of the ``init`` strategy alone."""
     if init == "flat":
-        return flat_start(layout)
+        e = flat_start(layout)
+        e[layout.offset_v : layout.offset_v + layout.n_bus] = tap_consistent_voltages(network_pu)
+        return e
 
     if init == "results":
         nodes_arr = model.nodes.to_numpy()

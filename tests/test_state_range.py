@@ -250,15 +250,15 @@ def test_anti_overshoot_non_converged_in_range_keeps_its_reason():
 
 
 def test_defaults_gross_errors_anti_overshoot_out_of_range_is_rejected():
-    """case14_degraded + gross errors, seed 1: the anti-overshoot re-solve
-    ends with an angle beyond 2*pi; it used to be accepted and the quality
-    summary then raised ValueError in the p.u. conversion."""
-    out, stats = _run(_gross_errors("case14_degraded", seed=1), PipelineConfig())
+    """case14_degraded + gross errors, seed 92: the anti-overshoot re-solve
+    ends out of range (a collapsed V); such a state used to be accepted and the
+    quality summary then raised ValueError in the p.u. conversion."""
+    out, stats = _run(_gross_errors("case14_degraded", seed=92), PipelineConfig())
     st = stats["anti_overshoot"]
     assert st["tightened"] > 0
     assert st["accepted"] is False
     assert st["revert_reason"] == REVERT_REASON_OUT_OF_RANGE
-    assert "angle" in st["state_violation"]
+    assert st["state_violation"]
     # the base solution stays current and is usable
     assert out.success is stats["estimate"]["success"]
     assert stats["quality_summary"] == {}

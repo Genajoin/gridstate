@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -10,6 +13,7 @@ from gridstate.state import (
     flat_start,
     flat_start_with_box,
     pack,
+    tap_consistent_voltages,
     unpack,
     unpack_full,
 )
@@ -114,6 +118,56 @@ class TestFlatStart:
         delta, v = unpack(flat_start(layout), layout)
         np.testing.assert_array_equal(delta, np.zeros(5))
         np.testing.assert_array_equal(v, np.ones(5))
+
+
+# ------------------------------------------------- tap_consistent_voltages
+def _net(n_bus: int, branches: list[tuple[int, int, float, float]], slack: int = 0) -> Any:
+    """Minimal network: ``(from, to, tap_pu, x)`` per branch, r = 0."""
+    f, t, k, x = (np.array(c) for c in zip(*branches, strict=True))
+    return SimpleNamespace(
+        n_bus=n_bus,
+        from_idx=f.astype(np.int64),
+        to_idx=t.astype(np.int64),
+        tap_ratio=k.astype(np.float64),
+        branch_r=np.zeros(len(branches)),
+        branch_x=x.astype(np.float64),
+        slack_idx=slack,
+    )
+
+
+class TestTapConsistentVoltages:
+    def test_nominal_ratios_give_the_flat_start(self) -> None:
+        net = _net(3, [(0, 1, 1.0, 0.1), (1, 2, 1.0, 0.1), (2, 0, 1.0, 0.1)])
+        np.testing.assert_allclose(tap_consistent_voltages(net), np.ones(3))
+
+    def test_radial_ratios_propagate_from_the_slack(self) -> None:
+        # V_to = V_from / k on either orientation of the branch.
+        net = _net(4, [(0, 1, 0.9, 1e-4), (1, 2, 1.0, 0.1), (3, 0, 0.95, 0.05)])
+        v = tap_consistent_voltages(net)
+        np.testing.assert_allclose(v, [1.0, 1 / 0.9, 1 / 0.9, 0.95], rtol=1e-6)
+
+    def test_slack_stays_at_one(self) -> None:
+        net = _net(3, [(0, 1, 1.1, 0.1), (1, 2, 1.1, 0.1)], slack=2)
+        v = tap_consistent_voltages(net)
+        np.testing.assert_allclose(v, [1.1**2, 1.1, 1.0], rtol=1e-6)
+
+    def test_conflicting_loop_follows_the_stiffer_branch(self) -> None:
+        # 0 -> 1 directly (k = 1, x = 1e-4) and through a k = 0.9 branch (x = 0.1).
+        net = _net(2, [(0, 1, 1.0, 1e-4), (0, 1, 0.9, 0.1)])
+        v = tap_consistent_voltages(net)
+        assert 1.0 < v[1] < 1.001
+
+    def test_breaker_without_impedance_is_finite(self) -> None:
+        net = _net(3, [(0, 1, 1.05, 0.0), (1, 2, 1.0, 0.1)])
+        v = tap_consistent_voltages(net)
+        np.testing.assert_allclose(v, [1.0, 1 / 1.05, 1 / 1.05], rtol=1e-6)
+
+    def test_component_without_slack_is_centred_on_one(self) -> None:
+        net = _net(4, [(0, 1, 1.0, 0.1), (2, 3, 0.9, 0.1)])
+        v = tap_consistent_voltages(net)
+        np.testing.assert_allclose(v[:2], [1.0, 1.0])
+        assert v[3] / v[2] == pytest.approx(1 / 0.9)
+        assert v[2] * v[3] == pytest.approx(1.0)
 
 
 # ------------------------------------------------------------ box-vars (IPM)
