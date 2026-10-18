@@ -552,6 +552,16 @@ class PipelineConfig:
         "min_value/max_value set is kept within [min_value, max_value] as an "
         "inequality of the interior-point problem. Default OFF.",
     )
+    ipm_voltage_guard: bool = _toggle(
+        True,
+        group=_G_IPM,
+        label="Voltage guard (ipm_pd)",
+        help="ipm_pd only (ignored otherwise): every node V is kept within a box "
+        "from its voltage_min/voltage_max (unset or implausible limits fall back "
+        "to 0.55/1.8 p.u. of nominal, 0.7..1.5 with neither set), and one step "
+        "changes V by at most 20 %, an angle by at most 0.6 rad and a branch "
+        "angle difference by at most 0.35 rad. Default ON.",
+    )
     ipm_injection_roles: bool = _toggle(
         False,
         group=_G_IPM,

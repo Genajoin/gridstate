@@ -172,6 +172,37 @@ class _Linearization:
         return dx, ds_l, ds_u, dy_l, dy_u, dlam
 
 
+def _step_cap(
+    dx: np.ndarray,
+    x: np.ndarray,
+    rel_idx: np.ndarray,
+    rel_max: float,
+    abs_idx: np.ndarray,
+    abs_max: float,
+    pair_i: np.ndarray,
+    pair_j: np.ndarray,
+    diff_max: float,
+) -> float:
+    """Largest primal step length allowed by the per-coordinate step limits."""
+    cap = math.inf
+    if rel_max > 0.0 and rel_idx.size:
+        d = np.abs(dx[rel_idx])
+        lim = rel_max * np.abs(x[rel_idx])
+        k = d > 0.0
+        if k.any():
+            cap = min(cap, float(np.min(lim[k] / d[k])))
+    if abs_max > 0.0 and abs_idx.size:
+        d_max = float(np.max(np.abs(dx[abs_idx])))
+        if d_max > 0.0:
+            cap = min(cap, abs_max / d_max)
+    if diff_max > 0.0 and pair_i.size:
+        dz = np.append(dx, 0.0)
+        d_max = float(np.max(np.abs(dz[pair_i] - dz[pair_j])))
+        if d_max > 0.0:
+            cap = min(cap, diff_max / d_max)
+    return cap
+
+
 @dataclass
 class _Merit:
     """The merit ``φ`` of one iteration (see the module docstring); ``mu`` is the target ``σμ``."""
@@ -249,6 +280,15 @@ def solve_ipm_pd(
     eq_prox: float = 1e-9,
     box_prox: float = 1e-6,
     box_prox_max: float = 1e-2,
+    state_box_idx: np.ndarray | None = None,
+    state_box_lo: np.ndarray | None = None,
+    state_box_hi: np.ndarray | None = None,
+    step_rel_idx: np.ndarray | None = None,
+    step_rel_max: float = 0.0,
+    step_abs_idx: np.ndarray | None = None,
+    step_abs_max: float = 0.0,
+    step_diff_pairs: tuple[np.ndarray, np.ndarray] | None = None,
+    step_diff_max: float = 0.0,
 ) -> IPMResult:
     """Mehrotra predictor-corrector IPM (see the module docstring).
 
@@ -297,6 +337,17 @@ def solve_ipm_pd(
             conflicts into the residuals and make this markedly worse. ``0``
             reweights to the end.
         kkt_solver: Newton-system solver (``None`` — scipy).
+        state_box_idx, state_box_lo, state_box_hi: barrier boxes on state
+            coordinates (e.g. V). Unlike ``box_idx`` they stay under the trust
+            region and the stopping test and get no box damping: the box only
+            keeps the iteration away from an inadmissible region (V → 0, where
+            the node angle is undetermined).
+        step_rel_idx, step_rel_max: ``|αp·Δx_i| ≤ step_rel_max·|x_i|`` on these
+            coordinates (``0`` — off).
+        step_abs_idx, step_abs_max: ``|αp·Δx_i| ≤ step_abs_max`` (``0`` — off).
+        step_diff_pairs, step_diff_max: ``|αp·(Δx_i − Δx_j)| ≤ step_diff_max`` for
+            each pair ``(i, j)``; an index ``-1`` stands for a fixed zero (the
+            slack angle). ``0`` — off.
         eq_prox: with equality rows, a proximal term ``eq_prox·max(ρ)`` on the
             diagonal of the box coordinates. A hard balance fixes only the net
             injection of a node, so the common level of its generation and load
@@ -335,6 +386,28 @@ def solve_ipm_pd(
             raise ValueError("box_lo/box_hi contain pairs with lo >= hi")
     else:
         b_lo = b_hi = np.zeros(0)
+    n_var_box = box_idx.size
+    if state_box_idx is not None and np.size(state_box_idx):
+        if state_box_lo is None or state_box_hi is None:
+            raise ValueError("state_box_lo and state_box_hi are required with state_box_idx")
+        sb_lo = np.asarray(state_box_lo, dtype=np.float64)
+        sb_hi = np.asarray(state_box_hi, dtype=np.float64)
+        if np.any(sb_lo >= sb_hi):
+            raise ValueError("state_box_lo/state_box_hi contain pairs with lo >= hi")
+        box_idx = np.concatenate([box_idx, np.asarray(state_box_idx, dtype=np.int64)])
+        b_lo = np.concatenate([b_lo, sb_lo])
+        b_hi = np.concatenate([b_hi, sb_hi])
+    var_box_idx = box_idx[:n_var_box]
+    rel_idx = np.asarray(step_rel_idx if step_rel_idx is not None else [], dtype=np.int64)
+    abs_idx = np.asarray(step_abs_idx if step_abs_idx is not None else [], dtype=np.int64)
+    if step_diff_pairs is not None:
+        # -1 -> the appended zero coordinate.
+        pair_i = np.asarray(step_diff_pairs[0], dtype=np.int64)
+        pair_j = np.asarray(step_diff_pairs[1], dtype=np.int64)
+        pair_i = np.where(pair_i < 0, n, pair_i)
+        pair_j = np.where(pair_j < 0, n, pair_j)
+    else:
+        pair_i = pair_j = np.zeros(0, dtype=np.int64)
     mb_rows = np.asarray(meas_box_rows if meas_box_rows is not None else [], dtype=np.int64)
     if mb_rows.size:
         if meas_box_lo is None or meas_box_hi is None:
@@ -386,7 +459,8 @@ def solve_ipm_pd(
     )
 
     tr_mask = np.ones(n, dtype=bool)
-    tr_mask[box_idx] = False
+    tr_mask[var_box_idx] = False
+    prox_on = np.arange(nb) < n_var_box
     tr_pos = np.flatnonzero(tr_mask)
     limiters: dict[int, int] = {}
     limiting_rows: dict[int, int] = {}
@@ -456,7 +530,9 @@ def solve_ipm_pd(
         w_mat[eq_rows] = rho
         w_mat[mb_rows] += d_k[nb:]
         diag = np.zeros(n)
-        diag[box_idx] = d_k[:nb] + max(eq_prox_abs, box_scale * w_median)
+        diag[box_idx] = d_k[:nb] + np.where(
+            prox_on, max(eq_prox_abs, box_scale * w_median), eq_prox_abs
+        )
         # Stationarity residual of the current point (for reporting).
         y_dual = np.zeros(nb + mb_rows.size)
         y_dual[il] += y_l
@@ -568,6 +644,14 @@ def solve_ipm_pd(
         # The stopping test measures the Newton step, not how far the search cut it.
         step_inf = a_p * free_inf
         fit_inf = a_p * float(np.max(np.sqrt(w_data) * np.abs(hdx))) if m else 0.0
+        # The step limits shorten the step like the search below, after
+        # step_inf has measured the Newton step.
+        a_p = min(
+            a_p,
+            _step_cap(
+                dx, x, rel_idx, step_rel_max, abs_idx, step_abs_max, pair_i, pair_j, step_diff_max
+            ),
+        )
         a_full = a_p
         r_new = None
         # A direction that does not descend (inconsistent slacks of a nonlinear

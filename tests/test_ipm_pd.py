@@ -10,7 +10,7 @@ import pytest
 from scipy.sparse import csr_matrix
 
 from gridstate.algorithms.ipm import solve_ipm
-from gridstate.algorithms.ipm_pd import _Merit, solve_ipm_pd
+from gridstate.algorithms.ipm_pd import _Merit, _step_cap, solve_ipm_pd
 from gridstate.algorithms.kkt_solver import KKTSolver, resolve_backend
 from gridstate.algorithms.status import SolveStatus
 
@@ -310,3 +310,59 @@ def test_pd_rejects_inconsistent_inputs() -> None:
             meas_box_lo=np.array([-np.inf]),
             meas_box_hi=np.array([np.inf]),
         )
+
+
+def test_state_box_bounds_a_state_coordinate() -> None:
+    """A state box binds like a variable box but leaves the coordinate in the
+    trust region and the stopping test."""
+    A = np.eye(2)
+    z = np.array([1.5, 0.3])
+    res, jac = _linear(A, z)
+    out = solve_ipm_pd(
+        np.zeros(2),
+        res,
+        jac,
+        np.ones(2),
+        state_box_idx=np.array([0]),
+        state_box_lo=np.array([-1.0]),
+        state_box_hi=np.array([1.2]),
+        step_tol=1e-10,
+    )
+    assert out.status == "kkt"
+    assert out.x[0] == pytest.approx(1.2, abs=1e-4)
+    assert out.x[1] == pytest.approx(0.3, abs=1e-8)
+
+
+def test_step_cap_limits() -> None:
+    x = np.array([1.0, 2.0, 0.0])
+    dx = np.array([1.0, -1.0, 2.0])
+    none = np.zeros(0, dtype=np.int64)
+    # relative: |dx_i| <= 0.2 |x_i| -> 0.2 on coordinate 0
+    assert _step_cap(dx, x, np.array([0, 1]), 0.2, none, 0.0, none, none, 0.0) == pytest.approx(0.2)
+    # absolute: 0.6 / max |dx| = 0.3
+    assert _step_cap(dx, x, none, 0.0, np.array([0, 2]), 0.6, none, none, 0.0) == pytest.approx(0.3)
+    # differences, index 3 = the appended zero: |dx0 - dx1| = 2, |dx2 - 0| = 2
+    cap = _step_cap(dx, x, none, 0.0, none, 0.0, np.array([0, 2]), np.array([1, 3]), 0.35)
+    assert cap == pytest.approx(0.175)
+    assert _step_cap(dx, x, none, 0.0, none, 0.0, none, none, 0.0) == float("inf")
+
+
+def test_step_limits_shorten_the_path_not_the_solution() -> None:
+    A = np.eye(2)
+    z = np.array([3.0, 0.4])
+    res, jac = _linear(A, z)
+    out = solve_ipm_pd(
+        np.ones(2),
+        res,
+        jac,
+        np.ones(2),
+        step_rel_idx=np.array([0, 1]),
+        step_rel_max=0.2,
+        step_diff_pairs=(np.array([0]), np.array([-1])),
+        step_diff_max=0.35,
+        step_tol=1e-10,
+        max_iter=200,
+    )
+    assert out.status == "kkt"
+    np.testing.assert_allclose(out.x, z, atol=1e-8)
+    assert out.iterations_outer > 5

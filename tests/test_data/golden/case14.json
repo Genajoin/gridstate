@@ -4,11 +4,11 @@
   "scalars": {
    "success": true,
    "iterations": 3,
-   "objective_value": 94.33639500133559,
+   "objective_value": 94.33639499972665,
    "algorithm": "wls",
    "convergence_status": "converged",
    "chi2": {
-    "value": 94.33639500133556,
+    "value": 94.33639499972665,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -265,9 +265,9 @@
      "algorithm": "wls",
      "success": true,
      "iterations": 3,
-     "objective_value": 94.33639500133559,
+     "objective_value": 94.33639499972665,
      "solve_status": "kkt",
-     "objective_wls": 94.33639500133556
+     "objective_wls": 94.33639499972665
     }
    },
    {
@@ -321,11 +321,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 46.78060527079605,
+   "objective_value": 46.78060534254444,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.45374959363134,
+    "value": 93.4537499415513,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -586,9 +586,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 42.26330550247608,
+     "objective_value": 42.26361434070781,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.3691107027574
+     "objective_wls": 84.36981750991211
     }
    },
    {
@@ -651,7 +651,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.45374959363134
+     "objective_wls": 93.4537499415513
     }
    },
    {
@@ -675,11 +675,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 46.78060527079605,
+   "objective_value": 46.78060534254444,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.45374959363134,
+    "value": 93.4537499415513,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -940,9 +940,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 42.26330550247608,
+     "objective_value": 42.26361434070781,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.3691107027574
+     "objective_wls": 84.36981750991211
     }
    },
    {
@@ -970,7 +970,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.45374959363134
+     "objective_wls": 93.4537499415513
     }
    },
    {
@@ -1022,11 +1022,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 46.78060527079605,
+   "objective_value": 46.78060534254444,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.45374959363134,
+    "value": 93.4537499415513,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -1287,9 +1287,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 42.26330550247608,
+     "objective_value": 42.26361434070781,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.3691107027574
+     "objective_wls": 84.36981750991211
     }
    },
    {
@@ -1352,7 +1352,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.45374959363134
+     "objective_wls": 93.4537499415513
     }
    },
    {
@@ -1386,11 +1386,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 46.78060527079605,
+   "objective_value": 46.78060534254444,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.45374959363134,
+    "value": 93.4537499415513,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -1651,9 +1651,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 42.26330550247608,
+     "objective_value": 42.26361434070781,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.3691107027574
+     "objective_wls": 84.36981750991211
     }
    },
    {
@@ -1716,7 +1716,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.45374959363134
+     "objective_wls": 93.4537499415513
     }
    },
    {
@@ -1749,11 +1749,11 @@
   "scalars": {
    "success": true,
    "iterations": 9,
-   "objective_value": 46.780605453307466,
+   "objective_value": 46.78060545330755,
    "algorithm": "ipm",
    "convergence_status": "completed",
    "chi2": {
-    "value": 93.45374847484781,
+    "value": 93.453748474863,
     "dof": 95,
     "threshold": 118.75161175336736,
     "passes": true
@@ -2018,9 +2018,9 @@
      "algorithm": "ipm",
      "success": true,
      "iterations": 9,
-     "objective_value": 42.25670257396209,
+     "objective_value": 42.25670257390347,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 84.35770450647796
+     "objective_wls": 84.35770450101111
     }
    },
    {
@@ -2083,7 +2083,7 @@
      "success": true,
      "iterations": 9,
      "solve_status": "mu_schedule_done",
-     "objective_wls": 93.45374847484781
+     "objective_wls": 93.453748474863
     }
    },
    {

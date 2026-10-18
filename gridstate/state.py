@@ -24,9 +24,20 @@ The layout to/from a flat array is handled by ``pack`` / ``unpack``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import scipy.sparse as sp
+from scipy.sparse.linalg import spsolve
+
+
+if TYPE_CHECKING:
+    from gridstate.units import NetworkPU
+
+
+# Impedance floor of the tap-consistent start weights: breakers (|z| ≈ 0) bind
+# their ends without making the system singular.
+_TAP_START_Z_FLOOR = 1e-4
 
 
 def _empty_int64() -> np.ndarray:
@@ -252,6 +263,46 @@ def flat_start(layout: StateLayout) -> np.ndarray:
     e = np.zeros(layout.size, dtype=np.float64)
     e[layout.offset_v : layout.offset_v + layout.n_bus] = 1.0
     return e
+
+
+def tap_consistent_voltages(network_pu: NetworkPU) -> np.ndarray:
+    """Flat-start magnitudes consistent with the transformer ratios (p.u.).
+
+    ``V = 1`` everywhere contradicts every branch whose ratio in p.u. is not 1
+    (an off-nominal tap, or a node whose ``voltage_nominal`` does not match the
+    ratio of its transformer): on a low-impedance branch the flat start then
+    carries a circulating flow of hundreds of p.u. Instead ``log V`` solves the
+    least squares ``log V_to − log V_from = −log k`` over all branches, weighted
+    by ``1/|z|``, with ``log V_slack = 0``. On a radial transformer chain this
+    propagates the ratios exactly, in a meshed network it averages them.
+    A component without the slack is centred on 1.0.
+    """
+    n = network_pu.n_bus
+    f = np.asarray(network_pu.from_idx, dtype=np.int64)
+    t = np.asarray(network_pu.to_idx, dtype=np.int64)
+    if f.size == 0:
+        return np.ones(n, dtype=np.float64)
+    k = np.asarray(network_pu.tap_ratio, dtype=np.float64)
+    k = np.where(np.isfinite(k) & (k > 0), k, 1.0)
+    z = np.hypot(network_pu.branch_r, network_pu.branch_x)
+    w = 1.0 / np.maximum(z, _TAP_START_Z_FLOOR)
+    rows = np.arange(f.size)
+    a = sp.csr_matrix(
+        (np.r_[np.ones(f.size), -np.ones(f.size)], (np.r_[rows, rows], np.r_[t, f])),
+        shape=(f.size, n),
+    )
+    # A vanishing pull to log V = 0 keeps nodes outside the slack's component
+    # determined without moving the connected ones.
+    lap = (a.T @ sp.diags(w) @ a + sp.identity(n) * (1e-9 * float(w.mean()))).tolil()
+    rhs = a.T @ (-w * np.log(k))
+    s = network_pu.slack_idx
+    lap[s, :] = 0.0
+    lap[s, s] = 1.0
+    rhs[s] = 0.0
+    log_v = np.asarray(spsolve(lap.tocsc(), rhs), dtype=np.float64)
+    if not np.all(np.isfinite(log_v)):
+        return np.ones(n, dtype=np.float64)
+    return np.exp(log_v)
 
 
 def unpack_full(

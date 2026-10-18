@@ -9,6 +9,38 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.8.0 (2026-10-18)
+
+### Behavior changes
+
+- `init="flat"` starts V consistent with the transformer ratios instead of
+  1 p.u. everywhere: `log V` from a least squares over the branches
+  (`log V_to − log V_from = −log k`, weight `1/|z|`, `log V_slack = 0`). A node
+  whose nominal voltage does not match its transformer ratio (or an off-nominal
+  tap on a low-impedance branch) no longer starts with a mismatch of hundreds
+  of p.u. Applies to every algorithm; without off-nominal ratios the start is
+  unchanged. WLS on an ill-conditioned model may converge to a neighbouring
+  solution (on the test models p95 |ΔV| against the reference within 0.05 kV).
+- `ipm_pd` voltage guard on by default (`ipm_voltage_guard` /
+  `voltage_guard`, ignored by other algorithms): every node V is kept within a
+  box from its `voltage_min` / `voltage_max` (unset or implausible limits fall
+  back to 0.55 / 1.8 p.u., 0.7–1.5 p.u. with neither set) and one step changes
+  V by at most 20 %, an angle by at most 0.6 rad and a branch angle difference
+  by at most 0.35 rad. Where a node limit is active the estimate sits on it.
+
+### Fix
+
+- `ipm_pd` with the global hard balance no longer collapses a generator node
+  into the low-voltage power-flow branch from a flat start (V → 0, the node
+  angle undetermined, a formally converged V ≈ 0.2 p.u.).
+
+### Feat
+
+- `solve_ipm_pd`: `state_box_*` (barrier boxes on state coordinates that stay
+  under the trust region and the stopping test, without box damping) and the
+  `step_rel_*` / `step_abs_*` / `step_diff_*` step limits.
+- `gridstate.state.tap_consistent_voltages`.
+
 ## v2.7.0 (2026-10-18)
 
 ### Behavior changes

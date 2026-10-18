@@ -273,7 +273,7 @@ def test_estimate_x0_equals_seeding_the_table(algorithm):
 def test_estimate_x0_partial_cover_on_a_flat_base():
     """Nodes outside ``x0`` follow ``init``; a non-positive V starts at 1.0 p.u."""
     from gridstate.api import _build_initial_state
-    from gridstate.state import StateLayout, unpack
+    from gridstate.state import StateLayout, tap_consistent_voltages, unpack
     from gridstate.units import model_to_pu
 
     w, _point = _working_before_solve()
@@ -289,7 +289,7 @@ def test_estimate_x0_partial_cover_on_a_flat_base():
     delta, v = unpack(_build_initial_state(w, net, layout, "flat", x0=part), layout)
     assert v[0] == pytest.approx(1.02)
     assert v[1] == 1.0
-    assert np.all(v[2:] == 1.0)
+    assert np.array_equal(v[2:], tap_consistent_voltages(net)[2:])
     for pos, angle in ((0, -0.05), (1, 0.07)):
         if pos != layout.slack_idx:
             assert delta[pos] == pytest.approx(angle)

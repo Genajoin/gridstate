@@ -233,6 +233,27 @@ def test_measurement_bounds_require_ipm_pd():
         PipelineConfig(algorithm="ipm", ipm_measurement_bounds=True)
 
 
+def test_voltage_guard_is_on_by_default_and_ignored_outside_ipm_pd():
+    assert PipelineConfig(algorithm="ipm_pd").ipm_voltage_guard
+    PipelineConfig(algorithm="ipm", ipm_voltage_guard=True)
+    assert estimate(_build_net_with_transit(), algorithm="ipm", voltage_guard=True).success
+
+
+def test_voltage_guard_keeps_v_within_the_node_limits():
+    free = estimate(_build_net_with_transit(), algorithm="ipm_pd", voltage_guard=False)
+    m = _build_net_with_transit()
+    nd = m.nodes.to_numpy()
+    v_free = {int(i): float(v) for i, v in zip(nd["id"], free.v_pu, strict=True)}
+    nid = max(v_free, key=v_free.get)
+    node = m.nodes.get_by_id(nid)
+    cap = (v_free[nid] - 0.01) * float(node.voltage_nominal)
+    node.voltage_max = cap
+    guarded = estimate(m, algorithm="ipm_pd", voltage_guard=True)
+    assert guarded.success
+    k = int(np.flatnonzero(m.nodes.to_numpy()["id"] == nid)[0])
+    assert float(m.nodes.to_numpy()["voltage_magnitude"][k]) <= cap * (1 + 1e-6)
+
+
 def test_config_defaults_and_ranges():
     cfg = PipelineConfig(algorithm="ipm_pd")
     assert cfg.ipm_balance_mode == "soft"
