@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -146,6 +147,48 @@ def test_equality_rows_with_a_box_free_common_level() -> None:
     for out in (pd, primal):
         assert out.eq_inf_final <= 1e-6
         assert out.x[1] - out.x[2] == pytest.approx(0.7, abs=1e-5)
+
+
+def test_pd_adaptive_box_prox_keeps_the_fixed_point(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every step counts as short, so the box term climbs to its ceiling and stays
+    # there: the iteration is damped, the solution is not. Rows 1-2 see the box
+    # variables (g, l) only through near-zero weights, as a free load does.
+    import gridstate.algorithms.ipm_pd as pd_mod
+
+    A = np.array([[1.0, 0.0, 0.0], [1.0, -1.0, 1.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]])
+    z = np.array([0.7, 0.0, 3.0, 0.75])
+    w = np.array([1.0, 1e-8, 1e-8, 1.0])
+    res, jac = _linear(A, z)
+    kw: dict[str, Any] = {
+        "box_idx": np.array([1, 2]),
+        "box_lo": np.array([-50.0, -50.0]),
+        "box_hi": np.array([50.0, 50.0]),
+        "step_tol": 1e-9,
+        "max_iter": 300,
+    }
+    fixed = solve_ipm_pd(np.zeros(3), res, jac, w, box_prox_max=0.0, **kw)
+    monkeypatch.setattr(pd_mod, "_PROX_SHORT", 2.0)
+    damped = solve_ipm_pd(np.zeros(3), res, jac, w, box_prox_max=1.0, **kw)
+    assert fixed.success and damped.success
+    assert damped.x[0] == pytest.approx(0.725, abs=1e-6)
+    np.testing.assert_allclose(damped.x[0], fixed.x[0], atol=1e-6)
+
+
+def test_pd_adaptive_box_prox_is_inactive_on_long_steps() -> None:
+    # A well-scaled problem takes long steps: the ceiling never comes into play.
+    rng = np.random.default_rng(4)
+    A = rng.normal(size=(8, 3))
+    z = rng.normal(size=8)
+    res, jac = _linear(A, z)
+    kw: dict[str, Any] = {
+        "box_idx": np.array([2]),
+        "box_lo": np.array([-5.0]),
+        "box_hi": np.array([5.0]),
+    }
+    base = solve_ipm_pd(np.zeros(3), res, jac, np.ones(8), box_prox_max=0.0, **kw)
+    adaptive = solve_ipm_pd(np.zeros(3), res, jac, np.ones(8), **kw)
+    assert base.iterations_outer == adaptive.iterations_outer
+    np.testing.assert_array_equal(base.x, adaptive.x)
 
 
 def test_pd_merit_search_stops_gauss_newton_overshoot() -> None:

@@ -50,6 +50,19 @@ corrector's second-order term may spoil descent, and then the centering
 direction is taken instead (one more solve on the same factor). The dual step
 keeps its own fraction-to-boundary length.
 
+Adaptive box regularisation. A box variable seen only through rows of
+negligible weight (a load whose injection row is a near-zero-weight pseudo
+measurement) or through a combination the data do not resolve (a reactive flow
+circulating between two such loads) has no curvature but the barrier's, and
+the Newton step along it is orders of magnitude longer than the box. The
+fraction-to-boundary rule then cuts every step to ``αp ≪ 1``, the
+complementarity stops decreasing and the iteration crawls to its limit. The
+proximal term on the box diagonal is therefore raised tenfold after every
+step shorter than 0.1 (up to ``box_prox_max``) and lowered tenfold after
+every step of 0.5 or longer (down to ``box_prox``). The term damps the step
+only, so the fixed point is unchanged; a well-scaled problem takes long steps
+and keeps the base term.
+
 Start on the central path: ``s`` = half-range of a two-sided constraint (the
 distance for a one-sided one), ``y = μ0/s``; the initial point need not satisfy
 ``g − l = s``.
@@ -94,6 +107,14 @@ def _blocking_constraint(
     if ku < 0 or (kl >= 0 and rl[kl] <= ru[ku]):
         return kl, True
     return ku, False
+
+
+# Adaptive box regularisation (see the module docstring): a primal step shorter
+# than _PROX_SHORT raises the term by _PROX_GROW, one of _PROX_LONG or longer
+# lowers it by the same factor.
+_PROX_SHORT = 0.1
+_PROX_LONG = 0.5
+_PROX_GROW = 10.0
 
 
 Direction = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
@@ -225,6 +246,7 @@ def solve_ipm_pd(
     kkt_solver: KKTSolver | None = None,
     eq_prox: float = 1e-9,
     box_prox: float = 1e-6,
+    box_prox_max: float = 1e-2,
 ) -> IPMResult:
     """Mehrotra predictor-corrector IPM (see the module docstring).
 
@@ -271,6 +293,9 @@ def solve_ipm_pd(
             has no curvature along that common level but the barrier's, so a
             cold start produces huge box steps cut to tiny ``αp`` by the boundary
             rule; the term bounds those steps without moving the fixed point.
+        box_prox_max: ceiling of the adaptive box term (same units as
+            ``box_prox``, see the module docstring); a value not above
+            ``box_prox`` keeps the term fixed.
 
     Returns:
         :class:`~gridstate.algorithms.ipm.IPMResult`; ``status`` is ``"kkt"`` when
@@ -325,10 +350,9 @@ def solve_ipm_pd(
     is_eq = np.zeros(m, dtype=bool)
     is_eq[eq_rows] = True
     rho = w_base[eq_rows]
-    prox = max(
-        eq_prox * float(np.max(rho)) if rho.size else 0.0,
-        box_prox * float(np.median(w_base[~is_eq])) if (~is_eq).any() else 0.0,
-    )
+    eq_prox_abs = eq_prox * float(np.max(rho)) if rho.size else 0.0
+    w_median = float(np.median(w_base[~is_eq])) if (~is_eq).any() else 0.0
+    box_scale = box_prox
 
     huber_mask_arr = (
         np.asarray(huber_mask, dtype=bool) if huber_mask is not None else np.zeros(m, dtype=bool)
@@ -413,7 +437,7 @@ def solve_ipm_pd(
         w_mat[eq_rows] = rho
         w_mat[mb_rows] += d_k[nb:]
         diag = np.zeros(n)
-        diag[box_idx] = d_k[:nb] + prox
+        diag[box_idx] = d_k[:nb] + max(eq_prox_abs, box_scale * w_median)
         # Stationarity residual of the current point (for reporting).
         y_dual = np.zeros(nb + mb_rows.size)
         y_dual[il] += y_l
@@ -563,6 +587,11 @@ def solve_ipm_pd(
             eq_inf,
             feas_inf,
         )
+        if box_prox_max > box_prox:
+            if a_p < _PROX_SHORT:
+                box_scale = min(box_scale * _PROX_GROW, box_prox_max)
+            elif a_p >= _PROX_LONG:
+                box_scale = max(box_scale / _PROX_GROW, box_prox)
         x = x + a_p * dx
         s_l = s_l + a_p * ds_l
         s_u = s_u + a_p * ds_u
