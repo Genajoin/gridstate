@@ -5,7 +5,9 @@ unobservable, so the gain matrix becomes singular. To avoid this, for every
 active node without a `V/P_inj/Q_inj` measurement we add a weak prior:
 
 * `V ≈ V_nominal` (either `V_magnitude` from the loaded model, or `vzd`
-  for a PV node) with σ=10% of Vnom (slack 0.1%, PV 5%).
+  for a PV node) with σ=10% of Vnom (slack 0.1%, PV 5%). With
+  ``voltage_scope="generation"`` the V prior of a node that cannot hold its
+  voltage (no generation, not the slack) is loosened to an observability prior.
 * `P_inj = pg - pn`, `Q_inj = qg - qn` from the node table (for transit
   nodes this gives 0). σ depends on the node type and empty-model detection.
 """
@@ -13,7 +15,7 @@ active node without a `V/P_inj/Q_inj` measurement we add a weak prior:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -70,6 +72,11 @@ class PseudoMeasConfig:
     # Loosen the P/Q injection prior of a node with load but no load data (no
     # box, nothing materialized) when the injection is fixed by measurements.
     loosen_unknown_load: bool = False
+    # Nodes whose V prior keeps its σ (generation and slack nodes); ``None`` =
+    # every node. Outside it the V prior variance is multiplied by
+    # ``v_out_of_scope_loose_factor``.
+    v_scope_nodes: frozenset[int] | None = None
+    v_out_of_scope_loose_factor: float = 1e4
 
 
 def _generation_range_variance(row: np.void, lo_col: str, hi_col: str, fallback: float) -> float:
@@ -216,6 +223,7 @@ def _build_pseudo_rows(
     n_zinj_added = 0
     n_unobs_v = 0
     n_unknown_load = 0
+    n_v_loose = 0
 
     new_rows: list[dict] = []
     for row in nodes_arr:
@@ -261,6 +269,15 @@ def _build_pseudo_rows(
                 # nodes (degree=1, empty-model P_inj σ=100) 10% allowed the SE
                 # to drag V down to 0.3-0.5 p.u.: the pseudo-V did not hold the anchor.
                 sigma = (0.05 * vn) ** 2
+            if (
+                config.v_scope_nodes is not None
+                and not is_slack
+                and nid not in config.v_scope_nodes
+            ):
+                # A node that cannot hold its voltage: a prior at the nominal or
+                # input V pulls its estimate there; keep it for observability only.
+                sigma *= config.v_out_of_scope_loose_factor
+                n_v_loose += 1
             new_rows.append(
                 pseudo_node_measurement(ids.next(), nid, KIND_VOLTAGE, v_prior_value, float(sigma))
             )
@@ -335,6 +352,8 @@ def _build_pseudo_rows(
         "unobservable_v_tight": n_unobs_v,
         "unknown_load_loose": n_unknown_load,
     }
+    if config.v_scope_nodes is not None:
+        stats["v_priors_loose"] = n_v_loose
     return new_rows, stats
 
 
@@ -411,6 +430,8 @@ def add_pseudo_measurements(
     unmeasured_gen_p_nodes: frozenset[int] = frozenset(),
     unmeasured_gen_q_nodes: frozenset[int] = frozenset(),
     loosen_unknown_load: bool = False,
+    voltage_scope: Literal["all", "generation"] = "all",
+    v_out_of_scope_loose_factor: float = 1e4,
 ) -> dict:
     """Augment the model with pseudo-measurements to remove under-observability.
 
@@ -480,10 +501,21 @@ def add_pseudo_measurements(
             at both ends of every incident branch) that prior's variance is
             multiplied by ``boundary_inj_loose_factor``. Typical nodes: cut ends of
             lines leaving the model and substations of neighbouring systems.
+        voltage_scope: nodes whose V prior keeps its σ. ``"all"`` (default):
+            every node. ``"generation"``: only the nodes that can hold their
+            voltage, i.e. the slack and the nodes with generation (``exist_gen``
+            or an active generator); elsewhere the V prior variance is multiplied
+            by ``v_out_of_scope_loose_factor``. A V prior at the nominal (or
+            input) V on a load node without a V measurement pulls the estimate
+            there, and the solver makes up the difference with the load Q.
+        v_out_of_scope_loose_factor: variance multiplier of the V prior outside
+            ``voltage_scope``. Default 1e4 (σ × 100) keeps the prior in the
+            system only for observability.
 
     Returns:
         ``{"v_priors_added": N, "zero_inj_added": N, "unobservable_v_tight": N,
-        "unknown_load_loose": N}`` — counters.
+        "unknown_load_loose": N}`` — counters, plus ``"v_priors_loose": N`` with
+        ``voltage_scope="generation"``.
     """
     nodes_arr = model.nodes.to_numpy()
     meas_arr = model.measurements.to_numpy()
@@ -495,6 +527,16 @@ def add_pseudo_measurements(
         np.any(nodes_arr["exist_load"]) or np.any(nodes_arr["exist_gen"])
     ):
         node_load_props = extract_node_load_props_from_model(model)
+
+    if voltage_scope not in ("all", "generation"):
+        raise ValueError(f"voltage_scope={voltage_scope!r} is not one of ['all', 'generation']")
+    v_scope_nodes: frozenset[int] | None = None
+    if voltage_scope == "generation":
+        gen = model.generators.to_numpy()
+        v_scope_nodes = frozenset(
+            nodes_arr["id"][nodes_arr["exist_gen"].astype(bool)].tolist()
+            + gen["node_id"][gen["status"].astype(bool)].tolist()
+        )
 
     config = PseudoMeasConfig(
         add_zero_injections=add_zero_injections,
@@ -510,6 +552,8 @@ def add_pseudo_measurements(
         unmeasured_gen_p_nodes=frozenset(unmeasured_gen_p_nodes),
         unmeasured_gen_q_nodes=frozenset(unmeasured_gen_q_nodes),
         loosen_unknown_load=loosen_unknown_load,
+        v_scope_nodes=v_scope_nodes,
+        v_out_of_scope_loose_factor=v_out_of_scope_loose_factor,
     )
 
     new_rows, stats = _add_pseudo_measurements_on_arrays(

@@ -9,6 +9,19 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.9.0 (2026-10-18)
+
+### Feat
+
+- `pseudo_voltage_scope` (`add_pseudo_measurements(voltage_scope=...)`): the
+  nodes whose pseudo-V prior keeps its σ. `"all"` (default) keeps the current
+  behavior. `"generation"` keeps it only at the slack and the nodes with
+  generation (`exist_gen` or an active generator); elsewhere the prior variance
+  is multiplied by `v_out_of_scope_loose_factor` (default 1e4, σ × 100) and the
+  prior stays for observability only. A prior at the nominal V on a load node
+  without a V measurement pulls its estimate down, and the solver makes up the
+  difference with the load Q. The step reports `v_priors_loose` in this mode.
+
 ## v2.8.1 (2026-10-18)
 
 ### Fix
