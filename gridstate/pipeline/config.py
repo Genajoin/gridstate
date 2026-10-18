@@ -317,19 +317,23 @@ class PipelineConfig:
             "measurements."
         ),
     )
-    pseudo_voltage_scope: Literal["all", "generation"] = _param(
+    pseudo_voltage_scope: Literal["all", "generation", "none"] = _param(
         "all",
         group=_G_PSEUDO,
         label="Узлы с псевдо-U",
         control="select",
-        choices=["all", "generation"],
+        choices=["all", "generation", "none"],
         depends={"add_pseudo": True},
         help="Nodes without a V measurement whose pseudo-V prior keeps its σ. "
         "all — every node (default); generation — only the slack and the nodes "
         "with generation (exist_gen or an active generator), which can hold their "
         "voltage. Elsewhere the prior is loosened (σ × 100) and stays for "
         "observability only: a prior at the nominal V on a load node pulls its "
-        "estimate down and the solver makes up the difference with the load Q.",
+        "estimate down and the solver makes up the difference with the load Q. "
+        "none — every pseudo-V prior is loosened, the slack and the generation "
+        "nodes included: V is held by the network, the measurements and the "
+        "voltage limits. Meant for ipm/ipm_pd (their barrier keeps V within the "
+        "limits); with WLS V of an unmeasured area rests on the loosened prior.",
     )
     unobservable_v_sigma_frac: float = _param(
         0.02,

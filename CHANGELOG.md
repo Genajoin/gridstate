@@ -20,7 +20,10 @@ cut by tagging the merged main commit; the version is derived from that tag.
   is multiplied by `v_out_of_scope_loose_factor` (default 1e4, σ × 100) and the
   prior stays for observability only. A prior at the nominal V on a load node
   without a V measurement pulls its estimate down, and the solver makes up the
-  difference with the load Q. The step reports `v_priors_loose` in this mode.
+  difference with the load Q. `"none"` loosens every pseudo-V prior, the slack
+  and the generation nodes included: V is then held by the network, the
+  measurements and the voltage limits (meant for `ipm` / `ipm_pd`). The step
+  reports `v_priors_loose` in both modes.
 
 ### Fix
 

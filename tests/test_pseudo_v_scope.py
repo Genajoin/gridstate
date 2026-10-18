@@ -152,6 +152,17 @@ def test_generation_loose_factor():
     assert sigma[2] == pytest.approx(0.05)
 
 
+def test_none_loosens_every_v_prior():
+    m = _build_model()
+    stats = add_pseudo_measurements(m, voltage_scope="none")
+    sigma = _pseudo_v_sigma_frac(m)
+    assert sigma[1] == pytest.approx(0.1)  # slack: 0.001 × 100
+    for nid in (2, 3, 4, 5):
+        assert sigma[nid] == pytest.approx(5.0)
+    assert 6 not in sigma
+    assert stats["v_priors_loose"] == 5
+
+
 def test_unknown_scope_raises():
     with pytest.raises(ValueError, match="voltage_scope"):
         add_pseudo_measurements(_build_model(), voltage_scope="load")  # type: ignore[arg-type]
@@ -162,7 +173,7 @@ def test_pipeline_field_and_manifest():
     with pytest.raises(ValueError):
         PipelineConfig(pseudo_voltage_scope="load")  # type: ignore[arg-type]
     entry = next(p for p in manifest()["params"] if p["name"] == "pseudo_voltage_scope")
-    assert entry["choices"] == ["all", "generation"]
+    assert entry["choices"] == ["all", "generation", "none"]
     assert entry["depends"] == {"add_pseudo": True}
 
 
@@ -174,3 +185,12 @@ def test_pipeline_runs_with_generation_scope():
     gen = pipeline_run(model, config=PipelineConfig(pseudo_voltage_scope="generation"))
     assert gen.success
     assert np.all(np.isfinite(gen.v_pu))
+
+
+def test_ipm_pd_converges_without_v_priors():
+    out = pipeline_run(
+        _build_model(), config=PipelineConfig(algorithm="ipm_pd", pseudo_voltage_scope="none")
+    )
+    assert out.success
+    assert np.all(np.isfinite(out.v_pu))
+    assert np.all((out.v_pu > 0.7) & (out.v_pu < 1.5))
