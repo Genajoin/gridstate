@@ -26,6 +26,11 @@ def manifest(config: PipelineConfig | type[PipelineConfig] | None = None) -> dic
     toggle list), grouped by ``group``. It takes the defaults from here instead
     of hard-coding them.
 
+    ``depends`` maps field names to the values under which the control is shown;
+    every entry must match. A scalar value matches by equality, a list matches
+    any of its values: ``{"algorithm": ["ipm", "ipm_pd"]}`` shows the control
+    for both IPM solvers.
+
     ``config`` selects the source of defaults and of the iterated fields:
 
     * ``None`` (default) -- ``PipelineConfig()``, the library defaults;

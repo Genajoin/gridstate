@@ -49,6 +49,30 @@ def test_manifest_params_have_required_fields():
         assert p["type"] in {"bool", "int", "float", "str"}
 
 
+def test_manifest_depends_reference_real_fields_and_values():
+    params = {p["name"]: p for p in P.manifest()["params"]}
+    for p in params.values():
+        for name, value in p.get("depends", {}).items():
+            assert name in params, f"{p['name']}: depends on unknown field {name}"
+            values = value if isinstance(value, list) else [value]
+            assert values, f"{p['name']}: empty depends list for {name}"
+            choices = params[name].get("choices")
+            if choices is not None:
+                assert set(values) <= set(choices), f"{p['name']}: {values} not in {choices}"
+
+
+def test_manifest_ipm_group_is_shown_for_ipm_pd():
+    # Primal-only: the trust region scope acts in solve_ipm (the ipm_pd fallback).
+    primal_only = {"ipm_trust_region_scope"}
+    for p in P.manifest()["params"]:
+        algo = p.get("depends", {}).get("algorithm")
+        if algo is None:
+            continue
+        values = algo if isinstance(algo, list) else [algo]
+        assert "ipm" in values, p["name"]
+        assert ("ipm_pd" in values) == (p["name"] not in primal_only), p["name"]
+
+
 def test_every_step_toggle_references_real_config_field():
     cfg_fields = {f.name for f in fields(P.PipelineConfig)}
     for step in P.STEPS:

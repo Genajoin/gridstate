@@ -9,6 +9,16 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.8.1 (2026-10-18)
+
+### Fix
+
+- The UI manifest showed the IPM settings (balance modes, balance weights and
+  the BUS-equivalent prior) only for `algorithm="ipm"`, although `ipm_pd` uses
+  them too. Their `depends` is now `{"algorithm": ["ipm", "ipm_pd"]}`: a list
+  value in `depends` means "one of". `ipm_trust_region_scope` acts in the
+  primal solver only and keeps `{"algorithm": "ipm"}`.
+
 ## v2.8.0 (2026-10-18)
 
 ### Behavior changes

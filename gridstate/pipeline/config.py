@@ -10,7 +10,9 @@ the UI manifest (:func:`gridstate.pipeline.manifest`):
 * ``help``: hint text;
 * ``control``: UI control hint (``"switch"`` / ``"number"`` / ``"select"``);
 * ``min`` / ``max``: bounds (numbers); ``choices``: allowed values (select);
-* ``depends``: show only when another field equals a value (e.g. ``algorithm=ipm``).
+* ``depends``: show only when every named field matches: a scalar value means
+  equality, a list means one of its values (e.g. ``algorithm`` in
+  ``["ipm", "ipm_pd"]``).
 
 ``choices`` / ``min`` / ``max`` are enforced: :meth:`PipelineConfig.validate`
 runs on construction and at the start of a run.
@@ -79,6 +81,8 @@ _G_MODE = "Режим (нагрузка/генерация)"
 _G_CASCADE = "Каскад и статусы"
 _G_PSEUDO = "Псевдо-измерения"
 _G_EST = "Оценка состояния"
+# Algorithms that read the IPM settings (``depends`` of the IPM group).
+_IPM_SOLVERS = ["ipm", "ipm_pd"]
 _G_IPM = "IPM"
 _G_POST = "Пост-обработка"
 
@@ -502,7 +506,7 @@ class PipelineConfig:
         control="number",
         min=1e-4,
         max=1e6,
-        depends={"algorithm": "ipm"},
+        depends={"algorithm": _IPM_SOLVERS},
         help="Меньше → balance мягче. default 0.1. Soft balance only (ipm_balance_mode=soft).",
     )
     ipm_balance_mode: str = _param(
@@ -511,7 +515,7 @@ class PipelineConfig:
         label="Balance mode",
         control="select",
         choices=["soft", "hard"],
-        depends={"algorithm": "ipm"},
+        depends={"algorithm": _IPM_SOLVERS},
         help="soft — the nodal P/Q balance is a weighted pseudo-measurement "
         "(ipm_balance_weight_factor); hard — an equality constraint enforced with "
         "Lagrange multipliers (ipm: method of multipliers; ipm_pd: regularised KKT) "
@@ -603,7 +607,7 @@ class PipelineConfig:
         control="number",
         min=0.0,
         max=1e6,
-        depends={"algorithm": "ipm"},
+        depends={"algorithm": _IPM_SOLVERS},
         help="Nodes whose injection range is fully set by their generation/load boxes get a "
         "balance row with variance median(σ²_data) / factor. The box carries the node's "
         "freedom; a loose balance only hides data conflicts as an imbalance. 0 — off.",
@@ -615,7 +619,7 @@ class PipelineConfig:
         control="number",
         min=0.0,
         max=1e6,
-        depends={"algorithm": "ipm"},
+        depends={"algorithm": _IPM_SOLVERS},
         help="Transit nodes (no exist_gen/exist_load) get a balance row with variance "
         "median(σ²_data) / factor. Their injection is known to be zero; a loose balance "
         "turns data conflicts into a fictitious injection. 0 — off.",
@@ -626,7 +630,7 @@ class PipelineConfig:
         label="Balance mode of transit nodes",
         control="select",
         choices=["soft", "hard"],
-        depends={"algorithm": "ipm"},
+        depends={"algorithm": _IPM_SOLVERS},
         help="soft — the balance of a transit node (no exist_gen/exist_load) is a "
         "weighted row like the others (ipm_transit_balance_weight_factor); hard — an "
         "equality constraint to ipm_transit_balance_tol_p_mw / _q_mvar, the other "
@@ -659,7 +663,7 @@ class PipelineConfig:
         control="number",
         min=0.0,
         max=10.0,
-        depends={"algorithm": "ipm"},
+        depends={"algorithm": _IPM_SOLVERS},
         help="default 0.01 p.u.².",
     )
     ipm_trust_region_scope: str = _param(
@@ -669,7 +673,8 @@ class PipelineConfig:
         control="select",
         choices=["all", "state"],
         depends={"algorithm": "ipm"},
-        help="Coordinates whose Newton step is bounded by the trust region (0.5 p.u.). "
+        help="Primal ipm only (with ipm_pd: its fallback solve). "
+        "Coordinates whose Newton step is bounded by the trust region (0.5 p.u.). "
         "all — the whole state vector, generation/load box variables included "
         "(the previous default); state (default) — V and δ only: a box variable "
         "that has to move far no longer shrinks the V/δ step (boxes stay protected "
