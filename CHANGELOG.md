@@ -9,6 +9,23 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.5.0 (2026-10-18)
+
+### Behavior changes
+
+- After the run, transit nodes (no `exist_gen` / `exist_load`) whose solved
+  injection exceeds `transit_injection_warn_mva` (new, default 5 MVA; 0 turns
+  it off) are listed in a WARNING: a data conflict, or a generation, load or
+  shunt the model does not describe. Estimates are not affected.
+
+### Feat
+
+- `ipm_transit_balance_weight_factor` (new, default 0 — off): the balance row
+  of a transit node gets the variance median(σ²_data) / factor (never looser
+  than the soft balance). Their injection is known to be zero; with the
+  default soft weight a data conflict spreads over them as a fictitious
+  injection.
+
 ## v2.4.1 (2026-10-18)
 
 ### Behavior changes
