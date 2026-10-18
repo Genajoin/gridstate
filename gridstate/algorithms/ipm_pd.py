@@ -244,6 +244,7 @@ def solve_ipm_pd(
     huber_use_mad: bool = False,
     huber_adaptive_k: float = 6.0,
     huber_warmup_iters: int = 5,
+    huber_freeze_mu: float = 1e-4,
     kkt_solver: KKTSolver | None = None,
     eq_prox: float = 1e-9,
     box_prox: float = 1e-6,
@@ -286,6 +287,15 @@ def solve_ipm_pd(
         huber_*: SHGM-IRLS reweighting of the rows of ``huber_mask``, as in
             ``solve_ipm``; the adaptive scale is recomputed every iteration
             (μ changes every iteration).
+        huber_freeze_mu: the reweighting stops once the complementarity μ is
+            at or below it and the last weights are kept. Rows whose residual
+            sits at the Huber threshold flip their weight from one iteration to
+            the next, so the objective the step is computed for changes every
+            iteration and the merit search halves every other step; with the
+            weights frozen the end game is a plain weighted least squares and
+            converges at the Newton rate. Equality rows push the data
+            conflicts into the residuals and make this markedly worse. ``0``
+            reweights to the end.
         kkt_solver: Newton-system solver (``None`` — scipy).
         eq_prox: with equality rows, a proximal term ``eq_prox·max(ρ)`` on the
             diagonal of the box coordinates. A hard balance fixes only the net
@@ -414,8 +424,9 @@ def solve_ipm_pd(
     status = "stalled"
     message = ""
     it = 0
+    mu_last = float("inf")
     for it in range(max_iter):
-        if use_huber and it >= huber_warmup_iters:
+        if use_huber and it >= huber_warmup_iters and mu_last > huber_freeze_mu:
             reweighter.reset_adaptive()
             w = w_base * reweighter.weights(r)
         w_data = np.where(is_eq, 0.0, w)
@@ -423,6 +434,7 @@ def solve_ipm_pd(
         r_l = g[il] - lo[il] - s_l
         r_u = hi[iu] - g[iu] - s_u
         mu = (float(s_l @ y_l) + float(s_u @ y_u)) / n_pairs if n_pairs else 0.0
+        mu_last = mu
         eq_inf = float(np.max(np.abs(c))) if c.size else 0.0
         feas_inf = float(np.max(np.abs(np.concatenate([r_l, r_u])))) if n_pairs else 0.0
         if (
