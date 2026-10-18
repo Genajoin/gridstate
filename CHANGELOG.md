@@ -9,6 +9,28 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.4.1 (2026-10-18)
+
+### Behavior changes
+
+- `ipm_pd`: the proximal term on the box-variable diagonal adapts to the step
+  length: ×10 after a step αp < 0.1, up to `box_prox_max` (new, default 1e-2 of
+  the median weight), ÷10 after αp ≥ 0.5, down to `box_prox`. It damps the step
+  only; the fixed point is unchanged. Estimates on the test models move by
+  ≤ 1.6e-8 p.u. V with unchanged iteration counts.
+- `ipm_pd`: a second stopping test, `fit_tol` (new, default 1e-2): the step moves
+  no data row by more than that fraction of its sigma (the μ, feasibility and
+  equality tests still apply).
+
+### Fix
+
+- `ipm_pd` no longer runs into its iteration limit and the primal fallback when
+  box variables are seen only through near-zero-weight rows (loads with
+  effectively free injections): such directions have barrier curvature only,
+  their steps dwarf the box and the boundary rule cut every step to a tiny αp.
+  A state the data do not determine no longer keeps the V/δ step test from
+  passing (it could move, or cycle, without changing any estimate).
+
 ## v2.4.0 (2026-10-17)
 
 ### Behavior changes
