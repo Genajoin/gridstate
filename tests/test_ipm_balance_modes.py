@@ -75,6 +75,52 @@ def test_unknown_balance_mode_is_rejected():
         _setup(_build_net_with_transit(), balance_mode="strict")
 
 
+def test_transit_hard_mode_makes_only_transit_rows_equalities():
+    # Node order 1..4: node 2 is the transit node.
+    setup = _setup(
+        _build_net_with_transit(),
+        transit_balance_mode="hard",
+        transit_balance_tol_p_mw=0.02,
+        transit_balance_tol_q_mvar=0.2,
+        hard_balance_rho_factor=1e3,
+    )
+    assert setup.balance_tol is None
+    assert setup.eq_rows is not None and setup.eq_tol is not None
+    np.testing.assert_array_equal(setup.eq_rows, [2 + 1, 2 + N_BALANCE + 1])
+    np.testing.assert_allclose(setup.eq_tol, [0.02 / BASE_MVA, 0.2 / BASE_MVA])
+    sigma2 = setup.r_matrix.diagonal()[2 : 2 + 2 * N_BALANCE]
+    soft = _setup(_build_net_with_transit()).r_matrix.diagonal()[2 : 2 + 2 * N_BALANCE]
+    is_eq = np.zeros(2 * N_BALANCE, dtype=bool)
+    is_eq[[1, N_BALANCE + 1]] = True
+    assert np.allclose(sigma2[is_eq], 2.5e-4 / 1e3)
+    np.testing.assert_array_equal(sigma2[~is_eq], soft[~is_eq])
+
+
+def test_soft_modes_have_no_equality_rows():
+    setup = _setup(_build_net_with_transit(), transit_balance_weight_factor=10.0)
+    assert setup.eq_rows is None and setup.eq_tol is None
+
+
+def test_global_hard_mode_overrides_the_transit_mode():
+    setup = _setup(
+        _build_net_with_transit(),
+        balance_mode="hard",
+        balance_tol_p_mw=2.0,
+        transit_balance_mode="hard",
+        transit_balance_tol_p_mw=0.02,
+    )
+    assert setup.eq_rows is not None and setup.eq_tol is not None
+    np.testing.assert_array_equal(setup.eq_rows, setup.balance_rows)
+    np.testing.assert_array_equal(setup.eq_tol, setup.balance_tol)
+
+
+def test_unknown_transit_balance_mode_is_rejected():
+    with pytest.raises(ValueError, match="transit_balance_mode"):
+        _setup(_build_net_with_transit(), transit_balance_mode="strict")
+    with pytest.raises(ValueError, match="ipm_transit_balance_mode"):
+        PipelineConfig(algorithm="ipm_pd", ipm_transit_balance_mode="strict")
+
+
 def test_fixed_injection_from_input():
     m = _build_net_with_transit()
     # Transit node 2 gets a non-estimated load and generation.
@@ -131,6 +177,26 @@ def test_hard_balance_closes_the_estimated_imbalance(algorithm: str):
     assert imb_p <= 0.1 and imb_q <= 0.1
 
 
+@pytest.mark.parametrize("algorithm", ["ipm", "ipm_pd"])
+def test_transit_hard_balance_zeroes_the_transit_injection(algorithm: str):
+    # Soft, the transit node 2 absorbs the data conflict (≈ 4 MW / 14 MVAr).
+    soft = _build_net_with_transit()
+    estimate(soft, algorithm=algorithm, reconcile_balance=False, include_quality_summary=False)
+    n_soft = soft.nodes.to_numpy()
+    assert abs(n_soft["p_inj_calc"][1]) > 1.0 and abs(n_soft["q_inj_calc"][1]) > 1.0
+    m = _build_net_with_transit()
+    res = estimate(
+        m,
+        algorithm=algorithm,
+        reconcile_balance=False,
+        include_quality_summary=False,
+        transit_balance_mode="hard",
+    )
+    assert res.success
+    n = m.nodes.to_numpy()
+    assert abs(n["p_inj_calc"][1]) <= 0.01 and abs(n["q_inj_calc"][1]) <= 0.1
+
+
 def test_ipm_pd_close_to_ipm():
     results = {}
     for algorithm in ("ipm", "ipm_pd"):
@@ -170,6 +236,7 @@ def test_measurement_bounds_require_ipm_pd():
 def test_config_defaults_and_ranges():
     cfg = PipelineConfig(algorithm="ipm_pd")
     assert cfg.ipm_balance_mode == "soft"
+    assert cfg.ipm_transit_balance_mode == "soft"
     assert not cfg.ipm_measurement_bounds and not cfg.ipm_fixed_injection_from_input
     # The soft balance weight may now exceed the median measurement weight tenfold.
     dataclasses.replace(cfg, ipm_balance_weight_factor=1e3)

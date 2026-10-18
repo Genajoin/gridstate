@@ -9,6 +9,24 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.6.0 (2026-10-18)
+
+### Behavior changes
+
+- `ipm_pd` gets the 300-iteration budget with equality rows too (it was 100
+  before the primal fallback), including the global `ipm_balance_mode="hard"`:
+  with the adaptive box damping and the measurement-space stopping test of
+  v2.4.1 the long budget converges where the short one fell back.
+
+### Feat
+
+- `ipm_transit_balance_mode` (new, default `soft`): `hard` makes the P and Q
+  balance rows of transit nodes (no `exist_gen` / `exist_load`) equality
+  constraints of the solver, to `ipm_transit_balance_tol_p_mw` (new, default
+  0.01) / `ipm_transit_balance_tol_q_mvar` (new, default 0.1); the other
+  balance rows stay soft. The global hard balance overrides it. `IPMSetup`
+  gains `eq_rows` / `eq_tol`.
+
 ## v2.5.0 (2026-10-18)
 
 ### Behavior changes

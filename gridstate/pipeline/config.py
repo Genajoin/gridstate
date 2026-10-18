@@ -610,6 +610,38 @@ class PipelineConfig:
         "median(σ²_data) / factor. Their injection is known to be zero; a loose balance "
         "turns data conflicts into a fictitious injection. 0 — off.",
     )
+    ipm_transit_balance_mode: str = _param(
+        "soft",
+        group=_G_IPM,
+        label="Balance mode of transit nodes",
+        control="select",
+        choices=["soft", "hard"],
+        depends={"algorithm": "ipm"},
+        help="soft — the balance of a transit node (no exist_gen/exist_load) is a "
+        "weighted row like the others (ipm_transit_balance_weight_factor); hard — an "
+        "equality constraint to ipm_transit_balance_tol_p_mw / _q_mvar, the other "
+        "balance rows stay soft. No effect when ipm_balance_mode=hard.",
+    )
+    ipm_transit_balance_tol_p_mw: float = _param(
+        0.01,
+        group=_G_IPM,
+        label="Transit balance tolerance P, MW",
+        control="number",
+        min=1e-6,
+        max=1e3,
+        depends={"ipm_transit_balance_mode": "hard"},
+        help="Admissible |P injection| of a transit node under the hard transit balance.",
+    )
+    ipm_transit_balance_tol_q_mvar: float = _param(
+        0.1,
+        group=_G_IPM,
+        label="Transit balance tolerance Q, MVAr",
+        control="number",
+        min=1e-6,
+        max=1e3,
+        depends={"ipm_transit_balance_mode": "hard"},
+        help="Admissible |Q injection| of a transit node under the hard transit balance.",
+    )
     ipm_prior_sigma2_bus_equiv_pu: float = _param(
         0.01,
         group=_G_IPM,

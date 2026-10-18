@@ -826,7 +826,7 @@ def _run_ipm(
         delta, v, _pg, _qg, _pn, _qn = unpack_full(x, layout_ipm)
         return algebra.evaluate_jacobian(v, delta)
 
-    eq_idx = setup.balance_rows if setup.balance_tol is not None else None
+    eq_idx = setup.eq_rows
     pd_result: IPMResult | None = None
     if solver == "ipm_pd":
         mb_rows = mb_lo = mb_hi = None
@@ -852,13 +852,12 @@ def _run_ipm(
             meas_box_lo=mb_lo,
             meas_box_hi=mb_hi,
             eq_idx=eq_idx,
-            eq_tol=setup.balance_tol,
+            eq_tol=setup.eq_tol,
             mu_init=1.0,
             step_tol=max(tolerance, 1e-4),
             # Weakly determined units need up to ~260 iterations with separate
-            # injection parts; a hard balance does not converge in that budget
-            # either way, so it keeps the short one before the fallback.
-            max_iter=max(max_iterations, 100 if eq_idx is not None else 300),
+            # injection parts, with or without equality rows.
+            max_iter=max(max_iterations, 300),
             tr_radius=0.5,
             huber_c=huber_c,
             huber_mask=huber_mask,
@@ -910,7 +909,7 @@ def _run_ipm(
             huber_adaptive_k=2.0,
             kkt_solver=kkt,
             eq_idx=eq_idx,
-            eq_tol=setup.balance_tol,
+            eq_tol=setup.eq_tol,
         )
         if solver == "ipm_pd":
             result.message = f"ipm_pd fallback to ipm ({pd_message}): {result.message}"
