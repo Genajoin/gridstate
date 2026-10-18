@@ -22,8 +22,6 @@ cut by tagging the merged main commit; the version is derived from that tag.
   without a V measurement pulls its estimate down, and the solver makes up the
   difference with the load Q. The step reports `v_priors_loose` in this mode.
 
-## v2.8.1 (2026-10-18)
-
 ### Fix
 
 - The UI manifest showed the IPM settings (balance modes, balance weights and

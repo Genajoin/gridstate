@@ -100,3 +100,6 @@ tests/test_data/**/*.log
 
 # Local-only specs / extracted material
 .specs/
+
+# Library: no lock file in the repository
+uv.lock
