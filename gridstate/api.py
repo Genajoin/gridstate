@@ -777,7 +777,7 @@ def _run_ipm(
     role_estimates: dict[int, float] | None = None,
     hint_iterations: int = 100,
     huber_threshold: str = "fixed",
-    voltage_guard: bool = False,
+    voltage_guard: bool = True,
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM mode: extends the state vector with box-vars and solves the primal log-barrier WLS.
@@ -817,6 +817,10 @@ def _run_ipm(
     than ``hint_iterations`` iterations (``0`` — no iteration trigger) logs a
     WARNING with convergence hints (:mod:`gridstate.ipm_hints`).
 
+    ``voltage_guard`` (``"ipm_pd"`` only, ignored by ``"ipm"``): node V boxes
+    from ``voltage_min`` / ``voltage_max`` and per-step limits on V/δ (see
+    :func:`_voltage_guard_kwargs`).
+
     ``huber_threshold`` (``"ipm_pd"`` only): ``"fixed"`` keeps the Huber
     threshold at ``huber_c``; ``"adaptive"`` raises it to ``k·median|r/σ|``,
     recomputed every iteration, so the estimate follows the solver path. The
@@ -826,8 +830,6 @@ def _run_ipm(
         raise ValueError(f"huber_threshold={huber_threshold!r} is not one of fixed/adaptive")
     if measurement_bounds and solver != "ipm_pd":
         raise ValueError("measurement_bounds requires algorithm='ipm_pd'")
-    if voltage_guard and solver != "ipm_pd":
-        raise ValueError("voltage_guard requires algorithm='ipm_pd'")
     if trust_region_scope not in ("all", "state"):
         raise ValueError(
             f"trust_region_scope={trust_region_scope!r} is not one of ['all', 'state']"

@@ -553,14 +553,14 @@ class PipelineConfig:
         "inequality of the interior-point problem. Default OFF.",
     )
     ipm_voltage_guard: bool = _toggle(
-        False,
+        True,
         group=_G_IPM,
         label="Voltage guard (ipm_pd)",
-        help="ipm_pd only: every node V is kept within a box from its "
-        "voltage_min/voltage_max (unset or implausible limits fall back to "
-        "0.55/1.8 p.u. of nominal, 0.7..1.5 with neither set), and one step "
+        help="ipm_pd only (ignored otherwise): every node V is kept within a box "
+        "from its voltage_min/voltage_max (unset or implausible limits fall back "
+        "to 0.55/1.8 p.u. of nominal, 0.7..1.5 with neither set), and one step "
         "changes V by at most 20 %, an angle by at most 0.6 rad and a branch "
-        "angle difference by at most 0.35 rad. Default OFF.",
+        "angle difference by at most 0.35 rad. Default ON.",
     )
     ipm_injection_roles: bool = _toggle(
         False,
@@ -995,8 +995,6 @@ class PipelineConfig:
                 problems.append(f"{f.name}={value!r} is above the maximum {hi!r}")
         if getattr(self, "ipm_measurement_bounds", False) and self.algorithm != "ipm_pd":
             problems.append("ipm_measurement_bounds requires algorithm='ipm_pd'")
-        if getattr(self, "ipm_voltage_guard", False) and self.algorithm != "ipm_pd":
-            problems.append("ipm_voltage_guard requires algorithm='ipm_pd'")
         if getattr(self, "ipm_injection_roles", False) and self.algorithm not in (
             "ipm",
             "ipm_pd",

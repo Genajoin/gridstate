@@ -233,16 +233,14 @@ def test_measurement_bounds_require_ipm_pd():
         PipelineConfig(algorithm="ipm", ipm_measurement_bounds=True)
 
 
-def test_voltage_guard_requires_ipm_pd():
-    with pytest.raises(ValueError, match="ipm_pd"):
-        estimate(_build_net_with_transit(), algorithm="ipm", voltage_guard=True)
-    with pytest.raises(ValueError, match="ipm_pd"):
-        PipelineConfig(algorithm="ipm", ipm_voltage_guard=True)
-    assert not PipelineConfig(algorithm="ipm_pd").ipm_voltage_guard
+def test_voltage_guard_is_on_by_default_and_ignored_outside_ipm_pd():
+    assert PipelineConfig(algorithm="ipm_pd").ipm_voltage_guard
+    PipelineConfig(algorithm="ipm", ipm_voltage_guard=True)
+    assert estimate(_build_net_with_transit(), algorithm="ipm", voltage_guard=True).success
 
 
 def test_voltage_guard_keeps_v_within_the_node_limits():
-    free = estimate(_build_net_with_transit(), algorithm="ipm_pd")
+    free = estimate(_build_net_with_transit(), algorithm="ipm_pd", voltage_guard=False)
     m = _build_net_with_transit()
     nd = m.nodes.to_numpy()
     v_free = {int(i): float(v) for i, v in zip(nd["id"], free.v_pu, strict=True)}
