@@ -191,6 +191,26 @@ def test_pd_adaptive_box_prox_is_inactive_on_long_steps() -> None:
     np.testing.assert_array_equal(base.x, adaptive.x)
 
 
+def test_pd_fit_tol_stops_once_the_estimates_settle() -> None:
+    # x1 enters only a row of negligible weight: once the measured x0 has
+    # settled, the remaining steps move x1 alone and no estimate noticeably.
+    z = np.array([1.0, 1.2, 3.0])
+    w = np.array([1.0, 1.0, 1e-12])
+
+    def residual_fn(x: np.ndarray) -> np.ndarray:
+        return z - np.array([x[0], x[0], np.sinh(x[1])])
+
+    def jacobian_fn(x: np.ndarray) -> csr_matrix:
+        return csr_matrix(np.array([[1.0, 0.0], [1.0, 0.0], [0.0, np.cosh(x[1])]]))
+
+    kw: dict[str, Any] = {"step_tol": 1e-12, "max_iter": 60}
+    by_fit = solve_ipm_pd(np.zeros(2), residual_fn, jacobian_fn, w, **kw)
+    by_step = solve_ipm_pd(np.zeros(2), residual_fn, jacobian_fn, w, fit_tol=0.0, **kw)
+    assert by_fit.success and by_step.success
+    assert by_fit.iterations_outer < by_step.iterations_outer
+    assert by_fit.x[0] == pytest.approx(1.1, abs=1e-9)
+
+
 def test_pd_merit_search_stops_gauss_newton_overshoot() -> None:
     # h = atan(x), z = 0 from x0 = 1.5: the Gauss-Newton step −(1 + x²)·atan(x)
     # overshoots and the full-step iteration diverges; the merit search does not.
@@ -200,7 +220,9 @@ def test_pd_merit_search_stops_gauss_newton_overshoot() -> None:
     def jacobian_fn(x: np.ndarray) -> csr_matrix:
         return csr_matrix(np.array([[1.0 / (1.0 + x[0] ** 2)]]))
 
-    kw = {"tr_radius": 1e6, "step_tol": 1e-10, "max_iter": 50}
+    # fit_tol off: far out on the plateau of atan a diverging step barely moves
+    # the estimate, and this test is about the search, not the stopping rule.
+    kw = {"tr_radius": 1e6, "step_tol": 1e-10, "fit_tol": 0.0, "max_iter": 50}
     no_search = solve_ipm_pd(
         np.array([1.5]), residual_fn, jacobian_fn, np.ones(1), armijo_max=0, **kw
     )

@@ -233,6 +233,7 @@ def solve_ipm_pd(
     armijo_max: int = 10,
     max_search_failures: int = 20,
     step_tol: float = 1e-4,
+    fit_tol: float = 1e-2,
     feas_tol: float = 1e-6,
     max_iter: int = 100,
     box_eps: float = 1e-3,
@@ -273,6 +274,11 @@ def solve_ipm_pd(
             outside ``box_idx`` (V/δ) is below it. Box variables may still move
             along directions the data do not see (the common level of a node's
             generation and load), which change neither the state nor the residuals.
+        fit_tol: alternatively, stop once that step moves no data row by more
+            than ``fit_tol`` of its sigma (``max √w·|H·αp·Δx|``). A state the data
+            do not determine (a node behind loads whose injection rows carry
+            near-zero weight) can keep moving, or cycle, without changing any
+            estimated measurement; the fit has converged all the same.
         feas_tol: admissible primal infeasibility of the inequalities (p.u.).
         max_iter: iteration limit (one factorization each).
         box_eps: margin from the bounds when projecting ``x_init``.
@@ -402,6 +408,7 @@ def solve_ipm_pd(
     w = w_base
     mu = mu0 if n_pairs else 0.0
     step_inf = float("inf")
+    fit_inf = float("inf")
     eq_inf = 0.0
     grad_inf = float("inf")
     status = "stalled"
@@ -423,7 +430,7 @@ def solve_ipm_pd(
             and mu <= mu_min
             and feas_inf <= feas_tol
             and bool(np.all(np.abs(c) <= eq_tol_arr))
-            and step_inf <= step_tol
+            and (step_inf <= step_tol or fit_inf <= fit_tol)
         ):
             status = "kkt"
             break
@@ -514,7 +521,8 @@ def solve_ipm_pd(
             il=il,
             iu=iu,
         )
-        slope = merit.slope(lin, H @ dx, ds_l, ds_u)
+        hdx = H @ dx
+        slope = merit.slope(lin, hdx, ds_l, ds_u)
         if slope >= 0.0 and n_pairs:
             # The corrector's second-order term can spoil descent; the pure
             # centering direction is a Newton step on the merit and descends
@@ -522,9 +530,11 @@ def solve_ipm_pd(
             dx_c, ds_l_c, ds_u_c, dy_l_c, dy_u_c, dlam_c = lin.direction(
                 target - s_l * y_l, target - s_u * y_u
             )
-            slope_c = merit.slope(lin, H @ dx_c, ds_l_c, ds_u_c)
+            hdx_c = H @ dx_c
+            slope_c = merit.slope(lin, hdx_c, ds_l_c, ds_u_c)
             if slope_c < 0.0 and np.all(np.isfinite(dx_c)):
                 dx, ds_l, ds_u, dy_l, dy_u, dlam = dx_c, ds_l_c, ds_u_c, dy_l_c, dy_u_c, dlam_c
+                hdx = hdx_c
                 slope = slope_c
                 n_centering += 1
 
@@ -545,6 +555,7 @@ def solve_ipm_pd(
             a_p = tr_radius / free_inf
         # The stopping test measures the Newton step, not how far the search cut it.
         step_inf = a_p * free_inf
+        fit_inf = a_p * float(np.max(np.sqrt(w_data) * np.abs(hdx))) if m else 0.0
         a_full = a_p
         r_new = None
         # A direction that does not descend (inconsistent slacks of a nonlinear
