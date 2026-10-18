@@ -9,6 +9,24 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.7.0 (2026-10-18)
+
+### Behavior changes
+
+- `ipm_pd` stops the Huber reweighting once the complementarity μ is at or
+  below `huber_freeze_mu` (new solver argument, default 1e-4) and keeps the
+  last weights. Estimates move slightly (≤ 0.005 kV median |ΔV| on the test
+  models, individual nodes up to ~2e-3 p.u.); iteration counts drop.
+
+### Perf
+
+- `ipm_pd` end game with Huber: rows whose residual sits at the threshold
+  flipped their weight every iteration, the merit search halved every other
+  step and the solve zigzagged at a linear rate. Equality rows (the hard
+  transit balance) made it markedly worse: on the test models the hard mode
+  needed up to 109 iterations per solve where the soft one needs 18. With the
+  weights frozen: 28; the hard mode now runs within ~10–15 % of the soft one.
+
 ## v2.6.0 (2026-10-18)
 
 ### Behavior changes
