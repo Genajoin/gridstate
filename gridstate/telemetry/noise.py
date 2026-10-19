@@ -20,6 +20,10 @@ part of the result:
 5. ``flow_sigma_floor`` raises real branch-flow variances to the square of
    :func:`flow_sigma_floor` (branch Vn = the larger end).
 
+A variance given by the data producer (``DerivedInputs.measurement_sigma2``)
+replaces the rule of step 1; with ``external_sigma2="final"`` steps 1-5 leave it
+alone (see :func:`gridstate.telemetry.apply_resolved.apply_telemetry_resolved`).
+
 The two branch nominal-voltage policies (``"from"`` for the charging floor,
 ``"max"`` for the channel floor) are kept apart in :func:`branch_nominal_kv`.
 """

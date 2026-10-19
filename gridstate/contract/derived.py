@@ -30,6 +30,12 @@ FlowKey = tuple[int, str]
 #: Plausible range of a telemetry value: ``(lo, hi)``, same units and sign as the
 #: value; an unset side is ``-inf`` / ``+inf``.
 TelemetryBounds = tuple[float, float]
+#: External pseudo-measurement key: ``(node_id, kind)``, ``kind`` ∈ ``v`` /
+#: ``p_inj`` / ``q_inj``.
+PseudoKey = tuple[int, str]
+#: External pseudo-measurement: ``(value, sigma2)`` in the units of the kind
+#: (kV / MW / Mvar and their squares; injections are generation-positive).
+PseudoValue = tuple[float, float]
 
 
 @dataclass
@@ -54,7 +60,16 @@ class DerivedInputs:
     * ``telemetry_bounds`` — ``{TelemetryKey: TelemetryBounds}``, the plausible
       range of a telemetry value (e.g. the range of its source channel); the
       telemetry kernel writes it into ``min_value`` / ``max_value`` of the
-      measurement row the value feeds. ``None`` = no ranges.
+      measurement row the value feeds. ``None`` = no ranges;
+    * ``measurement_sigma2`` — ``{TelemetryKey: sigma2}``, the absolute variance
+      of a telemetry value in its units (kV², MW², Mvar²). It replaces the
+      variance rule of the telemetry layer for the row the value feeds; the
+      components summed into one row (injection components, repeated hits)
+      sum their variances. What the later steps may do with it is set by
+      ``PipelineConfig.external_sigma2``. ``None`` = the built-in rules;
+    * ``pseudo_measurements`` — ``{PseudoKey: PseudoValue}``, pseudo-measurements
+      added as given (``is_pseudo``, variance final) by the ``external_pseudo``
+      step, before the built-in ``add_pseudo``. ``None`` = none.
 
     The vocabulary, dtypes and meaning of every field are specified in
     :mod:`gridstate.contract.derived_tables`. Tap changer positions are applied
@@ -71,3 +86,5 @@ class DerivedInputs:
     v_sigma2_scale: dict[int, float] | None = None
     flow_sigma2_scale: dict[FlowKey, float] | None = None
     telemetry_bounds: dict[TelemetryKey, TelemetryBounds] | None = None
+    measurement_sigma2: dict[TelemetryKey, float] | None = None
+    pseudo_measurements: dict[PseudoKey, PseudoValue] | None = None

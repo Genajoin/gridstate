@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from gridstate.pipeline.context import _Ctx, _missing_plan
 from gridstate.preprocessing import (
+    add_external_pseudo_measurements,
     add_pseudo_measurements,
     mirror_voltage_through_unit_tap_links,
 )
@@ -116,19 +117,33 @@ def _s_telemetry(ctx: _Ctx) -> dict:
         or ctx.derived.telemetry_arg_keys is None
     ):
         raise _missing_plan("telemetry", "telemetry_resolved", "telemetry_arg_keys")
-    return dict(
+    cfg = ctx.cfg
+    fixed: set[int] = set()
+    stats = dict(
         apply_telemetry_resolved(
             ctx.model,
             ctx.derived.telemetry_resolved,
             ctx.derived.telemetry_arg_keys,
             total_args=ctx.derived.telemetry_total_args,
+            questionable_sigma2_multiplier=cfg.questionable_sigma2_multiplier,
             v_sigma2_scale_by_node=ctx.derived.v_sigma2_scale,
             flow_sigma2_scale_by_branch=ctx.derived.flow_sigma2_scale,
-            injection_roles=ctx.cfg.ipm_injection_roles,
+            sign_inconsistency_threshold_mw=100.0 if cfg.flow_sign_check else None,
+            q_loss_filter_enabled=cfg.q_loss_filter != "off",
+            q_loss_filter_action="deactivate"
+            if cfg.q_loss_filter == "deactivate"
+            else "downweight",
+            injection_roles=cfg.ipm_injection_roles,
             telemetry_bounds=ctx.derived.telemetry_bounds,
+            v_below_half_nominal_check=cfg.v_below_half_nominal_check,
+            measurement_sigma2=ctx.derived.measurement_sigma2,
+            external_sigma2=cfg.external_sigma2,
+            fixed_sigma2_ids=fixed,
         )
         or {}
     )
+    ctx.fixed_sigma2_ids = frozenset(fixed)
+    return stats
 
 
 def _s_voltage_range_filter(ctx: _Ctx) -> dict:
@@ -139,6 +154,8 @@ def _s_voltage_range_filter(ctx: _Ctx) -> dict:
             deactivate_nonphysical=ctx.cfg.voltage_filter_deactivate_nonphysical,
             nonphysical_lower_factor=ctx.cfg.voltage_filter_nonphysical_lower_factor,
             nonphysical_upper_factor=ctx.cfg.voltage_filter_nonphysical_upper_factor,
+            questionable_sigma2_multiplier=ctx.cfg.questionable_sigma2_multiplier,
+            skip_ids=ctx.fixed_sigma2_ids,
         )
         or {}
     )
@@ -197,7 +214,7 @@ def _s_widen_generation_only_injections(ctx: _Ctx) -> dict:
     gen_only = generation_only_injection_nodes(
         ctx.derived.telemetry_resolved, ctx.derived.telemetry_arg_keys
     )
-    return widen_generation_only_injections(ctx.model, gen_only)
+    return widen_generation_only_injections(ctx.model, gen_only, skip_ids=ctx.fixed_sigma2_ids)
 
 
 def _s_gen_v_calibration(ctx: _Ctx) -> dict:
@@ -205,6 +222,7 @@ def _s_gen_v_calibration(ctx: _Ctx) -> dict:
         apply_voltage_meas_calibration_for_gen_nodes(
             ctx.model,
             mode=ctx.cfg.gen_v_calibration_mode,  # type: ignore[arg-type]
+            skip_ids=ctx.fixed_sigma2_ids,
         )
         or {}
     )
@@ -227,10 +245,18 @@ def _s_materialize(ctx: _Ctx) -> dict:
     return {}
 
 
+def _s_external_pseudo(ctx: _Ctx) -> dict:
+    if ctx.derived is None or ctx.derived.pseudo_measurements is None:
+        return {"skipped": "no external pseudo-measurements (derived.pseudo_measurements)"}
+    return add_external_pseudo_measurements(ctx.model, ctx.derived.pseudo_measurements)
+
+
 def _s_add_pseudo(ctx: _Ctx) -> dict:
     return dict(
         add_pseudo_measurements(
             ctx.model,
+            add_zero_injections=ctx.cfg.pseudo_injections,
+            add_v_priors=ctx.cfg.pseudo_v,
             unobservable_v_sigma_frac=ctx.cfg.unobservable_v_sigma_frac,
             unobservable_v_min_vm_deviation=ctx.cfg.unobservable_v_min_vm_deviation,
             unmeasured_gen_p_nodes=ctx.released_injections.get("P", frozenset()),
@@ -250,4 +276,6 @@ def _s_flow_sigma_floor(ctx: _Ctx) -> dict:
     frac = ctx.cfg.flow_sigma_floor_kv_frac
     if frac is None or frac <= 0:
         return {"skipped": "выключено (flow_sigma_floor_kv_frac=None)"}
-    return dict(apply_flow_sigma_floor(ctx.model, kv_frac=float(frac)) or {})
+    return dict(
+        apply_flow_sigma_floor(ctx.model, kv_frac=float(frac), skip_ids=ctx.fixed_sigma2_ids) or {}
+    )

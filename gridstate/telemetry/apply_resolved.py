@@ -11,10 +11,12 @@ format layer). The measurement kind maps (``KIND_MAP`` / ``NODE_INJ_MAP`` /
 
 from __future__ import annotations
 
+import logging
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from statistics import median
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -57,6 +59,8 @@ if TYPE_CHECKING:
     from gridstate.working import Working
 
 
+logger = logging.getLogger(__name__)
+
 _OT_NODE = int(MeasurementObjectType.NODE)
 _OT_BRANCH = int(MeasurementObjectType.BRANCH)
 _MT_Q = int(MeasurementType.POWER_Q)
@@ -89,6 +93,9 @@ class TelemetryApplyConfig:
     q_loss_filter_downweight_factor: float = 100.0
     injection_roles: bool = False
     telemetry_bounds: dict[tuple[int, str], tuple[float, float]] | None = None
+    v_below_half_nominal_check: bool = True
+    measurement_sigma2: dict[tuple[int, str], float] | None = None
+    external_sigma2: Literal["final", "base"] = "final"
 
 
 def apply_telemetry_resolved(
@@ -111,6 +118,10 @@ def apply_telemetry_resolved(
     q_loss_filter_downweight_factor: float = 100.0,
     injection_roles: bool = False,
     telemetry_bounds: dict[tuple[int, str], tuple[float, float]] | None = None,
+    v_below_half_nominal_check: bool = True,
+    measurement_sigma2: dict[tuple[int, str], float] | None = None,
+    external_sigma2: Literal["final", "base"] = "final",
+    fixed_sigma2_ids: set[int] | None = None,
 ) -> dict[str, int]:
     """Apply a ready ``resolved`` z-vector to ``measurements``.
 
@@ -132,6 +143,28 @@ def apply_telemetry_resolved(
     voltage / flow row, summed over the components for an injection row (the
     net row combines the generation and load ranges). An unset side becomes the
     ±9999 sentinel; rows without any range are left untouched.
+
+    ``v_below_half_nominal_check`` (default on) leaves a node V reading below
+    half its nominal voltage inactive (a dead-sensor sentinel).
+
+    ``measurement_sigma2`` (``{(object_id, kind): sigma2}``, see
+    :attr:`gridstate.contract.derived.DerivedInputs.measurement_sigma2`) gives
+    the variance of a row instead of the built-in rule when every value summed
+    into the row has one (the variances of the summed values add up).
+    ``external_sigma2`` sets what happens next:
+
+    * ``"final"``: the variance is final. The QUESTIONABLE multiplier, the
+      producer's sigma^2 scale plans and the Q-loss downweight are not applied
+      to the row, and its id is added to ``fixed_sigma2_ids`` (when given) so
+      that the later pipeline steps leave its variance alone too. A row that
+      only some of its values have a variance for raises ``ValueError``;
+    * ``"base"``: the variance replaces the built-in rule only; every
+      adjustment applies as usual. A partly covered row keeps the built-in
+      rule (counted in ``stats["sigma2_external_partial"]``, logged).
+
+    Raises:
+        ValueError: a variance that is not finite and positive, an unknown
+            ``external_sigma2``, or a partly covered row under ``"final"``.
     """
     config = TelemetryApplyConfig(
         questionable_sigma2_multiplier=questionable_sigma2_multiplier,
@@ -148,6 +181,9 @@ def apply_telemetry_resolved(
         q_loss_filter_downweight_factor=q_loss_filter_downweight_factor,
         injection_roles=injection_roles,
         telemetry_bounds=telemetry_bounds,
+        v_below_half_nominal_check=v_below_half_nominal_check,
+        measurement_sigma2=measurement_sigma2,
+        external_sigma2=external_sigma2,
     )
     meas_arr = table_copy(model.measurements)
     nodes_arr = model.nodes.to_numpy()
@@ -161,6 +197,7 @@ def apply_telemetry_resolved(
         resolved,
         total_args=total_args,
         config=config,
+        fixed_ids=fixed_sigma2_ids,
     )
 
     table_replace(model.measurements, meas_arr)
@@ -307,6 +344,66 @@ def _measurement_variance(
     return variance_power(value, sigma_frac=config.branch_p_sigma_frac)
 
 
+@dataclass
+class _ExternalSigma2:
+    """Accumulated external variances of the rows of one telemetry application.
+
+    ``rows`` maps a row (a ``meas_arr`` index of a voltage / flow row, or the
+    key of an injection row) to ``(sum, n_with, n_without)`` over the values
+    summed into it; ``partial`` collects the partly covered rows.
+    """
+
+    sigma2: dict[tuple[int, str], float]
+    final: bool
+    rows: dict[object, tuple[float, int, int]]
+    partial: set[object]
+
+    def add(self, row: object, key: tuple[int, str], *, first: bool) -> float | None:
+        """Account the value ``key`` summed into ``row``; the row variance or ``None``.
+
+        ``None`` while some value of the row has no variance (the built-in rule
+        applies). A partly covered row raises ``ValueError`` when final.
+        """
+        total, n_with, n_without = (0.0, 0, 0) if first else self.rows[row]
+        s2 = self.sigma2.get(key)
+        if s2 is None:
+            n_without += 1
+        else:
+            total += s2
+            n_with += 1
+        self.rows[row] = (total, n_with, n_without)
+        if n_without == 0:
+            return total
+        if n_with > 0:
+            if self.final:
+                raise ValueError(
+                    f"measurement_sigma2 covers only part of the values summed into the "
+                    f"row of {key!r}; with external_sigma2='final' every value of a row "
+                    "needs a variance"
+                )
+            self.partial.add(row)
+        return None
+
+
+def _external_sigma2(config: TelemetryApplyConfig) -> _ExternalSigma2 | None:
+    """Validated accumulator of ``config.measurement_sigma2`` (``None`` when not given)."""
+    if config.measurement_sigma2 is None:
+        return None
+    if config.external_sigma2 not in ("final", "base"):
+        raise ValueError(
+            f"external_sigma2 must be 'final' or 'base', got {config.external_sigma2!r}"
+        )
+    for key, s2 in config.measurement_sigma2.items():
+        if not (math.isfinite(s2) and s2 > 0.0):
+            raise ValueError(f"measurement_sigma2[{key!r}] = {s2!r}: expected finite > 0")
+    return _ExternalSigma2(
+        sigma2=config.measurement_sigma2,
+        final=config.external_sigma2 == "final",
+        rows={},
+        partial=set(),
+    )
+
+
 def _apply_measurement_loop(
     meas_arr: np.ndarray,
     arg_keys: list[tuple[int, str]],
@@ -324,6 +421,8 @@ def _apply_measurement_loop(
     inj_acc: dict[tuple[int, str], list[tuple[float, str, int]]],
     role_acc: dict[tuple[int, str, int], list[tuple[float, str, int]]] | None = None,
     bounds_acc: dict[tuple[int, str], list[tuple[int, float, float]]] | None = None,
+    ext: _ExternalSigma2 | None = None,
+    inj_keys: dict[tuple[int, str], list[tuple[int, str]]] | None = None,
 ) -> None:
     """Main application loop over ``arg_keys``.
 
@@ -333,6 +432,9 @@ def _apply_measurement_loop(
     With ``config.telemetry_bounds`` the activated voltage / flow rows get their
     ``min_value`` / ``max_value`` and ``bounds_acc`` collects the component
     ranges of the node injections (``(sign, lo, hi)`` per component).
+    With ``ext`` the external variances of the voltage / flow rows are
+    accumulated there, and ``inj_keys`` collects the keys of the components of
+    every node injection (``(node, "P"|"Q")`` → keys) for the injection rows.
     """
     for obj_id, kind in arg_keys:
         # NODE injection component (p_gen/p_load/q_gen/q_load, optionally with a
@@ -355,6 +457,8 @@ def _apply_measurement_loop(
             inj_acc.setdefault((obj_id, pq), []).append((val, guid_first, q))
             if role_acc is not None:
                 role_acc.setdefault((obj_id, pq, mult), []).append((value, guid_first, q))
+            if inj_keys is not None:
+                inj_keys.setdefault((obj_id, pq), []).append((obj_id, kind))
             if bounds_acc is not None:
                 lo, hi = (config.telemetry_bounds or {}).get((obj_id, kind), _NO_BOUNDS)
                 bounds_acc.setdefault((obj_id, pq), []).append((mult, float(lo), float(hi)))
@@ -413,7 +517,7 @@ def _apply_measurement_loop(
         # equipment sentinel. It must not be accepted as a hard anchor: SE would pull
         # V→0 at the node and around it (a non-physical minimum of J). It is not
         # activated; add_pseudo_measurements adds pseudo-V=Vnom instead.
-        if mt == _MT_V and ot == _OT_NODE:
+        if config.v_below_half_nominal_check and mt == _MT_V and ot == _OT_NODE:
             obj_node = int(meas_arr[idx]["object_id"])
             vn = vn_by_node.get(obj_node, 220.0)
             if vn > 0 and abs(val) < 0.5 * vn:
@@ -422,6 +526,11 @@ def _apply_measurement_loop(
                 continue
         if config.telemetry_bounds is not None and (obj_id, kind) in config.telemetry_bounds:
             _set_bounds(meas_arr, idx, [(1, *config.telemetry_bounds[(obj_id, kind)])])
+        ext_var = (
+            None
+            if ext is None
+            else ext.add(idx, (obj_id, kind), first=not bool(meas_arr[idx]["status"]))
+        )
         if meas_arr[idx]["status"]:
             meas_arr[idx]["value"] = float(meas_arr[idx]["value"]) + val
             # Worst-case accumulation of quality on repeated hits.
@@ -431,24 +540,29 @@ def _apply_measurement_loop(
             meas_arr[idx]["status"] = True
             meas_arr[idx]["source_guid"] = guid_first
             meas_arr[idx]["quality"] = q
-        var = _measurement_variance(
-            meas_arr,
-            idx,
-            mt=mt,
-            ot=ot,
-            obj_id=obj_id,
-            vn_by_node=vn_by_node,
-            branch_vn=branch_vn,
-            branch_b=branch_b,
-            config=config,
-        )
-        if int(meas_arr[idx]["quality"]) == _Q_QUESTIONABLE:
+        if ext_var is not None:
+            var = ext_var
+        else:
+            var = _measurement_variance(
+                meas_arr,
+                idx,
+                mt=mt,
+                ot=ot,
+                obj_id=obj_id,
+                vn_by_node=vn_by_node,
+                branch_vn=branch_vn,
+                branch_b=branch_b,
+                config=config,
+            )
+        # An external final variance takes none of the adjustments below.
+        adjust = ext_var is None or ext is None or not ext.final
+        if adjust and int(meas_arr[idx]["quality"]) == _Q_QUESTIONABLE:
             var *= config.questionable_sigma2_multiplier
         # Per-measurement σ² scale of a node V measurement from the data
         # producer's plan ({node_id: factor}; factor<1 increases trust in the
         # measurement -- an "anchor" sensor, factor>1 reduces it). Node V only
         # (mt=2, ot=0).
-        if mt == _MT_V and ot == _OT_NODE and config.v_sigma2_scale_by_node:
+        if adjust and mt == _MT_V and ot == _OT_NODE and config.v_sigma2_scale_by_node:
             scale = config.v_sigma2_scale_by_node.get(int(meas_arr[idx]["object_id"]))
             if scale is not None:
                 var *= float(scale)
@@ -457,7 +571,7 @@ def _apply_measurement_loop(
         # A similar plan for branch flow measurements: {(branch_id, kind): factor},
         # kind ∈ p_from/p_to/q_from/q_to. factor>1 reduces trust (a measurement that is
         # a defect candidate per the producer's data), factor<1 increases it.
-        if ot == _OT_BRANCH and config.flow_sigma2_scale_by_branch:
+        if adjust and ot == _OT_BRANCH and config.flow_sigma2_scale_by_branch:
             scale = config.flow_sigma2_scale_by_branch.get((int(obj_id), kind))
             if scale is not None:
                 var *= float(scale)
@@ -467,7 +581,8 @@ def _apply_measurement_loop(
         # downweight σ² × factor (a loose anchor: the reading stays with a low weight).
         # Applied after the default σ is computed.
         if kind in (KIND_Q_FROM, KIND_Q_TO) and obj_id in q_inconsistent_hv_branches:
-            var *= config.q_loss_filter_downweight_factor
+            if adjust:
+                var *= config.q_loss_filter_downweight_factor
             meas_arr[idx]["filter_flag"] = int(FilterFlag.Q_INCONSISTENCY)  # q_inconsistency mark
         meas_arr[idx]["variance"] = float(var)
         meas_arr[idx]["weight"] = 1.0 / float(var)
@@ -527,6 +642,9 @@ def _build_node_injection_rows(
     stats: dict[str, int],
     role_acc: dict[tuple[int, str, int], list[tuple[float, str, int]]] | None = None,
     bounds_acc: dict[tuple[int, str], list[tuple[int, float, float]]] | None = None,
+    ext: _ExternalSigma2 | None = None,
+    inj_keys: dict[tuple[int, str], list[tuple[int, str]]] | None = None,
+    fixed_ids: set[int] | None = None,
 ) -> list[dict]:
     """Build NODE injections for the later .add() by the adapter.
 
@@ -541,19 +659,41 @@ def _build_node_injection_rows(
     With ``bounds_acc`` a row with at least one component range gets
     ``min_value`` / ``max_value`` combined from its components (see
     :func:`_combined_bounds`).
+
+    With ``ext`` a row whose components all have an external variance gets
+    their sum instead (the QUESTIONABLE multiplier applies only under
+    ``"base"``); the ids of the final rows go to ``fixed_ids``.
     """
     new_rows: list[dict] = []
     ids = IdAllocator.after_max(meas_arr["id"], name="apply_telemetry")
 
-    def _row(obj_id: int, pq: str, entries: list[tuple[float, str, int]]) -> dict:
+    def _external(row_key: object, keys: list[tuple[int, str]]) -> float | None:
+        if ext is None:
+            return None
+        var: float | None = None
+        for i, key in enumerate(keys):
+            var = ext.add(row_key, key, first=i == 0)
+        return var
+
+    def _row(
+        obj_id: int,
+        pq: str,
+        entries: list[tuple[float, str, int]],
+        ext_var: float | None = None,
+    ) -> dict:
         value = sum(v for v, _, _ in entries)
         quality = aggregate_qualities([q for _, _, q in entries])
-        var = variance_injection(value, "P" if pq == "P" else "Q")
+        final = ext_var is not None and ext is not None and ext.final
+        var = variance_injection(value, "P" if pq == "P" else "Q") if ext_var is None else ext_var
         if quality == _Q_QUESTIONABLE:
-            var *= config.questionable_sigma2_multiplier
+            if not final:
+                var *= config.questionable_sigma2_multiplier
             stats["applied_questionable"] += 1
+        row_id = ids.next()
+        if final and fixed_ids is not None:
+            fixed_ids.add(row_id)
         return {
-            "id": ids.next(),
+            "id": row_id,
             "object_type": _OT_NODE,
             "object_id": int(obj_id),
             "measurement_type": INJ_MT[pq],
@@ -571,14 +711,19 @@ def _build_node_injection_rows(
             row["min_value"], row["max_value"] = _combined_bounds(comps, sign)
         return row
 
+    keys_of = inj_keys or {}
     for (obj_id, pq), entries in inj_acc.items():
-        row = _row(obj_id, pq, entries)
+        keys = keys_of.get((obj_id, pq), [])
+        row = _row(obj_id, pq, entries, _external(("net", obj_id, pq), keys))
         if bounds_acc is not None:
             _with_bounds(row, bounds_acc.get((obj_id, pq), []), 0)
         new_rows.append(row)
         stats["node_inj_added"] += 1
     for (obj_id, pq, sign), entries in (role_acc or {}).items():
-        row = _row(obj_id, pq, entries)
+        part = [
+            k for k in keys_of.get((obj_id, pq), []) if NODE_INJ_MAP[kind_base(k[1])][1] == sign
+        ]
+        row = _row(obj_id, pq, entries, _external(("part", obj_id, pq, sign), part))
         row["source_code"] = SOURCE_INJ_GEN if sign > 0 else SOURCE_INJ_LOAD
         if bounds_acc is not None:
             comps = [c for c in bounds_acc.get((obj_id, pq), []) if c[0] == sign]
@@ -598,6 +743,7 @@ def _apply_telemetry_on_arrays(
     *,
     total_args: int,
     config: TelemetryApplyConfig,
+    fixed_ids: set[int] | None = None,
 ) -> tuple[dict[str, int], list[dict]]:
     """CORE: telemetry application over contract numpy arrays.
 
@@ -613,8 +759,12 @@ def _apply_telemetry_on_arrays(
     ``id`` values are assigned here so as to be bit-identical to the former
     in-loop ``.add()`` block.
 
-    Tuning arrives via ``config`` (:class:`TelemetryApplyConfig`).
+    Tuning arrives via ``config`` (:class:`TelemetryApplyConfig`). With
+    ``config.measurement_sigma2`` and ``external_sigma2="final"`` the ids of the
+    rows whose variance is final are added to ``fixed_ids`` (when given).
     """
+    ext = _external_sigma2(config)
+    inj_keys: dict[tuple[int, str], list[tuple[int, str]]] | None = {} if ext is not None else None
     # Index measurements: (ot, mt, side, oid) → row idx in numpy array
     meas_idx = build_measurement_index(meas_arr)
 
@@ -690,11 +840,40 @@ def _apply_telemetry_on_arrays(
         inj_acc,
         role_acc,
         bounds_acc,
+        ext,
+        inj_keys,
     )
 
-    new_rows = _build_node_injection_rows(inj_acc, meas_arr, config, stats, role_acc, bounds_acc)
+    new_rows = _build_node_injection_rows(
+        inj_acc, meas_arr, config, stats, role_acc, bounds_acc, ext, inj_keys, fixed_ids
+    )
+    if ext is not None:
+        _external_sigma2_stats(ext, meas_arr, resolved, stats, fixed_ids)
 
     return stats, new_rows
+
+
+def _external_sigma2_stats(
+    ext: _ExternalSigma2,
+    meas_arr: np.ndarray,
+    resolved: dict[tuple[int, str], tuple[float | None, int, str, int]],
+    stats: dict[str, int],
+    fixed_ids: set[int] | None,
+) -> None:
+    """Count the rows with an external variance; collect the final voltage / flow rows."""
+    covered = [row for row, (_, _, n_without) in ext.rows.items() if n_without == 0]
+    if ext.final and fixed_ids is not None:
+        fixed_ids.update(int(meas_arr[row]["id"]) for row in covered if isinstance(row, int))
+    stats["sigma2_external"] = len(covered)
+    stats["sigma2_external_unused"] = sum(1 for key in ext.sigma2 if key not in resolved)
+    if not ext.final:
+        stats["sigma2_external_partial"] = len(ext.partial)
+        if ext.partial:
+            logger.warning(
+                "measurement_sigma2 covers only part of the values of %d rows; they keep "
+                "the built-in variance rule",
+                len(ext.partial),
+            )
 
 
 def _materialize_area_on_arrays(

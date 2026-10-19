@@ -35,7 +35,9 @@ forms and validate the vocabulary on the way (a key outside it raises
   distinct; the components of a node are summed into its injection
   measurement;
 * observed node quantities :data:`MATERIALIZE_QUANTITIES` — ``load_p`` /
-  ``load_q`` / ``gen_p`` / ``gen_q``.
+  ``load_q`` / ``gen_p`` / ``gen_q``;
+* external pseudo-measurement kinds :data:`PSEUDO_KINDS` — node voltage ``v``,
+  net node injections ``p_inj`` / ``q_inj`` (generation-positive).
 
 **Fields and tables** (one table per plan; a plan that is ``None`` writes no
 table and is absent from ``fields`` in the metadata):
@@ -51,6 +53,8 @@ table and is absent from ``fields`` in the metadata):
 ``v_sigma2_scale``     ``v_sigma2_scale``     one node V variance factor
 ``flow_sigma2_scale``  ``flow_sigma2_scale``  one branch flow variance factor
 ``telemetry_bounds``   ``telemetry_bounds``   one plausible range of a telemetry value
+``measurement_sigma2`` ``measurement_sigma2`` one absolute variance of a telemetry value
+``pseudo_measurements`` ``pseudo_measurements`` one external pseudo-measurement
 ``telemetry_total_args``  (metadata)          integer, statistics only
 =====================  =====================  ======================================
 
@@ -106,6 +110,7 @@ __all__ = [
     "MATERIALIZE_QUANTITIES",
     "NO_COMPONENT",
     "NO_SKIP_REASON",
+    "PSEUDO_KINDS",
     "SKIP_REASONS",
     "SOURCE_GUID_WIDTH",
     "TELEMETRY_KINDS",
@@ -169,6 +174,9 @@ NO_COMPONENT = -1
 
 #: Observed node quantities of the materialization plan → code.
 MATERIALIZE_QUANTITIES: dict[str, int] = {"load_p": 0, "load_q": 1, "gen_p": 2, "gen_q": 3}
+
+#: External pseudo-measurement kinds → code: node voltage, net P / Q injection.
+PSEUDO_KINDS: dict[str, int] = {KIND_V: 0, "p_inj": 1, "q_inj": 2}
 
 
 def kind_base(kind: str) -> str:
@@ -341,6 +349,36 @@ TELEMETRY_BOUNDS = TableSchema(
     ),
 )
 
+MEASUREMENT_SIGMA2 = TableSchema(
+    name="measurement_sigma2",
+    key=("object_id", "kind", "component"),
+    doc=(
+        "Absolute variance of telemetry values (DerivedInputs.measurement_sigma2). In "
+        "memory: {(object_id, kind): sigma2}."
+    ),
+    columns=(
+        _col("object_id", "i4", "Object id (as in the telemetry table)."),
+        _col("kind", "i1", "Telemetry kind code (TELEMETRY_KINDS)."),
+        _col("component", "i4", "Component number of an injection kind; -1 for none."),
+        _col("sigma2", "f8", "Variance in the squared units of the value (kV², MW², Mvar²)."),
+    ),
+)
+
+PSEUDO_MEASUREMENTS = TableSchema(
+    name="pseudo_measurements",
+    key=("node_id", "kind"),
+    doc=(
+        "External pseudo-measurements (DerivedInputs.pseudo_measurements). In memory: "
+        "{(node_id, kind): (value, sigma2)}."
+    ),
+    columns=(
+        _col("node_id", "i4", "Node id."),
+        _col("kind", "i1", "Pseudo kind code (PSEUDO_KINDS: 0 v/1 p_inj/2 q_inj)."),
+        _col("value", "f8", "Value, kV / MW / Mvar (injections generation-positive)."),
+        _col("sigma2", "f8", "Variance in the squared units of the value."),
+    ),
+)
+
 #: All derived tables, in declaration order.
 DERIVED_TABLES: tuple[TableSchema, ...] = (
     TOPOLOGY,
@@ -351,6 +389,8 @@ DERIVED_TABLES: tuple[TableSchema, ...] = (
     V_SIGMA2_SCALE,
     FLOW_SIGMA2_SCALE,
     TELEMETRY_BOUNDS,
+    MEASUREMENT_SIGMA2,
+    PSEUDO_MEASUREMENTS,
 )
 
 #: ``DerivedInputs`` plan field → name of the table that stores it.
@@ -363,6 +403,8 @@ FIELD_TABLES: dict[str, str] = {
     "v_sigma2_scale": V_SIGMA2_SCALE.name,
     "flow_sigma2_scale": FLOW_SIGMA2_SCALE.name,
     "telemetry_bounds": TELEMETRY_BOUNDS.name,
+    "measurement_sigma2": MEASUREMENT_SIGMA2.name,
+    "pseudo_measurements": PSEUDO_MEASUREMENTS.name,
 }
 
 #: Prefix of the derived table keys in the ``.npz`` file (``derived.topology`` …).
@@ -375,6 +417,7 @@ _TOPOLOGY_KIND_NAMES = {v: k for k, v in TOPOLOGY_OBJECT_KINDS.items()}
 _SKIP_REASON_NAMES = {v: k for k, v in SKIP_REASONS.items()}
 _TELEMETRY_KIND_NAMES = {v: k for k, v in TELEMETRY_KINDS.items()}
 _QUANTITY_NAMES = {v: k for k, v in MATERIALIZE_QUANTITIES.items()}
+_PSEUDO_KIND_NAMES = {v: k for k, v in PSEUDO_KINDS.items()}
 
 
 def _code(vocabulary: Mapping[str, int], name: Any, what: str) -> int:
@@ -493,6 +536,19 @@ def derived_to_tables(derived: DerivedInputs) -> tuple[dict[str, np.ndarray], di
             (
                 (*_key_columns(o, k), float(lo), float(hi))
                 for (o, k), (lo, hi) in derived.telemetry_bounds.items()
+            ),
+        )
+    if derived.measurement_sigma2 is not None:
+        put(
+            "measurement_sigma2",
+            ((*_key_columns(o, k), float(s2)) for (o, k), s2 in derived.measurement_sigma2.items()),
+        )
+    if derived.pseudo_measurements is not None:
+        put(
+            "pseudo_measurements",
+            (
+                (int(n), _code(PSEUDO_KINDS, k, "pseudo kind"), float(v), float(s2))
+                for (n, k), (v, s2) in derived.pseudo_measurements.items()
             ),
         )
     meta = {
@@ -624,6 +680,24 @@ def _telemetry_bounds(arr: np.ndarray) -> dict[tuple[int, str], tuple[float, flo
     return out
 
 
+def _measurement_sigma2(arr: np.ndarray) -> dict[tuple[int, str], float]:
+    out: dict[tuple[int, str], float] = {}
+    for object_id, code, comp, sigma2 in arr.tolist():
+        out[(object_id, _kind_name(code, comp))] = sigma2
+    if len(out) != len(arr):
+        raise ValueError("derived table 'measurement_sigma2': duplicate keys")
+    return out
+
+
+def _pseudo_measurements(arr: np.ndarray) -> dict[tuple[int, str], tuple[float, float]]:
+    out: dict[tuple[int, str], tuple[float, float]] = {}
+    for node_id, code, value, sigma2 in arr.tolist():
+        out[(node_id, _name(_PSEUDO_KIND_NAMES, code, "pseudo kind"))] = (value, sigma2)
+    if len(out) != len(arr):
+        raise ValueError("derived table 'pseudo_measurements': duplicate keys")
+    return out
+
+
 def derived_from_tables(tables: Mapping[str, np.ndarray], meta: Mapping[str, Any]) -> DerivedInputs:
     """``({table name: structured array}, metadata)`` → ``DerivedInputs``.
 
@@ -674,6 +748,10 @@ def derived_from_tables(tables: Mapping[str, np.ndarray], meta: Mapping[str, Any
         derived.flow_sigma2_scale = _flow_scale(arr)
     if (arr := table("telemetry_bounds")) is not None:
         derived.telemetry_bounds = _telemetry_bounds(arr)
+    if (arr := table("measurement_sigma2")) is not None:
+        derived.measurement_sigma2 = _measurement_sigma2(arr)
+    if (arr := table("pseudo_measurements")) is not None:
+        derived.pseudo_measurements = _pseudo_measurements(arr)
     return derived
 
 

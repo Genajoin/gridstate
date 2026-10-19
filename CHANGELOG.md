@@ -9,6 +9,44 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## Unreleased
+
+### Feat
+
+- External measurement variances: `DerivedInputs.measurement_sigma2`
+  (`{(object_id, kind): sigma2}`, keyed like the telemetry plan, in the squared
+  units of the value). The values summed into one row sum their variances.
+  `PipelineConfig.external_sigma2`: `"final"` (default) keeps the variance
+  through every pre-solve adjustment (QUESTIONABLE multiplier, producer scale
+  plans, Q-loss downweight, V range downweight, load box widening, gen-V
+  calibration, flow sigma floor), and a partly covered row is an error;
+  `"base"` replaces only the built-in rule. Without the plan nothing changes.
+- External pseudo-measurements: `DerivedInputs.pseudo_measurements`
+  (`{(node_id, kind): (value, sigma2)}`, `kind` in `v` / `p_inj` / `q_inj`),
+  added as given by the new `external_pseudo` step before the built-in priors.
+- New switches, defaults keep the current behavior: `questionable_sigma2_multiplier`
+  (100), `q_loss_filter` (`"downweight"` / `"deactivate"` / `"off"`),
+  `flow_sign_check`, `v_below_half_nominal_check`, `pseudo_v`,
+  `pseudo_injections`.
+- `PipelineConfig.no_extras(**overrides)`: every extra off (robust weights,
+  post-solve passes, variance adjustments, injection releases, V mirror,
+  built-in pseudo-measurements), so the objective is the plain weighted sum of
+  squares; the algorithm and the statement of the problem stay with the caller.
+- `huber_c=0` is documented as "no robust weights" (it already was for every
+  solver).
+
+### Contract
+
+- Contract 3.3.0: the optional derived tables `measurement_sigma2` and
+  `pseudo_measurements`.
+
+### Behavior changes
+
+- The event stream has a new step, `external_pseudo` (`step_skipped` without
+  derived inputs or when switched off, `step_done` with `stats["skipped"]`
+  without the plan). Results are unchanged: the golden references differ only
+  in that event.
+
 ## v2.9.0 (2026-10-18)
 
 ### Feat

@@ -253,6 +253,54 @@ class PipelineConfig:
         "Лечит пере-доверие мелким потокам (σ≈α·|z| занижена при малых z). "
         "None = выключено; 0.010 = 1 % шкалы (110 кВ → 1.9 МВт, 500 кВ → 8.7 МВт).",
     )
+    external_sigma2: Literal["final", "base"] = _param(
+        "final",
+        group=_G_INPUT,
+        label="Внешние σ² мер",
+        control="select",
+        choices=["final", "base"],
+        help="What the pipeline does with the variances given in "
+        "DerivedInputs.measurement_sigma2 (no effect without them). final — the "
+        "variance is final: no QUESTIONABLE multiplier, no producer sigma^2 scale "
+        "plans, no Q-loss downweight, no V range downweight, no load box widening, "
+        "no gen-V calibration, no flow sigma floor; a row only partly covered by "
+        "the given variances is an error. base — the variance replaces the "
+        "built-in rule only, every adjustment applies as usual. Deactivations "
+        "(bad quality, dead sensors, inconsistent flows) apply in both modes.",
+    )
+    questionable_sigma2_multiplier: float = _param(
+        100.0,
+        group=_G_INPUT,
+        label="Множитель σ² QUESTIONABLE",
+        control="number",
+        min=1.0,
+        max=1e6,
+        help="Variance multiplier of a QUESTIONABLE reading (telemetry quality, out-of-"
+        "range V). 1 — the quality does not change the weight.",
+    )
+    q_loss_filter: Literal["downweight", "deactivate", "off"] = _param(
+        "downweight",
+        group=_G_INPUT,
+        label="Фильтр Q-потерь ветвей",
+        control="select",
+        choices=["downweight", "deactivate", "off"],
+        help="Branch Q readings whose |Q_from + Q_to| contradicts the branch pi model: "
+        "downweight — their variance × 100; deactivate — dropped; off — no check.",
+    )
+    flow_sign_check: bool = _toggle(
+        True,
+        group=_G_INPUT,
+        label="Проверка знаков P ветви",
+        help="A branch whose P_from and P_to readings flow into the line (|P_from + "
+        "P_to| ≥ 100 MW) gets none of its flow readings activated.",
+    )
+    v_below_half_nominal_check: bool = _toggle(
+        True,
+        group=_G_INPUT,
+        label="Отсечка V < 0.5·Uном",
+        help="A node V reading below half the nominal voltage is taken for a dead "
+        "sensor and left inactive.",
+    )
 
     # --- Operating point ---
     materialize: bool = _toggle(
@@ -300,11 +348,32 @@ class PipelineConfig:
         label="Зеркалить V через ktr=1 связи",
         help="wye-точки 3-обм АТ получают V-якорь HV-шины.",
     )
+    external_pseudo: bool = _toggle(
+        True,
+        group=_G_PSEUDO,
+        label="Внешние псевдо-измерения",
+        help="Add the pseudo-measurements given in DerivedInputs.pseudo_measurements "
+        "(value and variance as given, before the built-in priors; a node with an "
+        "external prior of a kind gets no built-in prior of that kind).",
+    )
     add_pseudo: bool = _toggle(
         True,
         group=_G_PSEUDO,
         label="Добавить псевдо-приоры",
         help="add_pseudo_measurements: слабые V/P_inj/Q_inj приоры от недонаблюдаемости.",
+    )
+    pseudo_v: bool = _toggle(
+        True,
+        group=_G_PSEUDO,
+        label="Псевдо-U",
+        help="add_pseudo_measurements: V priors of the nodes without a V measurement.",
+    )
+    pseudo_injections: bool = _toggle(
+        True,
+        group=_G_PSEUDO,
+        label="Псевдо-инжекции",
+        help="add_pseudo_measurements: P/Q injection priors of the nodes without an "
+        "injection measurement (zero on transit nodes, the operating point elsewhere).",
     )
     loosen_unknown_load_pseudo: bool = _toggle(
         True,
@@ -446,7 +515,8 @@ class PipelineConfig:
         control="number",
         min=0.0,
         max=100.0,
-        help="None = авто (1.5 для wls, 2.0 для ipm). >0 включает робастный downweight.",
+        help="None = авто (1.5 для wls, 2.0 для ipm). >0 включает робастный downweight. "
+        "0 = выключено: чистая взвешенная сумма квадратов (wls, ipm, ipm_pd).",
     )
     success_policy: str = _param(
         "legacy",
@@ -977,6 +1047,50 @@ class PipelineConfig:
 
     def __post_init__(self) -> None:
         self.validate()
+
+    @classmethod
+    def no_extras(cls, **overrides: Any) -> PipelineConfig:
+        """Configuration without the extras: the objective is the plain weighted sum of squares.
+
+        Everything the pipeline adds on top of the given data and variances is
+        switched off: the robust weights (Huber), the post-solve passes
+        (bad data, V refine, V mirrors, refine merge, anti-overshoot, shunt
+        sanity), the variance adjustments (QUESTIONABLE multiplier, Q-loss
+        filter, V range filter, load box widening, gen-V calibration, flow sigma
+        floor), the injection releases, the V mirror across unit-ratio links and
+        the built-in pseudo-measurements. External variances are final
+        (``external_sigma2="final"``); external pseudo-measurements are still
+        added. The data validity checks stay on (bad quality, dead V sensors,
+        inconsistent P signs).
+
+        The algorithm, the balance modes, the voltage guard and the boxes are the
+        statement of the problem and are left to the caller: the preset works
+        with any ``algorithm`` (wls / ipm / ipm_pd). ``overrides`` are applied
+        on top.
+        """
+        values: dict[str, Any] = {
+            "huber_c": 0.0,
+            "bad_data": False,
+            "v_refine": False,
+            "v_mirror": False,
+            "v_mirror_chain": False,
+            "refine_merge": False,
+            "anti_overshoot": False,
+            "shunt_sanity": False,
+            "external_sigma2": "final",
+            "questionable_sigma2_multiplier": 1.0,
+            "q_loss_filter": "off",
+            "apply_voltage_range_filter": False,
+            "widen_generation_only_injections": False,
+            "apply_gen_v_calibration": False,
+            "flow_sigma_floor_kv_frac": None,
+            "release_load_only_injections": False,
+            "relax_generation_min_to_injection": False,
+            "mirror_voltage_unit_tap": False,
+            "add_pseudo": False,
+        }
+        values.update(overrides)
+        return cls(**values)
 
     def validate(self) -> None:
         """Check every value against the ``choices`` / ``min`` / ``max`` of its metadata.

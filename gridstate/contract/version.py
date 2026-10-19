@@ -50,7 +50,9 @@ from dataclasses import dataclass
 #   (``DerivedInputs.telemetry_bounds``).
 # 3.2.0 (MINOR): the optional input table ``load_characteristic_segments``
 #   (piecewise load characteristics).
-CONTRACT_VERSION = "3.2.0"
+# 3.3.0 (MINOR): the optional derived tables ``measurement_sigma2`` and
+#   ``pseudo_measurements`` (external measurement variances and pseudo-measurements).
+CONTRACT_VERSION = "3.3.0"
 
 # Major of the data the explicit legacy path of the ``.npz`` loader still reads
 # (``load_se_input_npz(path, trusted=True)``).

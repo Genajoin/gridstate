@@ -48,6 +48,8 @@ from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from gridstate.working import Working
 
 
@@ -234,6 +236,8 @@ def relax_generation_min_to_injection(
 def widen_generation_only_injections(
     model: Working,
     gen_only: dict[str, frozenset[int]],
+    *,
+    skip_ids: Collection[int] = (),
 ) -> dict:
     """Account for the unmeasured load in generation-only injection measurements.
 
@@ -243,6 +247,9 @@ def widen_generation_only_injections(
     box (``[0, 0]``, sentinels) the load is unknown, so the measurement is
     deactivated (``FilterFlag.GENERATION_ONLY_INJECTION``). Nodes without load
     are left alone.
+
+    A measurement in ``skip_ids`` (its variance is final, an external variance)
+    is shifted but keeps its variance.
     """
     nodes = model.nodes.to_numpy()
     box: dict[tuple[int, int], tuple[float, float]] = {}
@@ -263,6 +270,7 @@ def widen_generation_only_injections(
             elif bounds_unset(float(row[lo_col]), float(row[hi_col])):
                 unknown.add((nid, INJ_MT[pq]))
 
+    fixed = set(skip_ids)
     counts = {INJ_MT["P"]: 0, INJ_MT["Q"]: 0}
     released = {INJ_MT["P"]: 0, INJ_MT["Q"]: 0}
     if box or unknown:
@@ -281,8 +289,9 @@ def widen_generation_only_injections(
                 continue
             lo, hi = bounds
             meas["value"][k] -= 0.5 * (lo + hi)
-            meas["variance"][k] += uniform_box_variance(lo, hi)
-            meas["weight"][k] = 1.0 / meas["variance"][k]
+            if int(meas["id"][k]) not in fixed:
+                meas["variance"][k] += uniform_box_variance(lo, hi)
+                meas["weight"][k] = 1.0 / meas["variance"][k]
             counts[mt] += 1
         if any(counts.values()) or any(released.values()):
             table_replace(model.measurements, meas)

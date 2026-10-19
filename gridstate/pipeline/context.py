@@ -25,6 +25,9 @@ class _Ctx:
     x0: InitialPoint | None = None
     # Nodes whose load-only injection was released: {"P": ..., "Q": ...}.
     released_injections: dict[str, frozenset[int]] = field(default_factory=dict)
+    # Measurement ids whose variance is final (DerivedInputs.measurement_sigma2
+    # with external_sigma2="final"): the later steps leave their variance alone.
+    fixed_sigma2_ids: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
