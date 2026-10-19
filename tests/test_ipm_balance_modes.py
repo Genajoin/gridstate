@@ -288,3 +288,63 @@ def test_huber_threshold_modes(monkeypatch):
             huber_threshold=mode,
         )
     assert seen == [0.0, 2.0]
+
+
+def _spy_guard(monkeypatch) -> list[dict]:
+    import gridstate.api as api
+
+    seen: list[dict] = []
+    real = api.solve_ipm_pd
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(api, "solve_ipm_pd", spy)
+    return seen
+
+
+def test_voltage_guard_defaults_follow_the_settings(monkeypatch):
+    from gridstate.api import VoltageGuard
+    from gridstate.pipeline.passes import _estimate_kwargs
+
+    cfg = PipelineConfig(algorithm="ipm_pd")
+    assert _estimate_kwargs(cfg, init="flat")["voltage_guard_settings"] == VoltageGuard()
+    g = VoltageGuard()
+    assert (g.unset_lo, g.unset_hi) == (g.lo_fallback, g.hi_fallback) == (0.55, 1.8)
+    assert (g.lo_min, g.hi_max) == (0.5, 2.0)
+    assert (g.v_step_rel, g.angle_step_rad, g.branch_angle_step_rad) == (0.2, 0.6, 0.35)
+
+    seen = _spy_guard(monkeypatch)
+    m = _build_net_with_transit()
+    nodes = m.nodes.to_numpy()
+    nodes["voltage_min"] = 0.0
+    nodes["voltage_max"] = 0.0
+    nodes["voltage_min"][0] = 0.3 * nodes["voltage_nominal"][0]  # implausible: fallback
+    nodes["voltage_max"][1] = 1.05 * nodes["voltage_nominal"][1]
+    m.nodes.update_from_array(nodes)
+    settings = VoltageGuard(
+        lo_fallback=0.6,
+        hi_fallback=1.7,
+        unset_lo=0.8,
+        unset_hi=1.3,
+        v_step_rel=0.1,
+        angle_step_rad=0.5,
+        branch_angle_step_rad=0.3,
+    )
+    estimate(m, algorithm="ipm_pd", include_quality_summary=False, voltage_guard_settings=settings)
+    kw = seen[0]
+    lo, hi = kw["state_box_lo"], kw["state_box_hi"]
+    assert (lo[0], hi[0]) == (0.6, 1.7)
+    assert (lo[1], hi[1]) == pytest.approx((0.6, 1.05))
+    assert set(lo[2:]) == {0.8} and set(hi[2:]) == {1.3}
+    assert (kw["step_rel_max"], kw["step_abs_max"], kw["step_diff_max"]) == (0.1, 0.5, 0.3)
+
+
+def test_voltage_guard_config_is_validated():
+    with pytest.raises(ValueError, match="ipm_voltage_guard_unset_lo"):
+        PipelineConfig(ipm_voltage_guard_unset_lo=1.0, ipm_voltage_guard_unset_hi=1.0)
+    with pytest.raises(ValueError, match="ipm_voltage_guard_lo_fallback"):
+        PipelineConfig(ipm_voltage_guard_lo_fallback=1.0, ipm_voltage_guard_hi_fallback=1.0)
+    old = PipelineConfig(ipm_voltage_guard_unset_lo=0.7, ipm_voltage_guard_unset_hi=1.5)
+    assert (old.ipm_voltage_guard_unset_lo, old.ipm_voltage_guard_unset_hi) == (0.7, 1.5)

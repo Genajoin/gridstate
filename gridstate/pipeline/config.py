@@ -650,9 +650,105 @@ class PipelineConfig:
         label="Voltage guard (ipm_pd)",
         help="ipm_pd only (ignored otherwise): every node V is kept within a box "
         "from its voltage_min/voltage_max (unset or implausible limits fall back "
-        "to 0.55/1.8 p.u. of nominal, 0.7..1.5 with neither set), and one step "
+        "to 0.55/1.8 p.u. of nominal, also with neither set), and one step "
         "changes V by at most 20 %, an angle by at most 0.6 rad and a branch "
-        "angle difference by at most 0.35 rad. Default ON.",
+        "angle difference by at most 0.35 rad (ipm_voltage_guard_* set the "
+        "numbers). Default ON.",
+    )
+    ipm_voltage_guard_lo_min: float = _param(
+        0.5,
+        group=_G_IPM,
+        label="Guard: min plausible voltage_min, p.u.",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"ipm_voltage_guard": True},
+        help="voltage_min below this share of the nominal voltage is ignored (the box takes "
+        "ipm_voltage_guard_lo_fallback).",
+    )
+    ipm_voltage_guard_lo_fallback: float = _param(
+        0.55,
+        group=_G_IPM,
+        label="Guard: fallback lower V, p.u.",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"ipm_voltage_guard": True},
+        help="Lower side of the V box where voltage_min is unset or implausible.",
+    )
+    ipm_voltage_guard_hi_max: float = _param(
+        2.0,
+        group=_G_IPM,
+        label="Guard: max plausible voltage_max, p.u.",
+        control="number",
+        min=1.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="voltage_max above this share of the nominal voltage is ignored (the box takes "
+        "ipm_voltage_guard_hi_fallback).",
+    )
+    ipm_voltage_guard_hi_fallback: float = _param(
+        1.8,
+        group=_G_IPM,
+        label="Guard: fallback upper V, p.u.",
+        control="number",
+        min=1.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="Upper side of the V box where voltage_max is unset or implausible.",
+    )
+    ipm_voltage_guard_unset_lo: float = _param(
+        0.55,
+        group=_G_IPM,
+        label="Guard: lower V, no limits, p.u.",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"ipm_voltage_guard": True},
+        help="Lower side of the V box of a node with neither voltage_min nor voltage_max "
+        "(before 2.10: 0.7).",
+    )
+    ipm_voltage_guard_unset_hi: float = _param(
+        1.8,
+        group=_G_IPM,
+        label="Guard: upper V, no limits, p.u.",
+        control="number",
+        min=1.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="Upper side of the V box of a node with neither voltage_min nor voltage_max "
+        "(before 2.10: 1.5).",
+    )
+    ipm_voltage_guard_v_step: float = _param(
+        0.2,
+        group=_G_IPM,
+        label="Guard: max V step (share of V)",
+        control="number",
+        min=0.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="One iteration changes a node V by at most this share of it; 0 — no limit.",
+    )
+    ipm_voltage_guard_angle_step: float = _param(
+        0.6,
+        group=_G_IPM,
+        label="Guard: max angle step, rad",
+        control="number",
+        min=0.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="One iteration changes a node angle by at most this; 0 — no limit.",
+    )
+    ipm_voltage_guard_branch_angle_step: float = _param(
+        0.35,
+        group=_G_IPM,
+        label="Guard: max branch angle step, rad",
+        control="number",
+        min=0.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="One iteration changes the angle difference over a branch by at most this; "
+        "0 — no limit.",
     )
     ipm_injection_roles: bool = _toggle(
         False,
@@ -1130,6 +1226,13 @@ class PipelineConfig:
                 problems.append(f"{f.name}={value!r} is below the minimum {lo!r}")
             elif hi is not None and value > hi:
                 problems.append(f"{f.name}={value!r} is above the maximum {hi!r}")
+        for lo_name, hi_name in (
+            ("ipm_voltage_guard_lo_fallback", "ipm_voltage_guard_hi_fallback"),
+            ("ipm_voltage_guard_unset_lo", "ipm_voltage_guard_unset_hi"),
+        ):
+            lo, hi = getattr(self, lo_name), getattr(self, hi_name)
+            if isinstance(lo, numbers.Real) and isinstance(hi, numbers.Real) and lo >= hi:
+                problems.append(f"{lo_name}={lo!r} is not below {hi_name}={hi!r}")
         if getattr(self, "ipm_measurement_bounds", False) and self.algorithm != "ipm_pd":
             problems.append("ipm_measurement_bounds requires algorithm='ipm_pd'")
         if getattr(self, "ipm_injection_roles", False) and self.algorithm not in (

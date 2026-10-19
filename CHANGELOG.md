@@ -34,6 +34,12 @@ cut by tagging the merged main commit; the version is derived from that tag.
   squares; the algorithm and the statement of the problem stay with the caller.
 - `huber_c=0` is documented as "no robust weights" (it already was for every
   solver).
+- Settings of the ipm_pd voltage guard (`ipm_voltage_guard_*`, `api.VoltageGuard`,
+  `estimate(..., voltage_guard_settings=...)`): the plausibility limits of
+  `voltage_min` / `voltage_max` (`_lo_min` 0.5, `_hi_max` 2.0 p.u.), their
+  fallbacks (`_lo_fallback` 0.55, `_hi_fallback` 1.8), the box of a node with
+  neither limit (`_unset_lo` / `_unset_hi`) and the step limits (`_v_step` 0.2,
+  `_angle_step` 0.6 rad, `_branch_angle_step` 0.35 rad).
 
 ### Contract
 
@@ -42,6 +48,13 @@ cut by tagging the merged main commit; the version is derived from that tag.
 
 ### Behavior changes
 
+- ipm_pd voltage guard: a node with neither `voltage_min` nor `voltage_max`
+  gets the fallback box 0.55…1.8 p.u. (was 0.7…1.5), the same as a node with
+  unset or implausible limits. The previous box is
+  `ipm_voltage_guard_unset_lo=0.7`, `ipm_voltage_guard_unset_hi=1.5`. The
+  golden references do not use ipm_pd; on the IEEE inputs with the ipm_pd
+  variant of the full configuration the estimates move by at most 1.3e-7 p.u.
+  (the barrier term), with the same iteration counts.
 - The event stream has a new step, `external_pseudo` (`step_skipped` without
   derived inputs or when switched off, `step_done` with `stats["skipped"]`
   without the plan). Results are unchanged: the golden references differ only

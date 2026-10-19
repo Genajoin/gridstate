@@ -23,7 +23,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from gridstate.api import estimate
+from gridstate.api import VoltageGuard, estimate
 from gridstate.bad_data_repass import apply_bad_data_plan, classify_bad_data
 from gridstate.pipeline.config import PipelineConfig
 from gridstate.pipeline.context import _Ctx, _no_solution
@@ -62,6 +62,17 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
         "fixed_injection_from_input": cfg.ipm_fixed_injection_from_input,
         "measurement_bounds": cfg.ipm_measurement_bounds,
         "voltage_guard": cfg.ipm_voltage_guard,
+        "voltage_guard_settings": VoltageGuard(
+            lo_min=cfg.ipm_voltage_guard_lo_min,
+            lo_fallback=cfg.ipm_voltage_guard_lo_fallback,
+            hi_max=cfg.ipm_voltage_guard_hi_max,
+            hi_fallback=cfg.ipm_voltage_guard_hi_fallback,
+            unset_lo=cfg.ipm_voltage_guard_unset_lo,
+            unset_hi=cfg.ipm_voltage_guard_unset_hi,
+            v_step_rel=cfg.ipm_voltage_guard_v_step,
+            angle_step_rad=cfg.ipm_voltage_guard_angle_step,
+            branch_angle_step_rad=cfg.ipm_voltage_guard_branch_angle_step,
+        ),
         "injection_roles": cfg.ipm_injection_roles,
         "hint_iterations": cfg.ipm_hint_iterations,
         "huber_threshold": cfg.ipm_huber_threshold,
