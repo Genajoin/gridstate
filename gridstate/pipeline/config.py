@@ -253,6 +253,54 @@ class PipelineConfig:
         "Лечит пере-доверие мелким потокам (σ≈α·|z| занижена при малых z). "
         "None = выключено; 0.010 = 1 % шкалы (110 кВ → 1.9 МВт, 500 кВ → 8.7 МВт).",
     )
+    external_sigma2: Literal["final", "base"] = _param(
+        "final",
+        group=_G_INPUT,
+        label="Внешние σ² мер",
+        control="select",
+        choices=["final", "base"],
+        help="What the pipeline does with the variances given in "
+        "DerivedInputs.measurement_sigma2 (no effect without them). final — the "
+        "variance is final: no QUESTIONABLE multiplier, no producer sigma^2 scale "
+        "plans, no Q-loss downweight, no V range downweight, no load box widening, "
+        "no gen-V calibration, no flow sigma floor; a row only partly covered by "
+        "the given variances is an error. base — the variance replaces the "
+        "built-in rule only, every adjustment applies as usual. Deactivations "
+        "(bad quality, dead sensors, inconsistent flows) apply in both modes.",
+    )
+    questionable_sigma2_multiplier: float = _param(
+        100.0,
+        group=_G_INPUT,
+        label="Множитель σ² QUESTIONABLE",
+        control="number",
+        min=1.0,
+        max=1e6,
+        help="Variance multiplier of a QUESTIONABLE reading (telemetry quality, out-of-"
+        "range V). 1 — the quality does not change the weight.",
+    )
+    q_loss_filter: Literal["downweight", "deactivate", "off"] = _param(
+        "downweight",
+        group=_G_INPUT,
+        label="Фильтр Q-потерь ветвей",
+        control="select",
+        choices=["downweight", "deactivate", "off"],
+        help="Branch Q readings whose |Q_from + Q_to| contradicts the branch pi model: "
+        "downweight — their variance × 100; deactivate — dropped; off — no check.",
+    )
+    flow_sign_check: bool = _toggle(
+        True,
+        group=_G_INPUT,
+        label="Проверка знаков P ветви",
+        help="A branch whose P_from and P_to readings flow into the line (|P_from + "
+        "P_to| ≥ 100 MW) gets none of its flow readings activated.",
+    )
+    v_below_half_nominal_check: bool = _toggle(
+        True,
+        group=_G_INPUT,
+        label="Отсечка V < 0.5·Uном",
+        help="A node V reading below half the nominal voltage is taken for a dead "
+        "sensor and left inactive.",
+    )
 
     # --- Operating point ---
     materialize: bool = _toggle(
@@ -300,11 +348,32 @@ class PipelineConfig:
         label="Зеркалить V через ktr=1 связи",
         help="wye-точки 3-обм АТ получают V-якорь HV-шины.",
     )
+    external_pseudo: bool = _toggle(
+        True,
+        group=_G_PSEUDO,
+        label="Внешние псевдо-измерения",
+        help="Add the pseudo-measurements given in DerivedInputs.pseudo_measurements "
+        "(value and variance as given, before the built-in priors; a node with an "
+        "external prior of a kind gets no built-in prior of that kind).",
+    )
     add_pseudo: bool = _toggle(
         True,
         group=_G_PSEUDO,
         label="Добавить псевдо-приоры",
         help="add_pseudo_measurements: слабые V/P_inj/Q_inj приоры от недонаблюдаемости.",
+    )
+    pseudo_v: bool = _toggle(
+        True,
+        group=_G_PSEUDO,
+        label="Псевдо-U",
+        help="add_pseudo_measurements: V priors of the nodes without a V measurement.",
+    )
+    pseudo_injections: bool = _toggle(
+        True,
+        group=_G_PSEUDO,
+        label="Псевдо-инжекции",
+        help="add_pseudo_measurements: P/Q injection priors of the nodes without an "
+        "injection measurement (zero on transit nodes, the operating point elsewhere).",
     )
     loosen_unknown_load_pseudo: bool = _toggle(
         True,
@@ -446,7 +515,8 @@ class PipelineConfig:
         control="number",
         min=0.0,
         max=100.0,
-        help="None = авто (1.5 для wls, 2.0 для ipm). >0 включает робастный downweight.",
+        help="None = авто (1.5 для wls, 2.0 для ipm). >0 включает робастный downweight. "
+        "0 = выключено: чистая взвешенная сумма квадратов (wls, ipm, ipm_pd).",
     )
     success_policy: str = _param(
         "legacy",
@@ -580,9 +650,105 @@ class PipelineConfig:
         label="Voltage guard (ipm_pd)",
         help="ipm_pd only (ignored otherwise): every node V is kept within a box "
         "from its voltage_min/voltage_max (unset or implausible limits fall back "
-        "to 0.55/1.8 p.u. of nominal, 0.7..1.5 with neither set), and one step "
+        "to 0.55/1.8 p.u. of nominal, also with neither set), and one step "
         "changes V by at most 20 %, an angle by at most 0.6 rad and a branch "
-        "angle difference by at most 0.35 rad. Default ON.",
+        "angle difference by at most 0.35 rad (ipm_voltage_guard_* set the "
+        "numbers). Default ON.",
+    )
+    ipm_voltage_guard_lo_min: float = _param(
+        0.5,
+        group=_G_IPM,
+        label="Guard: min plausible voltage_min, p.u.",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"ipm_voltage_guard": True},
+        help="voltage_min below this share of the nominal voltage is ignored (the box takes "
+        "ipm_voltage_guard_lo_fallback).",
+    )
+    ipm_voltage_guard_lo_fallback: float = _param(
+        0.55,
+        group=_G_IPM,
+        label="Guard: fallback lower V, p.u.",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"ipm_voltage_guard": True},
+        help="Lower side of the V box where voltage_min is unset or implausible.",
+    )
+    ipm_voltage_guard_hi_max: float = _param(
+        2.0,
+        group=_G_IPM,
+        label="Guard: max plausible voltage_max, p.u.",
+        control="number",
+        min=1.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="voltage_max above this share of the nominal voltage is ignored (the box takes "
+        "ipm_voltage_guard_hi_fallback).",
+    )
+    ipm_voltage_guard_hi_fallback: float = _param(
+        1.8,
+        group=_G_IPM,
+        label="Guard: fallback upper V, p.u.",
+        control="number",
+        min=1.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="Upper side of the V box where voltage_max is unset or implausible.",
+    )
+    ipm_voltage_guard_unset_lo: float = _param(
+        0.55,
+        group=_G_IPM,
+        label="Guard: lower V, no limits, p.u.",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"ipm_voltage_guard": True},
+        help="Lower side of the V box of a node with neither voltage_min nor voltage_max "
+        "(before 2.10: 0.7).",
+    )
+    ipm_voltage_guard_unset_hi: float = _param(
+        1.8,
+        group=_G_IPM,
+        label="Guard: upper V, no limits, p.u.",
+        control="number",
+        min=1.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="Upper side of the V box of a node with neither voltage_min nor voltage_max "
+        "(before 2.10: 1.5).",
+    )
+    ipm_voltage_guard_v_step: float = _param(
+        0.2,
+        group=_G_IPM,
+        label="Guard: max V step (share of V)",
+        control="number",
+        min=0.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="One iteration changes a node V by at most this share of it; 0 — no limit.",
+    )
+    ipm_voltage_guard_angle_step: float = _param(
+        0.6,
+        group=_G_IPM,
+        label="Guard: max angle step, rad",
+        control="number",
+        min=0.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="One iteration changes a node angle by at most this; 0 — no limit.",
+    )
+    ipm_voltage_guard_branch_angle_step: float = _param(
+        0.35,
+        group=_G_IPM,
+        label="Guard: max branch angle step, rad",
+        control="number",
+        min=0.0,
+        max=10.0,
+        depends={"ipm_voltage_guard": True},
+        help="One iteration changes the angle difference over a branch by at most this; "
+        "0 — no limit.",
     )
     ipm_injection_roles: bool = _toggle(
         False,
@@ -978,6 +1144,50 @@ class PipelineConfig:
     def __post_init__(self) -> None:
         self.validate()
 
+    @classmethod
+    def no_extras(cls, **overrides: Any) -> PipelineConfig:
+        """Configuration without the extras: the objective is the plain weighted sum of squares.
+
+        Everything the pipeline adds on top of the given data and variances is
+        switched off: the robust weights (Huber), the post-solve passes
+        (bad data, V refine, V mirrors, refine merge, anti-overshoot, shunt
+        sanity), the variance adjustments (QUESTIONABLE multiplier, Q-loss
+        filter, V range filter, load box widening, gen-V calibration, flow sigma
+        floor), the injection releases, the V mirror across unit-ratio links and
+        the built-in pseudo-measurements. External variances are final
+        (``external_sigma2="final"``); external pseudo-measurements are still
+        added. The data validity checks stay on (bad quality, dead V sensors,
+        inconsistent P signs).
+
+        The algorithm, the balance modes, the voltage guard and the boxes are the
+        statement of the problem and are left to the caller: the preset works
+        with any ``algorithm`` (wls / ipm / ipm_pd). ``overrides`` are applied
+        on top.
+        """
+        values: dict[str, Any] = {
+            "huber_c": 0.0,
+            "bad_data": False,
+            "v_refine": False,
+            "v_mirror": False,
+            "v_mirror_chain": False,
+            "refine_merge": False,
+            "anti_overshoot": False,
+            "shunt_sanity": False,
+            "external_sigma2": "final",
+            "questionable_sigma2_multiplier": 1.0,
+            "q_loss_filter": "off",
+            "apply_voltage_range_filter": False,
+            "widen_generation_only_injections": False,
+            "apply_gen_v_calibration": False,
+            "flow_sigma_floor_kv_frac": None,
+            "release_load_only_injections": False,
+            "relax_generation_min_to_injection": False,
+            "mirror_voltage_unit_tap": False,
+            "add_pseudo": False,
+        }
+        values.update(overrides)
+        return cls(**values)
+
     def validate(self) -> None:
         """Check every value against the ``choices`` / ``min`` / ``max`` of its metadata.
 
@@ -1016,6 +1226,13 @@ class PipelineConfig:
                 problems.append(f"{f.name}={value!r} is below the minimum {lo!r}")
             elif hi is not None and value > hi:
                 problems.append(f"{f.name}={value!r} is above the maximum {hi!r}")
+        for lo_name, hi_name in (
+            ("ipm_voltage_guard_lo_fallback", "ipm_voltage_guard_hi_fallback"),
+            ("ipm_voltage_guard_unset_lo", "ipm_voltage_guard_unset_hi"),
+        ):
+            lo, hi = getattr(self, lo_name), getattr(self, hi_name)
+            if isinstance(lo, numbers.Real) and isinstance(hi, numbers.Real) and lo >= hi:
+                problems.append(f"{lo_name}={lo!r} is not below {hi_name}={hi!r}")
         if getattr(self, "ipm_measurement_bounds", False) and self.algorithm != "ipm_pd":
             problems.append("ipm_measurement_bounds requires algorithm='ipm_pd'")
         if getattr(self, "ipm_injection_roles", False) and self.algorithm not in (

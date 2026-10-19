@@ -7,6 +7,7 @@ to the corresponding implementation in ``gridstate/algorithms/``.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -689,30 +690,49 @@ def _initial_state_from_mode(
     raise ValueError(f"Unknown init mode init={init!r}")
 
 
-# Voltage guard of ipm_pd (``voltage_guard=True``): node V box in p.u. of the
-# nominal voltage and the per-iteration step limits.
-_VG_LO_MIN = 0.5  # voltage_min below this share of nominal is ignored ...
-_VG_LO_FALLBACK = 0.55  # ... and replaced by this
-_VG_HI_MAX = 2.0  # voltage_max above this share of nominal is ignored ...
-_VG_HI_FALLBACK = 1.8  # ... and replaced by this
-_VG_BOTH_UNSET = (0.7, 1.5)  # neither limit set
-_VG_V_STEP_REL = 0.2  # |αp·ΔV| ≤ 0.2·V
-_VG_DELTA_STEP = 0.6  # |αp·Δδ| ≤ 0.6 rad
-_VG_BRANCH_DELTA_STEP = 0.35  # |αp·(Δδ_i − Δδ_j)| ≤ 0.35 rad over a branch
+@dataclass(frozen=True)
+class VoltageGuard:
+    """Settings of the ipm_pd voltage guard (``voltage_guard=True``).
+
+    Node V box in p.u. of the nominal voltage:
+
+    * lower side: ``voltage_min`` when set and at least ``lo_min``, else
+      ``lo_fallback``;
+    * upper side: ``voltage_max`` when set and at most ``hi_max``, else
+      ``hi_fallback``;
+    * a node with neither limit set: ``unset_lo`` … ``unset_hi``.
+
+    Step limits of one iteration: ``|αp·ΔV| ≤ v_step_rel·V``,
+    ``|αp·Δδ| ≤ angle_step_rad`` and ``|αp·(Δδ_i − Δδ_j)| ≤
+    branch_angle_step_rad`` over a branch (``0`` switches a limit off).
+    """
+
+    lo_min: float = 0.5
+    lo_fallback: float = 0.55
+    hi_max: float = 2.0
+    hi_fallback: float = 1.8
+    unset_lo: float = 0.55
+    unset_hi: float = 1.8
+    v_step_rel: float = 0.2
+    angle_step_rad: float = 0.6
+    branch_angle_step_rad: float = 0.35
 
 
 def _voltage_guard_kwargs(
-    model: Working, network_pu: NetworkPU, layout: StateLayout
+    model: Working,
+    network_pu: NetworkPU,
+    layout: StateLayout,
+    guard: VoltageGuard | None = None,
 ) -> dict[str, Any]:
     """``solve_ipm_pd`` kwargs of the voltage guard: V boxes and step limits.
 
-    The box of a node comes from its ``voltage_min`` / ``voltage_max`` (kV): a
-    limit that is unset (0) or implausible (below half / above twice the
-    nominal) falls back to 0.55 / 1.8 p.u.; with neither limit set the box is
-    0.7…1.5 p.u. It keeps the iteration out of the collapsed region (V → 0,
-    where the node angle is undetermined); the step limits keep one Newton
-    step from crossing into it.
+    The box of a node comes from its ``voltage_min`` / ``voltage_max`` (kV); a
+    limit that is unset (0) or implausible falls back as :class:`VoltageGuard`
+    says. It keeps the iteration out of the collapsed region (V → 0, where the
+    node angle is undetermined); the step limits keep one Newton step from
+    crossing into it.
     """
+    g = guard if guard is not None else VoltageGuard()
     nodes = model.nodes.to_numpy()
     id_to_pos = id_to_pos_map(network_pu.bus_ids)
     n = network_pu.n_bus
@@ -727,12 +747,12 @@ def _voltage_guard_kwargs(
     with np.errstate(divide="ignore", invalid="ignore"):
         lo_pu = np.where(vn > 0, umin / vn, 0.0)
         hi_pu = np.where(vn > 0, umax / vn, 0.0)
-    lo = np.where((umin > 0) & (lo_pu >= _VG_LO_MIN), lo_pu, _VG_LO_FALLBACK)
-    hi = np.where((umax > 0) & (hi_pu <= _VG_HI_MAX), hi_pu, _VG_HI_FALLBACK)
+    lo = np.where((umin > 0) & (lo_pu >= g.lo_min), lo_pu, g.lo_fallback)
+    hi = np.where((umax > 0) & (hi_pu <= g.hi_max), hi_pu, g.hi_fallback)
     unset = (umin <= 0) & (umax <= 0)
-    lo[unset], hi[unset] = _VG_BOTH_UNSET
+    lo[unset], hi[unset] = g.unset_lo, g.unset_hi
     bad = lo >= hi
-    lo[bad], hi[bad] = _VG_LO_FALLBACK, _VG_HI_FALLBACK
+    lo[bad], hi[bad] = g.lo_fallback, g.hi_fallback
     v_idx = np.arange(layout.offset_v, layout.offset_v + n, dtype=np.int64)
     delta_of = np.full(n, -1, dtype=np.int64)
     delta_of[layout.non_slack_idx] = layout.offset_delta + np.arange(n - 1)
@@ -741,11 +761,11 @@ def _voltage_guard_kwargs(
         "state_box_lo": lo,
         "state_box_hi": hi,
         "step_rel_idx": v_idx,
-        "step_rel_max": _VG_V_STEP_REL,
+        "step_rel_max": g.v_step_rel,
         "step_abs_idx": delta_of[layout.non_slack_idx],
-        "step_abs_max": _VG_DELTA_STEP,
+        "step_abs_max": g.angle_step_rad,
         "step_diff_pairs": (delta_of[network_pu.from_idx], delta_of[network_pu.to_idx]),
-        "step_diff_max": _VG_BRANCH_DELTA_STEP,
+        "step_diff_max": g.branch_angle_step_rad,
     }
 
 
@@ -778,6 +798,7 @@ def _run_ipm(
     hint_iterations: int = 100,
     huber_threshold: str = "fixed",
     voltage_guard: bool = True,
+    voltage_guard_settings: VoltageGuard | None = None,
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM mode: extends the state vector with box-vars and solves the primal log-barrier WLS.
@@ -936,7 +957,11 @@ def _run_ipm(
             huber_warmup_iters=2,
             huber_adaptive_k=0.0 if huber_threshold == "fixed" else 2.0,
             kkt_solver=kkt,
-            **(_voltage_guard_kwargs(model, network_pu, layout_ipm) if voltage_guard else {}),
+            **(
+                _voltage_guard_kwargs(model, network_pu, layout_ipm, voltage_guard_settings)
+                if voltage_guard
+                else {}
+            ),
         )
         pd_result = result
         if result.solve_status is not SolveStatus.KKT:

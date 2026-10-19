@@ -91,6 +91,12 @@ def _full_derived() -> DerivedInputs:
             (7, "p_from"): (-np.inf, 300.0),
             (5, "p_gen:0"): (0.0, 50.0),
         },
+        measurement_sigma2={(1, "v"): 0.25, (7, "p_from"): 4.0, (5, "q_gen:12"): 1.5},
+        pseudo_measurements={
+            (2, "v"): (110.0, 0.5),
+            (3, "p_inj"): (-1.5, 100.0),
+            (3, "q_inj"): (0.0, 100.0),
+        },
     )
 
 
@@ -147,6 +153,8 @@ def test_empty_plans_are_not_none(tmp_path: Path) -> None:
         v_sigma2_scale={},
         flow_sigma2_scale={},
         telemetry_bounds={},
+        measurement_sigma2={},
+        pseudo_measurements={},
     )
     assert load_se_input_npz(_save(tmp_path, derived)).derived == derived
 
@@ -239,6 +247,8 @@ def test_split_kind() -> None:
         DerivedInputs(telemetry_arg_keys=[(1, "q_to:2")]),
         DerivedInputs(materialize_obs={"load": {1: 1.0}}),
         DerivedInputs(flow_sigma2_scale={(1, "v"): 2.0}),
+        DerivedInputs(measurement_sigma2={(1, "v:1"): 2.0}),
+        DerivedInputs(pseudo_measurements={(1, "p_gen"): (1.0, 1.0)}),
     ],
 )
 def test_writer_rejects_keys_outside_the_vocabulary(tmp_path: Path, derived: DerivedInputs) -> None:

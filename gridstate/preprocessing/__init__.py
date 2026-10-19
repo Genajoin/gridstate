@@ -17,10 +17,14 @@ SE-specific steps (pseudo-measurements, reading input-format properties) live he
 
 from gridstate.preprocessing.mirror_voltage import mirror_voltage_through_unit_tap_links
 from gridstate.preprocessing.node_props import extract_node_load_props_from_model
-from gridstate.preprocessing.pseudo_measurements import add_pseudo_measurements
+from gridstate.preprocessing.pseudo_measurements import (
+    add_external_pseudo_measurements,
+    add_pseudo_measurements,
+)
 
 
 __all__ = [
+    "add_external_pseudo_measurements",
     "add_pseudo_measurements",
     "extract_node_load_props_from_model",
     "mirror_voltage_through_unit_tap_links",

@@ -222,6 +222,56 @@ defaults = {p["name"]: p["default"] for p in manifest["params"]}
 assert defaults["algorithm"] == "ipm"
 ```
 
+### External variances and the plain objective
+
+By default the telemetry layer assigns every measurement its variance (V 1 % of
+the nominal voltage, branch flows 2 % of the value, injections 5 %) and later
+steps adjust it. A data producer that knows the measurement accuracy can give
+the variances instead, and every adjustment of the weights or of the problem
+can be switched off.
+
+- `DerivedInputs.measurement_sigma2` — `{(object_id, kind): sigma2}`, keyed like
+  the telemetry plan (`v`, `p_from` / `p_to` / `q_from` / `q_to`,
+  `p_gen` / `p_load` / `q_gen` / `q_load`, components such as `p_gen:3`), in the
+  squared units of the value (kV², MW², Mvar²). The values summed into one row
+  (the components of a node injection, repeated readings) sum their variances.
+- `PipelineConfig.external_sigma2`:
+  - `"final"` (default): the variance is final. No QUESTIONABLE multiplier, no
+    producer sigma² scale plans, no Q-loss downweight, no V range downweight, no
+    load box widening, no gen-V calibration, no flow sigma floor. A row that
+    only some of its values have a variance for is an error.
+  - `"base"`: the variance replaces only the built-in rule, and every
+    adjustment applies as usual. A partly covered row keeps the built-in rule,
+    with a warning.
+
+  Validity decisions (bad quality, dead V sensors, inconsistent flows,
+  released injections) apply in both modes and have their own switches.
+- `DerivedInputs.pseudo_measurements` — `{(node_id, kind): (value, sigma2)}`
+  with `kind` in `v` / `p_inj` / `q_inj`, added as given by the
+  `external_pseudo` step before the built-in priors. A node with an external
+  prior of a kind gets no built-in prior of that kind.
+- Switches of the adjustments: `huber_c=0` (no robust weights, every solver),
+  `questionable_sigma2_multiplier=1`, `q_loss_filter="off"`,
+  `flow_sign_check`, `v_below_half_nominal_check`, `apply_voltage_range_filter`,
+  `widen_generation_only_injections`, `release_load_only_injections`,
+  `apply_gen_v_calibration`, `flow_sigma_floor_kv_frac=None`,
+  `mirror_voltage_unit_tap`, `add_pseudo` (with `pseudo_v` /
+  `pseudo_injections` for the two kinds), and the post-solve passes `bad_data`,
+  `v_refine`, `v_mirror`, `v_mirror_chain`, `refine_merge`, `anti_overshoot`,
+  `shunt_sanity`.
+
+`PipelineConfig.no_extras(**overrides)` switches all of them off, so the
+objective is the plain weighted sum of squares of the given measurements and
+pseudo-measurements. The preset works with any algorithm (wls / ipm /
+ipm_pd); the algorithm, the balance modes, the voltage guard, the boxes and
+the initial point are the statement of the problem and stay with the caller.
+The data validity checks stay on. A weighted least squares problem with hard
+boxes and hard node balances is, for example:
+
+```python
+cfg = PipelineConfig.no_extras(algorithm="ipm_pd", ipm_balance_mode="hard")
+```
+
 ## Data contract
 
 Input and output are governed by an explicit, versioned schema

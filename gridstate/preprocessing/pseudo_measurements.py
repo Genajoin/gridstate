@@ -11,6 +11,10 @@ active node without a `V/P_inj/Q_inj` measurement we add a weak prior:
   with ``voltage_scope="none"`` every V prior is.
 * `P_inj = pg - pn`, `Q_inj = qg - qn` from the node table (for transit
   nodes this gives 0). σ depends on the node type and empty-model detection.
+
+A node that already has a measurement of a kind (real, mirrored or an external
+pseudo-measurement, :func:`add_external_pseudo_measurements`) gets no prior of
+that kind.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import numpy as np
 from gridstate._arrays import meas_mask
 from gridstate.bounds import bounds_unset, declared_box
 from gridstate.constants import NodeType
-from gridstate.measurement_ids import PSEUDO_ID_BASE, IdAllocator
+from gridstate.measurement_ids import EXTERNAL_PSEUDO_ID_BASE, PSEUDO_ID_BASE, IdAllocator
 from gridstate.preprocessing._scan import scan_node_meas_by_kind
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
 from gridstate.preprocessing.node_props import extract_node_load_props_from_model
@@ -39,12 +43,21 @@ from gridstate.z_vector import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from gridstate.working import Working
 
 
-__all__ = ["add_pseudo_measurements"]
+__all__ = ["add_external_pseudo_measurements", "add_pseudo_measurements"]
+
+#: Kind of an external pseudo-measurement → ``measurement_type``.
+_EXTERNAL_PSEUDO_KINDS = {
+    "v": KIND_VOLTAGE,
+    "p_inj": KIND_POWER_INJECTION_P,
+    "q_inj": KIND_POWER_INJECTION_Q,
+}
+#: ``source_code`` of the external pseudo-measurements.
+SOURCE_EXTERNAL_PSEUDO = "external_pseudo"
 
 
 @dataclass(frozen=True)
@@ -57,6 +70,7 @@ class PseudoMeasConfig:
     """
 
     add_zero_injections: bool = True
+    add_v_priors: bool = True
     slack_voltage_sigma_frac: float = 0.001
     zero_inj_variance: float = 100.0
     empty_model_loose_factor: float = 100.0
@@ -235,7 +249,7 @@ def _build_pseudo_rows(
         vm = float(row["voltage_magnitude"])
         is_slack = int(row["node_type"]) == int(NodeType.SLACK)
 
-        if nid not in have_v and vn > 0:
+        if config.add_v_priors and nid not in have_v and vn > 0:
             v_prior_value = vm if vm > 0 else vn
             is_pv_with_vzd = False
             if node_load_props is not None and nid in node_load_props:
@@ -414,6 +428,7 @@ def add_pseudo_measurements(
     model: Working,
     *,
     add_zero_injections: bool = True,
+    add_v_priors: bool = True,
     slack_voltage_sigma_frac: float = 0.001,
     zero_inj_variance: float = 100.0,
     empty_model_loose_factor: float = 100.0,
@@ -453,6 +468,7 @@ def add_pseudo_measurements(
     Args:
         model: Working to modify (in place).
         add_zero_injections: whether to add P/Q injections.
+        add_v_priors: whether to add the V priors.
         slack_voltage_sigma_frac: σ_V fraction for the slack node.
         zero_inj_variance: base σ² for transit nodes (MW²).
         empty_model_loose_factor: multiplier for an empty model.
@@ -547,6 +563,7 @@ def add_pseudo_measurements(
 
     config = PseudoMeasConfig(
         add_zero_injections=add_zero_injections,
+        add_v_priors=add_v_priors,
         slack_voltage_sigma_frac=slack_voltage_sigma_frac,
         zero_inj_variance=zero_inj_variance,
         empty_model_loose_factor=empty_model_loose_factor,
@@ -572,5 +589,64 @@ def add_pseudo_measurements(
     )
     # Batch insertion in a single concatenation: per-row .add() gives O(n²) on
     # thousands of pseudo-measurements (a bottleneck of large models).
+    model.measurements.add_many(new_rows)
+    return stats
+
+
+def add_external_pseudo_measurements(
+    model: Working,
+    plan: Mapping[tuple[int, str], tuple[float, float]],
+) -> dict:
+    """Add the pseudo-measurements of ``plan`` as given.
+
+    ``plan`` is ``{(node_id, kind): (value, sigma2)}`` (see
+    :attr:`gridstate.contract.derived.DerivedInputs.pseudo_measurements`):
+    ``kind`` ∈ ``v`` / ``p_inj`` / ``q_inj``, the value in kV / MW / Mvar
+    (injections generation-positive), the variance in their squares. Each
+    entry becomes a pseudo row (``is_pseudo``, ``source_code``
+    ``"external_pseudo"``, ids from
+    :data:`~gridstate.measurement_ids.EXTERNAL_PSEUDO_ID_BASE`). Entries on
+    nodes that are missing or inactive are skipped (``"skipped_inactive"``).
+
+    Raises:
+        ValueError: an unknown kind, or a value or variance that is not finite
+            (the variance must also be positive).
+    """
+    nodes_arr = model.nodes.to_numpy()
+    active = {int(i) for i, on in zip(nodes_arr["id"], nodes_arr["status"], strict=True) if on}
+    ids = IdAllocator(
+        model.measurements.to_numpy()["id"],
+        EXTERNAL_PSEUDO_ID_BASE,
+        name="external_pseudo",
+        skip_taken_start=True,
+    )
+    new_rows: list[dict] = []
+    stats = {"added_v": 0, "added_p_inj": 0, "added_q_inj": 0, "skipped_inactive": 0}
+    for (node_id, kind), (value, sigma2) in plan.items():
+        mt = _EXTERNAL_PSEUDO_KINDS.get(kind)
+        if mt is None:
+            raise ValueError(
+                f"pseudo_measurements[({node_id}, {kind!r})]: unknown kind; expected one "
+                f"of {list(_EXTERNAL_PSEUDO_KINDS)}"
+            )
+        if not (np.isfinite(value) and np.isfinite(sigma2) and sigma2 > 0.0):
+            raise ValueError(
+                f"pseudo_measurements[({node_id}, {kind!r})] = ({value!r}, {sigma2!r}): "
+                "expected a finite value and a finite positive variance"
+            )
+        if int(node_id) not in active:
+            stats["skipped_inactive"] += 1
+            continue
+        new_rows.append(
+            pseudo_node_measurement(
+                ids.next(),
+                int(node_id),
+                mt,
+                float(value),
+                float(sigma2),
+                source_code=SOURCE_EXTERNAL_PSEUDO,
+            )
+        )
+        stats[f"added_{kind}"] += 1
     model.measurements.add_many(new_rows)
     return stats

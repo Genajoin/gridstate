@@ -432,6 +432,10 @@ def test_pipeline_config_field_and_step_wiring() -> None:
         m = _build_model_three_node_types()
         aggregate_generators_to_node(m)
         _set_variances(m, {1: 0.01})
-        ctx = SimpleNamespace(model=m, cfg=P.PipelineConfig(gen_v_calibration_mode=mode))
+        ctx = SimpleNamespace(
+            model=m,
+            cfg=P.PipelineConfig(gen_v_calibration_mode=mode),
+            fixed_sigma2_ids=frozenset(),
+        )
         _s_gen_v_calibration(ctx)  # type: ignore[arg-type]
         assert _meas_by_id(m)[1]["variance"] == pytest.approx(expected), mode

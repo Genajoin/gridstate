@@ -230,6 +230,10 @@
     "name": "materialize"
    },
    {
+    "type": "step_skipped",
+    "name": "external_pseudo"
+   },
+   {
     "type": "step_start",
     "name": "add_pseudo"
    },
@@ -545,6 +549,10 @@
    {
     "type": "step_skipped",
     "name": "materialize"
+   },
+   {
+    "type": "step_skipped",
+    "name": "external_pseudo"
    },
    {
     "type": "step_start",
@@ -898,6 +906,10 @@
     "name": "materialize"
    },
    {
+    "type": "step_skipped",
+    "name": "external_pseudo"
+   },
+   {
     "type": "step_start",
     "name": "add_pseudo"
    },
@@ -1240,6 +1252,10 @@
    {
     "type": "step_skipped",
     "name": "materialize"
+   },
+   {
+    "type": "step_skipped",
+    "name": "external_pseudo"
    },
    {
     "type": "step_start",
@@ -1601,6 +1617,10 @@
    {
     "type": "step_skipped",
     "name": "materialize"
+   },
+   {
+    "type": "step_skipped",
+    "name": "external_pseudo"
    },
    {
     "type": "step_start",
@@ -1965,6 +1985,10 @@
    {
     "type": "step_skipped",
     "name": "materialize"
+   },
+   {
+    "type": "step_skipped",
+    "name": "external_pseudo"
    },
    {
     "type": "step_start",

@@ -40,6 +40,8 @@ from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from gridstate.working import Working
 
 
@@ -54,6 +56,7 @@ def apply_voltage_range_filter(
     nonphysical_lower_factor: float = 0.5,
     nonphysical_upper_factor: float = 1.5,
     questionable_sigma2_multiplier: float = QUESTIONABLE_SIGMA2_MULTIPLIER,
+    skip_ids: Collection[int] = (),
 ) -> dict:
     """Deactivate/downweight V measurements outside the admissible range.
 
@@ -107,6 +110,10 @@ def apply_voltage_range_filter(
             A V above this cannot be a valid voltage.
         questionable_sigma2_multiplier: variance multiplier for
             QUESTIONABLE measurements (default 100.0 = σ × 10).
+        skip_ids: ids of measurements whose variance is final (an external
+            variance, see ``apply_telemetry_resolved``): an out-of-range one is
+            not downweighted (counted in ``"fixed_sigma2_kept"``); the
+            deactivations still apply.
 
     Returns:
         ``{"checked": N, "out_of_range": N, "hard_deactivated": N,
@@ -130,6 +137,7 @@ def apply_voltage_range_filter(
         nonphysical_lower_factor=nonphysical_lower_factor,
         nonphysical_upper_factor=nonphysical_upper_factor,
         questionable_sigma2_multiplier=questionable_sigma2_multiplier,
+        skip_ids=skip_ids,
     )
     table_replace(model.measurements, meas_arr)
     return stats
@@ -149,6 +157,7 @@ def _voltage_range_filter_on_arrays(
     deactivate_nonphysical: bool = False,
     nonphysical_lower_factor: float = 0.5,
     nonphysical_upper_factor: float = 1.5,
+    skip_ids: Collection[int] = (),
 ) -> dict:
     """CORE: V-range filter over contract arrays.
 
@@ -158,12 +167,14 @@ def _voltage_range_filter_on_arrays(
     from the adapter. No external dependencies; a sequential loop in input order.
     """
     node_by_id = id_to_pos_map(nodes_arr["id"])
+    fixed = set(skip_ids)
 
     counters: dict[str, int] = {
         "checked": 0,
         "out_of_range": 0,
         "hard_deactivated": 0,
     }
+    n_fixed_kept = 0
     by_vnom: dict[int, int] = {}
 
     # Only the current row is mutated in the loop, so the mask taken up front
@@ -208,6 +219,8 @@ def _voltage_range_filter_on_arrays(
             by_vnom[v_nom_int] = by_vnom.get(v_nom_int, 0) + 1
             if action == "deactivate":
                 meas_arr[i]["status"] = False
+            elif int(m["id"]) in fixed:
+                n_fixed_kept += 1
             else:
                 downweight_measurement(
                     meas_arr, i, questionable_sigma2_multiplier, mark_questionable=True
@@ -248,18 +261,23 @@ def _voltage_range_filter_on_arrays(
             counters["out_of_range"] += 1
             if action == "deactivate":
                 meas_arr[i]["status"] = False
+            elif int(m["id"]) in fixed:
+                n_fixed_kept += 1
             else:  # downweight
                 downweight_measurement(
                     meas_arr, i, questionable_sigma2_multiplier, mark_questionable=True
                 )
             continue
 
-    return {
+    stats: dict = {
         "checked": counters["checked"],
         "out_of_range": counters["out_of_range"],
         "hard_deactivated": counters["hard_deactivated"],
         "by_vnom": by_vnom,
     }
+    if fixed:
+        stats["fixed_sigma2_kept"] = n_fixed_kept
+    return stats
 
 
 def apply_voltage_meas_calibration_for_gen_nodes(
@@ -267,6 +285,7 @@ def apply_voltage_meas_calibration_for_gen_nodes(
     *,
     sigma2: float = GEN_V_SIGMA2,
     mode: Literal["absolute", "tighten"] = "absolute",
+    skip_ids: Collection[int] = (),
 ) -> dict:
     """Calibrate σ² of V measurements on generating and slack nodes.
 
@@ -309,6 +328,8 @@ def apply_voltage_meas_calibration_for_gen_nodes(
         sigma2: target σ² of the V measurement, in the units of the model's
             V measurements. Default 0.1 (σ ≈ 0.32 kV).
         mode: ``"absolute"`` or ``"tighten"``, see above.
+        skip_ids: ids of measurements whose variance is final (an external
+            variance, see ``apply_telemetry_resolved``); they are left as is.
 
     Returns:
         ``{"updated_meas": N, "target_nodes": N}``; in ``"tighten"`` mode also
@@ -330,6 +351,7 @@ def apply_voltage_meas_calibration_for_gen_nodes(
         mt_v=int(MeasurementType.VOLTAGE),
         sigma2=sigma2,
         mode=mode,
+        skip_ids=skip_ids,
     )
     table_replace(model.measurements, meas_arr)
     return stats
@@ -344,6 +366,7 @@ def _voltage_meas_calibration_on_arrays(
     mt_v: int,
     sigma2: float,
     mode: Literal["absolute", "tighten"] = "absolute",
+    skip_ids: Collection[int] = (),
 ) -> dict:
     """Core of :func:`apply_voltage_meas_calibration_for_gen_nodes` on arrays.
 
@@ -366,12 +389,15 @@ def _voltage_meas_calibration_on_arrays(
                 target_ids.add(int(n["id"]))
 
     tighten = mode == "tighten"
+    fixed = set(skip_ids)
     n_updated = 0
     n_kept = 0
     for i in np.flatnonzero(meas_mask(meas_arr, kinds=mt_v, obj=ot_node)).tolist():
         if int(meas_arr[i]["object_id"]) not in target_ids:
             continue
         if int(meas_arr[i]["quality"]) != int(MeasurementQuality.GOOD):
+            continue
+        if int(meas_arr[i]["id"]) in fixed:
             continue
         new_var = gen_v_calibrated_variance(float(meas_arr[i]["variance"]), sigma2, tighten=tighten)
         if new_var is None:

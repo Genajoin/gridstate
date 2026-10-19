@@ -32,6 +32,8 @@ from gridstate.working import table_copy, table_replace
 
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from gridstate.working import Working
 
 
@@ -43,6 +45,7 @@ def apply_flow_sigma_floor(
     *,
     kv_frac: float,
     current_ka: float = 1.0,
+    skip_ids: Collection[int] = (),
 ) -> dict:
     """Raise the variance of real branch-flow measurements to floor² of the channel scale.
 
@@ -52,6 +55,8 @@ def apply_flow_sigma_floor(
         kv_frac: share of the scale ``√3·Vn·current_ka`` taken as σ_min (channel
             accuracy class); 0.010 = 1 % of scale (110 kV → 1.9 MW, 500 kV → 8.7 MW).
         current_ka: rated primary CT current, kA (default 1.0, the typical value).
+        skip_ids: ids of measurements whose variance is final (an external
+            variance, see ``apply_telemetry_resolved``); they are not floored.
 
     Returns:
         ``{"checked": N, "floored": N}``: how many real-flow measurements were checked
@@ -69,6 +74,7 @@ def apply_flow_sigma_floor(
         mt_q=int(MeasurementType.POWER_Q),
         kv_frac=float(kv_frac),
         current_ka=float(current_ka),
+        skip_ids=skip_ids,
     )
     table_replace(model.measurements, meas_arr)
     return stats
@@ -84,6 +90,7 @@ def _flow_sigma_floor_on_arrays(
     mt_q: int,
     kv_frac: float,
     current_ka: float,
+    skip_ids: Collection[int] = (),
 ) -> dict:
     """CORE: σ floor from the channel scale over the contract arrays.
 
@@ -97,6 +104,8 @@ def _flow_sigma_floor_on_arrays(
 
     # No status filter: inactive real flow rows are floored as well.
     sel = meas_mask(meas_arr, kinds=[mt_p, mt_q], obj=ot_branch, active=False, pseudo=False)
+    if skip_ids:
+        sel &= ~np.isin(meas_arr["id"], np.fromiter(skip_ids, dtype=np.int64))
     floor = flow_sigma_floor(
         np.fromiter(
             (vn_by_branch.get(int(oid), 0.0) for oid in meas_arr["object_id"]),

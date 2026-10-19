@@ -6,6 +6,7 @@ start:
 * telemetry node injections: right after the largest input id (``max + 1``);
 * V mirrored through unit-ratio transformer links: :data:`MIRROR_V_ID_BASE`
   (200 000 000);
+* external pseudo-measurements: :data:`EXTERNAL_PSEUDO_ID_BASE` (250 000 000);
 * pseudo V / injection priors: :data:`PSEUDO_ID_BASE` (300 000 000);
 * anti-overshoot injection priors: :data:`ANTI_OVERSHOOT_ID_BASE`
   (760 000 000).
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ANTI_OVERSHOOT_ID_BASE",
+    "EXTERNAL_PSEUDO_ID_BASE",
     "MIRROR_V_ID_BASE",
     "PSEUDO_ID_BASE",
     "IdAllocator",
@@ -39,6 +41,8 @@ __all__ = [
 
 #: First id of the V measurements mirrored through unit-ratio transformer links.
 MIRROR_V_ID_BASE = 200_000_000
+#: First id of the external pseudo-measurements (``DerivedInputs.pseudo_measurements``).
+EXTERNAL_PSEUDO_ID_BASE = 250_000_000
 #: First id of the pseudo V / injection priors.
 PSEUDO_ID_BASE = 300_000_000
 #: First id of the anti-overshoot injection priors.
