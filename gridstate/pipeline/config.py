@@ -772,6 +772,21 @@ class PipelineConfig:
         "load: the variance of a value uniform in its box). OFF: no prior, the "
         "part is held by its box and the node balance only. Default ON.",
     )
+    ipm_injection_split: str = _param(
+        "solver",
+        group=_G_IPM,
+        label="Split of a free node injection",
+        control="select",
+        choices=["solver", "generation_first"],
+        depends={"algorithm": _IPM_SOLVERS},
+        help="A node whose generation and load have no measurement and no prior of "
+        "their own (only the balance ties them, e.g. ipm_unmeasured_part_prior off "
+        "with no part measured) has a determined net injection only. solver — the "
+        "split the solve ends at; generation_first — the net goes to the generation "
+        "within its box, the rest to the load (an unset box is 0/0; see "
+        "post_processing.split_free_injection). The state and the objective do not "
+        "change. Default solver.",
+    )
     ipm_merge_breakers: bool = _toggle(
         False,
         group=_G_IPM,

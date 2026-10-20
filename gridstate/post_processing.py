@@ -271,6 +271,42 @@ def write_node_estimates(
     return {"updated": updated, "missing": missing}
 
 
+def split_free_injection(
+    net: np.ndarray,
+    gen_box: tuple[np.ndarray, np.ndarray],
+    load_box: tuple[np.ndarray, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split a node net injection ``net = gen - load`` with the generation first.
+
+    For nodes whose generation and load the solve does not tell apart (only
+    their difference enters the objective). A box is unset when both its
+    sides are 0; a sentinel side is a value here:
+
+    * generation box set, load box unset: ``gen = clamp(net, G)``, the rest is
+      the load (it may be negative);
+    * generation box unset, load box set: ``load = clamp(-net, N)``, the rest
+      is the generation;
+    * both unset: ``net ≥ 0`` is all generation, otherwise all load;
+    * both set: ``load = clamp(-net, N)``, then the generation is clamped into
+      ``G`` and the surplus goes back to the load.
+
+    Returns ``(gen, load)`` in the units of ``net``.
+    """
+    net = np.asarray(net, dtype=np.float64)
+    g_lo, g_hi = (np.asarray(a, dtype=np.float64) for a in gen_box)
+    n_lo, n_hi = (np.asarray(a, dtype=np.float64) for a in load_box)
+    g_set = (g_lo != 0.0) | (g_hi != 0.0)
+    n_set = (n_lo != 0.0) | (n_hi != 0.0)
+    load = np.where(n_set, np.clip(-net, n_lo, n_hi), np.maximum(-net, 0.0))
+    gen = net + load
+    gen_first = g_set & ~n_set
+    gen = np.where(gen_first, np.clip(net, g_lo, g_hi), gen)
+    both = g_set & n_set
+    gen = np.where(both, np.clip(gen, g_lo, g_hi), gen)
+    load = np.where(gen_first | both, gen - net, load)
+    return gen, load
+
+
 def _clip(value: float, lo: float, hi: float) -> float:
     """Safe clip that handles an "inverted" pair (lo > hi → return value)."""
     if not np.isfinite(lo) and not np.isfinite(hi):
