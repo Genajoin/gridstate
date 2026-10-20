@@ -74,6 +74,10 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
             branch_angle_step_rad=cfg.ipm_voltage_guard_branch_angle_step,
         ),
         "injection_roles": cfg.ipm_injection_roles,
+        "unmeasured_part_prior": cfg.ipm_unmeasured_part_prior,
+        "merge_breakers_z_ohm_per_kv": (
+            cfg.ipm_merge_breakers_z_ohm_per_kv if cfg.ipm_merge_breakers else None
+        ),
         "hint_iterations": cfg.ipm_hint_iterations,
         "huber_threshold": cfg.ipm_huber_threshold,
     }

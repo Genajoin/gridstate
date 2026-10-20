@@ -30,8 +30,25 @@ cut by tagging the merged main commit; the version is derived from that tag.
   `pseudo_injections`.
 - `PipelineConfig.no_extras(**overrides)`: every extra off (robust weights,
   post-solve passes, variance adjustments, injection releases, V mirror,
-  built-in pseudo-measurements), so the objective is the plain weighted sum of
-  squares; the algorithm and the statement of the problem stay with the caller.
+  built-in pseudo-measurements, the prior of the unmeasured injection part),
+  so the objective is the plain weighted sum of squares; the algorithm and the
+  statement of the problem stay with the caller.
+- `ipm_unmeasured_part_prior` (default on): with `ipm_injection_roles`, the
+  unmeasured part of a node whose other part is measured gets its prior;
+  off, it is held by its box and the node balance only
+  (`build_ipm_setup(..., unmeasured_part_prior=...)`).
+- Supernodes (ipm / ipm_pd): `ipm_merge_breakers` (default off) and
+  `ipm_merge_breakers_z_ohm_per_kv` (default 4.4e-4 = 110·4e-6), or
+  `estimate(..., merge_breakers_z_ohm_per_kv=...)`. Nodes joined by active
+  branches with `|r + jx| ≤ value · Vnom(from)` Ohm get one V and δ (a merged
+  transformer keeps its ratio and phase shift between its ends); the merged
+  branches leave the network, their flow measurements are not used, the
+  node balances add up per supernode and a member's net injection
+  measurement measures the box variables of its node. The flows of the merged
+  branches are recovered from the member balances (unique in a tree, split
+  as over equal impedances in a loop) and added to `p/q_inj_calc` of their
+  ends; the quality summary is computed on the rows and the state of the
+  solve (`SEResult.solved_rows`). New module `gridstate.supernodes`.
 - `huber_c=0` is documented as "no robust weights" (it already was for every
   solver).
 - Settings of the ipm_pd voltage guard (`ipm_voltage_guard_*`, `api.VoltageGuard`,

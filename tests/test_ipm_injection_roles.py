@@ -273,3 +273,17 @@ def test_config_requires_an_ipm_algorithm():
     PipelineConfig(algorithm="ipm_pd", ipm_injection_roles=True)
     with pytest.raises(ValueError, match="ipm_injection_roles"):
         PipelineConfig(algorithm="wls", ipm_injection_roles=True)
+
+
+def test_unmeasured_part_prior_can_be_switched_off():
+    m = _build_net_with_transit()
+    m.nodes.update(
+        3,
+        {"exist_gen": 1, "generation_p": 5.0, "generation_p_min": 0.0, "generation_p_max": 40.0},
+    )
+    _as_load_part(m, 5, 30.0)
+    setup, _ = _setup(m, injection_roles=True, unmeasured_part_prior=False)
+    mi = setup.meas_index
+    assert not ((mi.kind == KIND_BOX_PRIOR_PGEN) & (mi.object_pos == 2)).any()
+    assert PipelineConfig.no_extras().ipm_unmeasured_part_prior is False
+    assert PipelineConfig().ipm_unmeasured_part_prior is True

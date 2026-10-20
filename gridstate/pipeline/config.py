@@ -762,6 +762,45 @@ class PipelineConfig:
         "part has no box variable. release_load_only_injections and "
         "widen_generation_only_injections do not apply. Default OFF.",
     )
+    ipm_unmeasured_part_prior: bool = _toggle(
+        True,
+        group=_G_IPM,
+        label="Prior of the unmeasured injection part",
+        help="ipm_injection_roles: the unmeasured part of a node whose other part is "
+        "measured gets a prior at its start (generation: the half-width of its "
+        "range, or the variance of the measured part when the range is unset; "
+        "load: the variance of a value uniform in its box). OFF: no prior, the "
+        "part is held by its box and the node balance only. Default ON.",
+    )
+    ipm_merge_breakers: bool = _toggle(
+        False,
+        group=_G_IPM,
+        label="Merge nodes joined by switches",
+        help="ipm/ipm_pd only: nodes joined by active branches with a small impedance "
+        "(see ipm_merge_breakers_z_ohm_per_kv) form one supernode with one V and δ "
+        "(a merged transformer keeps its ratio and phase shift between its ends). "
+        "The merged branches leave the network and their flow "
+        "measurements are not used; the member nodes keep their other measurements "
+        "and box variables, the node balances add up to the supernode balance, a "
+        "member's net injection measurement measures the box variables of its node. "
+        "The flows of the merged branches are recovered from the member balances. "
+        "Default OFF: a switch is a branch with its X.",
+    )
+    # = gridstate.supernodes.DEFAULT_MERGE_Z_OHM_PER_KV (110·4e-6), kept literal
+    # so that the config module imports nothing from the core.
+    ipm_merge_breakers_z_ohm_per_kv: float = _param(
+        4.4e-4,
+        group=_G_IPM,
+        label="Merge threshold |Z|, Ohm per kV",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"ipm_merge_breakers": True},
+        help="ipm_merge_breakers: a branch is merged when |r + jx| ≤ value · Vnom Ohm "
+        "(Vnom of the from node). Default 4.4e-4 = 110·min_x with min_x = 4e-6: the "
+        "X the breaker normalization gives (normalize_breakers with breaker_x_pu "
+        "unset). For another min_x: 110·min_x.",
+    )
     ipm_hint_iterations: int = _param(
         100,
         group=_G_IPM,
@@ -1153,8 +1192,9 @@ class PipelineConfig:
         (bad data, V refine, V mirrors, refine merge, anti-overshoot, shunt
         sanity), the variance adjustments (QUESTIONABLE multiplier, Q-loss
         filter, V range filter, load box widening, gen-V calibration, flow sigma
-        floor), the injection releases, the V mirror across unit-ratio links and
-        the built-in pseudo-measurements. External variances are final
+        floor), the injection releases, the V mirror across unit-ratio links,
+        the built-in pseudo-measurements and the prior of the unmeasured
+        injection part (``ipm_injection_roles``). External variances are final
         (``external_sigma2="final"``); external pseudo-measurements are still
         added. The data validity checks stay on (bad quality, dead V sensors,
         inconsistent P signs).
@@ -1184,6 +1224,7 @@ class PipelineConfig:
             "relax_generation_min_to_injection": False,
             "mirror_voltage_unit_tap": False,
             "add_pseudo": False,
+            "ipm_unmeasured_part_prior": False,
         }
         values.update(overrides)
         return cls(**values)
@@ -1240,6 +1281,8 @@ class PipelineConfig:
             "ipm_pd",
         ):
             problems.append("ipm_injection_roles requires algorithm='ipm' or 'ipm_pd'")
+        if getattr(self, "ipm_merge_breakers", False) and self.algorithm not in ("ipm", "ipm_pd"):
+            problems.append("ipm_merge_breakers requires algorithm='ipm' or 'ipm_pd'")
         if problems:
             raise ValueError(f"invalid {type(self).__name__}: " + "; ".join(problems))
 

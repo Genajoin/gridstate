@@ -317,6 +317,8 @@ def _plan_injection_roles(
     z: np.ndarray,
     sigma2: np.ndarray,
     sections: list[_BoxSection],
+    *,
+    unmeasured_part_prior: bool = True,
 ) -> _RolePlan:
     """Map the part rows of node injections onto the box variables.
 
@@ -331,7 +333,8 @@ def _plan_injection_roles(
       (a sensor range narrows the physical range, it does not replace it) and its
       prior row is dropped. The other part of the node, when it has a box
       variable but no measurement, gets a prior at its start (see
-      :func:`_prior_unmeasured_part`);
+      :func:`_prior_unmeasured_part`) unless ``unmeasured_part_prior`` is off:
+      then only its box and the balance hold it;
     * otherwise the part rows are dropped; when the node has no net row, the
       first part row is turned into one (signed sum of the parts, summed σ²).
 
@@ -399,6 +402,8 @@ def _plan_injection_roles(
                     boxes.setdefault(s, [])
             for s, pairs in boxes.items():
                 _apply_measured_box(sections[s], index[s][pos], pairs)
+            if not unmeasured_part_prior:
+                continue
             measured_s2 = min(float(sigma2[k]) for k, _ in rows)
             for s in {(2 if sg > 0 else 0) + axis for sg in sec_of} - set(sec_of.values()):
                 j = index[s].get(pos)
@@ -566,6 +571,7 @@ def build_ipm_setup(
     transit_balance_tol_q_mvar: float = 0.1,
     fixed_injection_from_input: bool = False,
     injection_roles: bool = False,
+    unmeasured_part_prior: bool = True,
     measurements: _ArrayCollection | None = None,
 ) -> IPMSetup:
     """Assemble the IPM setup on top of ready WLS data.
@@ -655,6 +661,10 @@ def build_ipm_setup(
             variable box (see :func:`_plan_injection_roles`). Needs
             ``measurements``. ``False`` (default): every injection row is a net
             injection.
+        unmeasured_part_prior: with ``injection_roles``, the unmeasured part of
+            a node whose other part is measured gets a prior at its start
+            (default). ``False``: no prior, the part is held by its box and the
+            balance only.
         measurements: the measurement collection ``meas_index`` was built from.
 
     Returns:
@@ -683,6 +693,7 @@ def build_ipm_setup(
             z,
             r_matrix.diagonal(),
             [pgen_sec, qgen_sec, pnag_sec, qnag_sec],
+            unmeasured_part_prior=unmeasured_part_prior,
         )
         keep = role_plan.keep
         z = role_plan.z[keep]

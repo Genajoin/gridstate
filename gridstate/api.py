@@ -7,8 +7,8 @@ to the corresponding implementation in ``gridstate/algorithms/``.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -60,10 +60,28 @@ from gridstate.state import (
     unpack,
     unpack_full,
 )
-from gridstate.units import BASE_MVA, model_to_pu, write_results_to_model
+from gridstate.supernodes import (
+    SolvedRows,
+    Supernodes,
+    add_merged_branch_shunts,
+    build_supernodes,
+    merged_branch_ids,
+    reduce_rows,
+    reduce_state,
+    solved_base_rows,
+    start_network,
+    without_branch_measurements,
+    write_merged_results,
+)
+from gridstate.units import (
+    BASE_MVA,
+    model_to_pu,
+    network_pu_from_tables,
+    write_results_to_model,
+)
 from gridstate.utils import floored_sigma2, id_to_pos_map
 from gridstate.ybus import build_ybus
-from gridstate.z_vector import build_z_and_r, measurement_bounds_pu
+from gridstate.z_vector import MeasurementIndex, build_z_and_r, measurement_bounds_pu
 
 
 if TYPE_CHECKING:
@@ -71,7 +89,6 @@ if TYPE_CHECKING:
 
     from gridstate.units import NetworkPU
     from gridstate.working import Working, _ArrayCollection
-    from gridstate.z_vector import MeasurementIndex
 
 
 logger = logging.getLogger(__name__)
@@ -104,6 +121,7 @@ def estimate(
     quality_summary_near_critical: float = NEAR_CRITICAL_THRESHOLD,
     success_policy: SuccessPolicy = "legacy",
     implausible_v_ratio: float = 0.3,
+    merge_breakers_z_ohm_per_kv: float | None = None,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Run state estimation for a model and telemetry.
@@ -194,6 +212,15 @@ def estimate(
             WARNING lists hints (:mod:`gridstate.solution_hints`). ``0``
             disables the check. A WLS solve that does not converge logs its
             largest normalized residuals.
+        merge_breakers_z_ohm_per_kv: ``ipm`` / ``ipm_pd`` only. Nodes joined
+            by active branches with ``|r + jx| ≤ value · Vnom`` Ohm (``Vnom``
+            of the ``from`` node) are merged into supernodes with one V and δ
+            (:mod:`gridstate.supernodes`; a merged transformer keeps its ratio
+            and phase shift between its ends): the merged branches leave the
+            network, their flow measurements are not used, the member nodes
+            keep their other measurements and box variables. The flows of the
+            merged branches are recovered from the member balances. ``None``
+            (default): no merging.
         **ipm_kwargs: IPM-mode knobs, ignored for WLS. ``trust_region_scope``
             (``"state"`` default | ``"all"``) selects the coordinates the IPM
             trust region is measured on (see ``_run_ipm``); everything else is
@@ -223,27 +250,40 @@ def estimate(
             f"success_policy must be one of {SUCCESS_POLICIES}, got {success_policy!r}"
         )
 
+    if merge_breakers_z_ohm_per_kv is not None and algorithm == "wls":
+        raise ValueError("merge_breakers_z_ohm_per_kv requires algorithm='ipm' or 'ipm_pd'")
+
     if measurements is None:
         measurements = model.measurements
 
-    # 1. Conversion to p.u.
-    network_pu = model_to_pu(model)
+    # 1. Conversion to p.u. (without the merged branches)
+    network_pu, solve_measurements, supernodes = _solve_network(
+        model, measurements, merge_breakers_z_ohm_per_kv
+    )
     layout = StateLayout.from_slack(network_pu.n_bus, network_pu.slack_idx)
 
     # 2. Y-bus, Yf, Yt
     ybus, yf, yt = build_ybus(network_pu)
 
     # 3. Measurement vector
-    z, r_matrix, meas_index = build_z_and_r(model, measurements, network_pu)
+    z, r_matrix, meas_index = build_z_and_r(model, solve_measurements, network_pu)
 
-    # 4. Initial guess E
-    e_init = _build_initial_state(model, network_pu, layout, init, x0=x0)
+    # 4. Initial guess E (the flat start sees the merged branches)
+    e_init = _build_initial_state(
+        model,
+        network_pu,
+        layout,
+        init,
+        x0=x0,
+        start_net=start_network(network_pu, supernodes) if supernodes is not None else None,
+    )
 
     # Newton-system solver: one per estimate — reuse of the symbolic
     # factorization between iterations (the structure of G is unchanged).
     kkt = KKTSolver(kkt_solver)
 
     role_estimates: dict[int, float] = {}
+    merge_out: dict[str, Any] = {}
     if algorithm in ("ipm", "ipm_pd"):
         # IPM mode: extend layout/state/measurements with box variables and
         # nodal balance equations. ipm_kwargs are passed on to build_ipm_setup
@@ -266,8 +306,10 @@ def estimate(
             huber_use_mad=huber_use_mad,
             kkt=kkt,
             solver=algorithm,
-            measurements=measurements,
+            measurements=solve_measurements,
             role_estimates=role_estimates,
+            supernodes=supernodes,
+            merge_out=merge_out,
             **ipm_kwargs,
         )
         # _run_ipm has already written *_estimated into model.nodes; the layout
@@ -312,7 +354,18 @@ def estimate(
     # measurement vector at the final V/δ (no Huber weights, no ½, no IPM
     # balance/prior rows), comparable between the solvers.
     objective_wls = _wls_objective(
-        z, r_matrix, ybus, yf, yt, meas_index, layout, network_pu, v_pu, delta
+        z,
+        r_matrix,
+        ybus,
+        yf,
+        yt,
+        meas_index,
+        layout,
+        network_pu,
+        v_pu,
+        delta,
+        supernodes=supernodes,
+        residuals=merge_out.get("residuals"),
     )
     if success_policy == "status":
         success = success_from_status(solve_status)
@@ -348,6 +401,18 @@ def estimate(
         if hints:
             logger.warning("wls did not converge (%s):\n%s", message, "\n".join(hints))
     write_results_to_model(model, v_pu, delta, network_pu, yf=yf, yt=yt, ybus=ybus)
+    if supernodes is not None:
+        write_merged_results(
+            model,
+            network_pu,
+            supernodes,
+            merge_out["outflow_p"],
+            merge_out["outflow_q"],
+            v_pu,
+        )
+        # A member injection row measures the box variables of its node.
+        role_estimates.update(merge_out["estimates"])
+        role_estimates.update(dict.fromkeys(merge_out["dropped_ids"].tolist(), float("nan")))
     # 7. Post-processing of measurements: estimated_si/value/residual.
     write_measurement_estimates(
         model=model,
@@ -399,6 +464,7 @@ def estimate(
         # Output container: all results keyed by id (nodes/branches/measurements),
         # extracted from the model after writing. The canonical Output contract.
         outputs=extract_output_tables(model),
+        solved_rows=merge_out.get("solved"),
     )
 
     if include_quality_summary:
@@ -421,9 +487,36 @@ def estimate(
             rn_method=quality_summary_rn_method,
             rn_refine_below=quality_summary_rn_refine_below,
             near_critical=quality_summary_near_critical,
+            solved=result.solved_rows,
         )
 
     return result
+
+
+def _solve_network(
+    model: Working,
+    measurements: _ArrayCollection,
+    merge_z_ohm_per_kv: float | None,
+) -> tuple[NetworkPU, _ArrayCollection, Supernodes | None]:
+    """p.u. network, the measurements it is solved with and its supernodes.
+
+    Without merging (``None``, or no branch to merge): ``model_to_pu`` and the
+    measurements as they are. Otherwise the merged branches leave the network
+    (their shunts go to their ends) and their flow measurements are switched
+    off in a copy of the measurements.
+    """
+    if merge_z_ohm_per_kv is None:
+        return model_to_pu(model), measurements, None
+    nodes = model.nodes.to_numpy()
+    branches = model.branches.to_numpy()
+    ids = merged_branch_ids(nodes, branches, merge_z_ohm_per_kv)
+    if ids.size == 0:
+        return network_pu_from_tables(nodes, branches), measurements, None
+    kept = branches.copy()
+    kept["status"][np.isin(kept["id"], ids)] = False
+    network_pu = add_merged_branch_shunts(network_pu_from_tables(nodes, kept), branches, ids)
+    supernodes = build_supernodes(network_pu, branches, ids)
+    return network_pu, without_branch_measurements(measurements, ids), supernodes
 
 
 def _wls_objective(
@@ -437,13 +530,31 @@ def _wls_objective(
     network_pu: NetworkPU,
     v_pu: np.ndarray,
     delta_rad: np.ndarray,
+    *,
+    supernodes: Supernodes | None = None,
+    residuals: dict[int, float] | None = None,
 ) -> float:
-    """``Σ (z − h(V, δ))² / σ²`` over the measurement vector (σ² floored as in the solvers)."""
+    """``Σ (z − h(V, δ))² / σ²`` over the measurement vector (σ² floored as in the solvers).
+
+    With ``supernodes`` the member injection rows take their residual from
+    ``residuals`` (by measurement id, measured on the box variables); those
+    dropped are left out.
+    """
     if z.shape[0] == 0:
         return float("nan")
     algebra = BaseAlgebra(ybus, yf, yt, meas_index, layout, network_pu)
     r = z - algebra.evaluate_h(v_pu, delta_rad)
-    return float(np.sum(r * r / floored_sigma2(r_matrix.diagonal())))
+    terms = r * r / floored_sigma2(r_matrix.diagonal())
+    if supernodes is not None:
+        keep = solved_base_rows(meas_index, supernodes)
+        sigma2 = floored_sigma2(r_matrix.diagonal())
+        row_of = id_to_pos_map(meas_index.meas_id)
+        for mid, value in (residuals or {}).items():
+            k = row_of[int(mid)]
+            keep[k] = True
+            terms[k] = value * value / sigma2[k]
+        terms = terms[keep]
+    return float(np.sum(terms))
 
 
 def _populate_quality_summary(
@@ -452,11 +563,11 @@ def _populate_quality_summary(
     model: Working,
     measurements: _ArrayCollection,
     network_pu: NetworkPU,
-    ybus: csr_matrix,
-    yf: csr_matrix,
-    yt: csr_matrix,
+    ybus: csr_matrix | None,
+    yf: csr_matrix | None,
+    yt: csr_matrix | None,
     z: np.ndarray,
-    r_matrix: csr_matrix,
+    r_matrix: csr_matrix | None,
     meas_index: MeasurementIndex,
     layout: StateLayout,
     v_pu: np.ndarray,
@@ -466,6 +577,7 @@ def _populate_quality_summary(
     rn_method: str = "selected_inversion",
     rn_refine_below: float = SELINV_REFINE_BELOW,
     near_critical: float = NEAR_CRITICAL_THRESHOLD,
+    solved: SolvedRows | None = None,
 ) -> None:
     """Fill ``result.chi2 / worst_residuals / worst_imbalance /
     observability_warnings / near_critical_measurements /
@@ -474,19 +586,35 @@ def _populate_quality_summary(
 
     All errors in the summary are swallowed into the logs: report quality is not an indicator of
     SE success, and a failure here must not break ``estimate()``.
+
+    ``solved`` (a supernode solve, see :class:`gridstate.supernodes.SolvedRows`):
+    the summary is computed on the rows and the state the solver ran on
+    (balance and prior rows count as pseudo-measurements); the network
+    arguments and ``z`` / ``r_matrix`` / ``meas_index`` / ``layout`` are then
+    not used.
     """
     try:
+        if solved is not None:
+            network_pu = solved.network_pu
+            r_vec, H, z = solved.residual, solved.jacobian, solved.z
+            meas_index, layout = solved.meas_index, solved.layout
+            sigma2 = floored_sigma2(solved.sigma2)
+            sn = solved.supernodes
+            obs_network = replace(network_pu, n_bus=sn.n_group, bus_ids=network_pu.bus_ids[sn.rep])
         if z.shape[0] == 0:
             # No measurements — leave the default empty.
             result.worst_imbalance = top_worst_imbalance(model, n=top_n)
             return
 
-        algebra = BaseAlgebra(ybus, yf, yt, meas_index, layout, network_pu)
-        h_pu = algebra.evaluate_h(v_pu, delta_rad)
-        r_vec = z - h_pu
-        H = algebra.evaluate_jacobian(v_pu, delta_rad)
-
-        sigma2 = floored_sigma2(r_matrix.diagonal())
+        if solved is None:
+            if ybus is None or yf is None or yt is None or r_matrix is None:
+                raise ValueError("the quality summary needs the network matrices and R")
+            algebra = BaseAlgebra(ybus, yf, yt, meas_index, layout, network_pu)
+            h_pu = algebra.evaluate_h(v_pu, delta_rad)
+            r_vec = z - h_pu
+            H = algebra.evaluate_jacobian(v_pu, delta_rad)
+            sigma2 = floored_sigma2(r_matrix.diagonal())
+            obs_network = network_pu
 
         # Marking pseudo-priors in z order: meas_id → is_pseudo from the collection.
         is_pseudo_z: np.ndarray | None = None
@@ -499,6 +627,10 @@ def _populate_quality_summary(
                 [bool(pseudo_by_id.get(int(mid), False)) for mid in meas_index.meas_id],
                 dtype=bool,
             )
+        if solved is not None:
+            # The balance and prior rows of the solve (negative ids) are not data.
+            own = np.asarray(meas_index.meas_id) < 0
+            is_pseudo_z = own if is_pseudo_z is None else is_pseudo_z | own
 
         result.chi2 = compute_chi2(r_vec, sigma2, n_state=int(layout.size))
         rows_mask = residual_scope_mask(scope, is_pseudo_z)
@@ -539,8 +671,8 @@ def _populate_quality_summary(
         result.worst_imbalance = top_worst_imbalance(model, n=top_n)
         result.observability_warnings = observability_warnings_from_H(
             H,
-            network_pu,
-            n_bus=int(network_pu.n_bus),
+            obs_network,
+            n_bus=int(obs_network.n_bus),
             non_slack_idx=layout.non_slack_idx,
         )
     except Exception as exc:  # pragma: no cover — defensive
@@ -569,7 +701,8 @@ def populate_quality_summary(
 
     ``top_n`` / ``scope`` / ``rn_method`` / ``rn_refine_below`` /
     ``near_critical`` have the meaning of the ``quality_summary_*`` arguments
-    of :func:`estimate`.
+    of :func:`estimate`. A supernode solve keeps the rows it ran on
+    (``result.solved_rows``); the summary is computed on them.
 
     Raises:
         ValueError: unknown ``rn_method`` or an invalid ``rn_refine_below``.
@@ -577,6 +710,29 @@ def populate_quality_summary(
     check_rn_options(rn_method, rn_refine_below)
     model = result.model
     measurements = model.measurements
+    if result.solved_rows is not None:
+        _populate_quality_summary(
+            result,
+            model=model,
+            measurements=measurements,
+            network_pu=result.solved_rows.network_pu,
+            ybus=None,
+            yf=None,
+            yt=None,
+            z=result.solved_rows.z,
+            r_matrix=None,
+            meas_index=result.solved_rows.meas_index,
+            layout=result.solved_rows.layout,
+            v_pu=result.v_pu,
+            delta_rad=result.delta_rad,
+            top_n=top_n,
+            scope=scope,
+            rn_method=rn_method,
+            rn_refine_below=rn_refine_below,
+            near_critical=near_critical,
+            solved=result.solved_rows,
+        )
+        return
     network_pu = model_to_pu(model)
     layout = StateLayout.from_slack(network_pu.n_bus, network_pu.slack_idx)
     ybus, yf, yt = build_ybus(network_pu)
@@ -609,9 +765,14 @@ def _build_initial_state(
     layout: StateLayout,
     init: InitMode,
     x0: InitialPoint | None = None,
+    start_net: NetworkPU | None = None,
 ) -> np.ndarray:
-    """Build ``e_init`` according to the chosen strategy, then overlay ``x0``."""
-    e_init = _initial_state_from_mode(model, network_pu, layout, init)
+    """Build ``e_init`` according to the chosen strategy, then overlay ``x0``.
+
+    ``start_net``: the network the flat-start voltages are propagated over
+    (default ``network_pu``).
+    """
+    e_init = _initial_state_from_mode(model, network_pu, layout, init, start_net=start_net)
     if x0 is None:
         return e_init
     delta, v_pu = unpack(e_init, layout)
@@ -652,11 +813,15 @@ def _initial_state_from_mode(
     network_pu: NetworkPU,
     layout: StateLayout,
     init: InitMode,
+    *,
+    start_net: NetworkPU | None = None,
 ) -> np.ndarray:
     """``e_init`` of the ``init`` strategy alone."""
     if init == "flat":
         e = flat_start(layout)
-        e[layout.offset_v : layout.offset_v + layout.n_bus] = tap_consistent_voltages(network_pu)
+        e[layout.offset_v : layout.offset_v + layout.n_bus] = tap_consistent_voltages(
+            start_net if start_net is not None else network_pu
+        )
         return e
 
     if init == "results":
@@ -723,6 +888,9 @@ def _voltage_guard_kwargs(
     network_pu: NetworkPU,
     layout: StateLayout,
     guard: VoltageGuard | None = None,
+    *,
+    group: np.ndarray | None = None,
+    v_scale: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """``solve_ipm_pd`` kwargs of the voltage guard: V boxes and step limits.
 
@@ -731,6 +899,11 @@ def _voltage_guard_kwargs(
     says. It keeps the iteration out of the collapsed region (V → 0, where the
     node angle is undetermined); the step limits keep one Newton step from
     crossing into it.
+
+    ``group`` (bus → supernode, ``layout`` is then the supernode layout) and
+    ``v_scale`` (``V_bus = v_scale · V_rep``): the box of a supernode is the
+    intersection of its members' boxes (the fallback box when it is empty);
+    the branch angle limit applies to the branches between supernodes.
     """
     g = guard if guard is not None else VoltageGuard()
     nodes = model.nodes.to_numpy()
@@ -753,6 +926,19 @@ def _voltage_guard_kwargs(
     lo[unset], hi[unset] = g.unset_lo, g.unset_hi
     bad = lo >= hi
     lo[bad], hi[bad] = g.lo_fallback, g.hi_fallback
+    from_idx, to_idx = network_pu.from_idx, network_pu.to_idx
+    if group is not None:
+        # A member's box in the p.u. of its representative: V_member = scale · V_rep.
+        scale = v_scale if v_scale is not None else np.ones(n)
+        n = layout.n_bus
+        lo_g, hi_g = np.full(n, -np.inf), np.full(n, np.inf)
+        np.maximum.at(lo_g, group, lo / scale)
+        np.minimum.at(hi_g, group, hi / scale)
+        bad = lo_g >= hi_g
+        lo_g[bad], hi_g[bad] = g.lo_fallback, g.hi_fallback
+        lo, hi = lo_g, hi_g
+        between = group[from_idx] != group[to_idx]
+        from_idx, to_idx = group[from_idx[between]], group[to_idx[between]]
     v_idx = np.arange(layout.offset_v, layout.offset_v + n, dtype=np.int64)
     delta_of = np.full(n, -1, dtype=np.int64)
     delta_of[layout.non_slack_idx] = layout.offset_delta + np.arange(n - 1)
@@ -764,7 +950,7 @@ def _voltage_guard_kwargs(
         "step_rel_max": g.v_step_rel,
         "step_abs_idx": delta_of[layout.non_slack_idx],
         "step_abs_max": g.angle_step_rad,
-        "step_diff_pairs": (delta_of[network_pu.from_idx], delta_of[network_pu.to_idx]),
+        "step_diff_pairs": (delta_of[from_idx], delta_of[to_idx]),
         "step_diff_max": g.branch_angle_step_rad,
     }
 
@@ -799,6 +985,8 @@ def _run_ipm(
     huber_threshold: str = "fixed",
     voltage_guard: bool = True,
     voltage_guard_settings: VoltageGuard | None = None,
+    supernodes: Supernodes | None = None,
+    merge_out: dict[str, Any] | None = None,
     **ipm_kwargs: Any,
 ) -> IPMResult:
     """IPM mode: extends the state vector with box-vars and solves the primal log-barrier WLS.
@@ -846,6 +1034,15 @@ def _run_ipm(
     threshold at ``huber_c``; ``"adaptive"`` raises it to ``k·median|r/σ|``,
     recomputed every iteration, so the estimate follows the solver path. The
     primal IPM keeps its adaptive threshold (recomputed once per outer step).
+
+    ``supernodes`` (:mod:`gridstate.supernodes`): the solver runs on one V / δ
+    per supernode and on the supernode balances; the returned ``x`` is
+    expanded back to the node layout. ``merge_out`` (when given) receives
+    ``outflow_p`` / ``outflow_q`` (p.u. per bus: what a bus sends through the
+    merged branches), ``residuals`` / ``estimates`` (by measurement id: p.u.
+    residual / MW-MVAr estimate of the member injection rows measured on the
+    box variables) and ``dropped_ids`` (member injection rows without a box
+    variable, not used).
     """
     if huber_threshold not in ("fixed", "adaptive"):
         raise ValueError(f"huber_threshold={huber_threshold!r} is not one of fixed/adaptive")
@@ -867,6 +1064,8 @@ def _run_ipm(
         **ipm_kwargs,
     )
     layout_ipm = setup.layout
+    red_state = reduce_state(layout_ipm, supernodes) if supernodes is not None else None
+    red_rows = reduce_rows(setup, supernodes) if supernodes is not None else None
 
     # Starting state: V/δ from e_init_base + box-vars from the initial values of the node table.
     delta_init, v_init = unpack(e_init_base, layout_base)
@@ -885,7 +1084,8 @@ def _run_ipm(
 
     algebra = BaseAlgebra(ybus, yf, yt, setup.meas_index, layout_ipm, network_pu)
 
-    r_inv_diag = 1.0 / floored_sigma2(setup.r_matrix.diagonal())
+    sigma2_rows = red_rows.sigma2 if red_rows is not None else setup.r_matrix.diagonal()
+    r_inv_diag = 1.0 / floored_sigma2(sigma2_rows)
 
     # SHGM-IRLS mask shared with solve_wls; balance/prior rows appended by
     # build_ipm_setup are never reweighted (padding inside the helper).
@@ -898,10 +1098,12 @@ def _run_ipm(
             skip_transformers=huber_skip_transformers,
             leverage_b_threshold_pu=huber_leverage_b_threshold_pu,
         )
+        if red_rows is not None:
+            mask = mask[red_rows.src] & red_rows.plain
         huber_mask = mask if mask.any() else None
 
-    def residual_fn(x: np.ndarray) -> np.ndarray:
-        delta, v, pgen, qgen, pnag, qnag = unpack_full(x, layout_ipm)
+    def node_residual(x_node: np.ndarray) -> np.ndarray:
+        delta, v, pgen, qgen, pnag, qnag = unpack_full(x_node, layout_ipm)
         h = algebra.evaluate_h(
             v,
             delta,
@@ -913,11 +1115,29 @@ def _run_ipm(
         residual: np.ndarray = setup.z - h
         return residual
 
+    def residual_fn(x: np.ndarray) -> np.ndarray:
+        if red_state is None or red_rows is None:
+            return node_residual(x)
+        return red_rows.apply(node_residual(red_state.expand(x)))
+
     def jacobian_fn(x: np.ndarray) -> csr_matrix:
-        delta, v, _pg, _qg, _pn, _qn = unpack_full(x, layout_ipm)
-        return algebra.evaluate_jacobian(v, delta)
+        x_node = red_state.expand(x) if red_state is not None else x
+        delta, v, _pg, _qg, _pn, _qn = unpack_full(x_node, layout_ipm)
+        jac = algebra.evaluate_jacobian(v, delta)
+        if red_state is None or red_rows is None:
+            return jac
+        return cast("csr_matrix", (red_rows.rows @ jac @ red_state.t).tocsr())
 
     eq_idx = setup.eq_rows
+    eq_tol = setup.eq_tol
+    box_idx = setup.box_idx_in_state
+    x_init = e_init_ipm
+    solve_layout = layout_ipm
+    if red_state is not None and red_rows is not None:
+        eq_idx, eq_tol = red_rows.eq_rows, red_rows.eq_tol
+        box_idx = red_state.box_index(box_idx)
+        x_init = red_state.reduce(e_init_ipm)
+        solve_layout = red_state.layout
     pd_result: IPMResult | None = None
     if solver == "ipm_pd":
         mb_rows = mb_lo = mb_hi = None
@@ -926,24 +1146,31 @@ def _run_ipm(
             # A part row's box is already the box of its variable.
             lo[setup.role_rows] = -np.inf
             hi[setup.role_rows] = np.inf
+            # Bounds on h − z, the value the solver constrains (−r). A member
+            # injection row measured on the box variables keeps the bound of
+            # the injection (its h − z is the injection estimate − z).
+            lo, hi = lo - setup.z, hi - setup.z
+            if red_rows is not None:
+                solved = red_rows.plain | red_rows.converted
+                lo = np.where(solved, lo[red_rows.src], -np.inf)
+                hi = np.where(solved, hi[red_rows.src], np.inf)
             boxed = np.isfinite(lo) | np.isfinite(hi)
-            # Bounds on h − z, the value the solver constrains (−r).
             mb_rows = np.flatnonzero(boxed)
-            mb_lo = lo[boxed] - setup.z[boxed]
-            mb_hi = hi[boxed] - setup.z[boxed]
+            mb_lo = lo[boxed]
+            mb_hi = hi[boxed]
         result = solve_ipm_pd(
-            x_init=e_init_ipm,
+            x_init=x_init,
             residual_fn=residual_fn,
             jacobian_fn=jacobian_fn,
             r_inv_diag=r_inv_diag,
-            box_idx=setup.box_idx_in_state,
+            box_idx=box_idx,
             box_lo=setup.box_lo,
             box_hi=setup.box_hi,
             meas_box_rows=mb_rows,
             meas_box_lo=mb_lo,
             meas_box_hi=mb_hi,
             eq_idx=eq_idx,
-            eq_tol=setup.eq_tol,
+            eq_tol=eq_tol,
             mu_init=1.0,
             step_tol=max(tolerance, 1e-4),
             # Weakly determined units need up to ~260 iterations with separate
@@ -958,7 +1185,14 @@ def _run_ipm(
             huber_adaptive_k=0.0 if huber_threshold == "fixed" else 2.0,
             kkt_solver=kkt,
             **(
-                _voltage_guard_kwargs(model, network_pu, layout_ipm, voltage_guard_settings)
+                _voltage_guard_kwargs(
+                    model,
+                    network_pu,
+                    solve_layout,
+                    voltage_guard_settings,
+                    group=supernodes.group if supernodes is not None else None,
+                    v_scale=supernodes.v_scale if supernodes is not None else None,
+                )
                 if voltage_guard
                 else {}
             ),
@@ -974,11 +1208,11 @@ def _run_ipm(
             pd_message = result.message
     if solver != "ipm_pd" or result.solve_status is not SolveStatus.KKT:
         result = solve_ipm(
-            x_init=e_init_ipm,
+            x_init=x_init,
             residual_fn=residual_fn,
             jacobian_fn=jacobian_fn,
             r_inv_diag=r_inv_diag,
-            box_idx=setup.box_idx_in_state,
+            box_idx=box_idx,
             box_lo=setup.box_lo,
             box_hi=setup.box_hi,
             inner_tol=max(tolerance, 1e-4),
@@ -1005,10 +1239,49 @@ def _run_ipm(
             huber_adaptive_k=2.0,
             kkt_solver=kkt,
             eq_idx=eq_idx,
-            eq_tol=setup.eq_tol,
+            eq_tol=eq_tol,
         )
         if solver == "ipm_pd":
             result.message = f"ipm_pd fallback to ipm ({pd_message}): {result.message}"
+
+    if supernodes is not None and red_state is not None and red_rows is not None:
+        x_solved = result.x
+        result.x = red_state.expand(x_solved)
+        if pd_result is not None and pd_result is not result:
+            pd_result.x = red_state.expand(pd_result.x)
+        if merge_out is not None:
+            r_node = node_residual(result.x)
+            r_solved = residual_fn(x_solved)
+            # The balance residual of a member node is what it sends through
+            # the merged branches: its injection minus its network flow.
+            outflow = np.zeros((2, network_pu.n_bus))
+            for axis in (0, 1):
+                rows = setup.balance_start + axis * setup.n_balance + np.arange(setup.n_balance)
+                outflow[axis, setup.meas_index.object_pos[rows]] = r_node[rows]
+            merge_out["outflow_p"], merge_out["outflow_q"] = outflow[0], outflow[1]
+            conv = np.flatnonzero(red_rows.converted)
+            ids = setup.meas_index.meas_id[red_rows.src[conv]].tolist()
+            merge_out["residuals"] = dict(zip(ids, r_solved[conv].tolist(), strict=True))
+            h_conv = (setup.z[red_rows.src[conv]] - r_solved[conv]) * BASE_MVA
+            merge_out["estimates"] = dict(zip(ids, h_conv.tolist(), strict=True))
+            merge_out["dropped_ids"] = red_rows.dropped_ids
+            src = red_rows.src
+            merge_out["solved"] = SolvedRows(
+                residual=r_solved,
+                jacobian=jacobian_fn(x_solved),
+                sigma2=red_rows.sigma2,
+                z=setup.z[src],
+                meas_index=MeasurementIndex(
+                    kind=setup.meas_index.kind[src],
+                    object_kind=setup.meas_index.object_kind[src],
+                    object_pos=setup.meas_index.object_pos[src],
+                    branch_side=setup.meas_index.branch_side[src],
+                    meas_id=setup.meas_index.meas_id[src],
+                ),
+                layout=red_state.layout,
+                network_pu=network_pu,
+                supernodes=supernodes,
+            )
 
     slow: IPMResult | None = None
     if pd_result is not None and pd_result is not result:
@@ -1020,11 +1293,19 @@ def _run_ipm(
     ):
         slow, reason = result, f"{result.iterations_inner_total} iterations > {hint_iterations}"
     if slow is not None:
+        if red_state is not None and red_rows is not None:
+            # The step diagnostics index the supernode state and the solved
+            # rows: name them by the node of the representative / the node row.
+            slow = replace(
+                slow,
+                step_limiters={int(red_state.pick[j]): c for j, c in slow.step_limiters.items()},
+                limiting_rows={int(red_rows.src[k]): c for k, c in slow.limiting_rows.items()},
+            )
         hints = ipm_convergence_hints(
             setup=setup,
             network_pu=network_pu,
             result=slow,
-            residual=residual_fn(result.x),
+            residual=node_residual(result.x),
             iterations=slow.iterations_inner_total,
         )
         if hints:
@@ -1035,7 +1316,7 @@ def _run_ipm(
 
     if role_estimates is not None:
         if setup.role_rows.size > 0:
-            h_role = setup.z[setup.role_rows] - residual_fn(result.x)[setup.role_rows]
+            h_role = setup.z[setup.role_rows] - node_residual(result.x)[setup.role_rows]
             role_estimates.update(
                 zip(setup.role_meas_ids.tolist(), (h_role * BASE_MVA).tolist(), strict=True)
             )
