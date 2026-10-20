@@ -33,6 +33,7 @@ from gridstate.ipm_hints import has_dominant_limiter, ipm_convergence_hints
 from gridstate.post_processing import (
     apply_load_characteristic,
     reconcile_node_balance,
+    split_free_injection,
     write_measurement_estimates,
     write_node_estimates,
     write_node_estimates_from_inj,
@@ -82,6 +83,10 @@ from gridstate.units import (
 from gridstate.utils import floored_sigma2, id_to_pos_map
 from gridstate.ybus import build_ybus
 from gridstate.z_vector import (
+    KIND_BOX_PRIOR_PGEN,
+    KIND_BOX_PRIOR_PNAG,
+    KIND_BOX_PRIOR_QGEN,
+    KIND_BOX_PRIOR_QNAG,
     KIND_VOLTAGE,
     OBJ_NODE,
     MeasurementIndex,
@@ -997,6 +1002,34 @@ def _voltage_guard_kwargs(
     }
 
 
+def _free_injection_pairs(
+    meas_index: MeasurementIndex,
+    gen_pos: np.ndarray,
+    load_pos: np.ndarray,
+    prior_kinds: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Nodes with a generation and a load box variable that only the balance ties.
+
+    Neither variable has a row of its own (a prior or a measured part,
+    ``prior_kinds`` — the generation and load kinds of one axis), so the
+    objective depends on their difference only. Returns the indices into
+    ``gen_pos`` / ``load_pos`` of these nodes, pairwise.
+    """
+    own = meas_index.object_kind == OBJ_NODE
+    anchored = np.unique(meas_index.object_pos[own & np.isin(meas_index.kind, prior_kinds)])
+    load_of = {int(p): j for j, p in enumerate(load_pos.tolist())}
+    pairs = [
+        (i, load_of[int(p)])
+        for i, p in enumerate(gen_pos.tolist())
+        if int(p) in load_of and int(p) not in anchored
+    ]
+    if not pairs:
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty
+    gi, ni = zip(*pairs, strict=True)
+    return np.asarray(gi, dtype=np.int64), np.asarray(ni, dtype=np.int64)
+
+
 def _run_ipm(
     model: Working,
     network_pu: NetworkPU,
@@ -1025,6 +1058,7 @@ def _run_ipm(
     role_estimates: dict[int, float] | None = None,
     hint_iterations: int = 100,
     huber_threshold: str = "fixed",
+    injection_split: str = "solver",
     voltage_guard: bool = True,
     voltage_guard_settings: VoltageGuard | None = None,
     supernodes: Supernodes | None = None,
@@ -1072,6 +1106,12 @@ def _run_ipm(
     from ``voltage_min`` / ``voltage_max`` and per-step limits on V/δ (see
     :func:`_voltage_guard_kwargs`).
 
+    ``injection_split``: ``"solver"`` writes the box variables as solved;
+    ``"generation_first"`` re-splits the net injection of the nodes whose
+    generation and load only the balance ties (see :func:`_free_injection_pairs`)
+    by :func:`gridstate.post_processing.split_free_injection`. The objective
+    and the state do not change, only the written estimates.
+
     ``huber_threshold`` (``"ipm_pd"`` only): ``"fixed"`` keeps the Huber
     threshold at ``huber_c``; ``"adaptive"`` raises it to ``k·median|r/σ|``,
     recomputed every iteration, so the estimate follows the solver path. The
@@ -1088,6 +1128,10 @@ def _run_ipm(
     """
     if huber_threshold not in ("fixed", "adaptive"):
         raise ValueError(f"huber_threshold={huber_threshold!r} is not one of fixed/adaptive")
+    if injection_split not in ("solver", "generation_first"):
+        raise ValueError(
+            f"injection_split={injection_split!r} is not one of solver/generation_first"
+        )
     if measurement_bounds and solver != "ipm_pd":
         raise ValueError("measurement_bounds requires algorithm='ipm_pd'")
     if trust_region_scope not in ("all", "state"):
@@ -1356,6 +1400,38 @@ def _run_ipm(
 
     # Extract the box-vars and write them into the node table (MW/MVAr = p.u. * BASE_MVA).
     _, _, pgen, qgen, pnag, qnag = unpack_full(result.x, layout_ipm)
+    if injection_split == "generation_first":
+        # Copies: unpack_full returns views of result.x, which stays as solved.
+        pgen, qgen, pnag, qnag = (a.copy() for a in (pgen, qgen, pnag, qnag))
+        nodes = model.nodes.to_numpy()
+        row_of = id_to_pos_map(nodes["id"].astype(np.int64))
+        for gen, load, g_pos, n_pos, prior_kinds, cols in (
+            (
+                pgen,
+                pnag,
+                layout_ipm.pgen_node_pos,
+                layout_ipm.pnag_node_pos,
+                (KIND_BOX_PRIOR_PGEN, KIND_BOX_PRIOR_PNAG),
+                ("generation_p_min", "generation_p_max", "load_p_min", "load_p_max"),
+            ),
+            (
+                qgen,
+                qnag,
+                layout_ipm.qgen_node_pos,
+                layout_ipm.qnag_node_pos,
+                (KIND_BOX_PRIOR_QGEN, KIND_BOX_PRIOR_QNAG),
+                ("generation_q_min", "generation_q_max", "load_q_min", "load_q_max"),
+            ),
+        ):
+            gi, ni = _free_injection_pairs(setup.meas_index, g_pos, n_pos, prior_kinds)
+            if gi.size == 0:
+                continue
+            at = np.asarray([row_of[int(i)] for i in network_pu.bus_ids[g_pos[gi]]])
+            g_lo, g_hi, n_lo, n_hi = (nodes[c][at] for c in cols)
+            g_new, n_new = split_free_injection(
+                (gen[gi] - load[ni]) * BASE_MVA, (g_lo, g_hi), (n_lo, n_hi)
+            )
+            gen[gi], load[ni] = g_new / BASE_MVA, n_new / BASE_MVA
 
     if role_estimates is not None:
         if setup.role_rows.size > 0:

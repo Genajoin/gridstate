@@ -9,6 +9,18 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## Unreleased
+
+### Feat
+
+- `ipm_injection_split` (`"solver"` default | `"generation_first"`;
+  `estimate(..., injection_split=...)`): a node whose generation and load have
+  no measurement and no prior of their own has a determined net injection only;
+  `"generation_first"` writes the net to the generation within its box and the
+  rest to the load (an unset 0/0 box: see
+  `post_processing.split_free_injection`). The state and the objective do not
+  change, only the written estimates.
+
 ## v2.11.0 (2026-10-20)
 
 ### Feat

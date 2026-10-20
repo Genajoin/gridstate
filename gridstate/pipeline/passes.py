@@ -86,6 +86,7 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
         ),
         "hint_iterations": cfg.ipm_hint_iterations,
         "huber_threshold": cfg.ipm_huber_threshold,
+        "injection_split": cfg.ipm_injection_split,
     }
 
 
