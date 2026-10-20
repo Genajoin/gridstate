@@ -356,3 +356,64 @@ def test_flat_start_propagates_the_ratio_of_a_merged_transformer():
     v = tap_consistent_voltages(start_network(net, sn))
     pos = {int(b): k for k, b in enumerate(net.bus_ids.tolist())}
     assert v[pos[5]] == pytest.approx(v[pos[3]] / 1.05, rel=1e-6)
+
+
+# ---------------------------------------------------------------- V box
+def _v_box_solve(m, **guard):
+    from gridstate.api import VoltageGuard
+
+    res = _solve(m, voltage_guard_settings=VoltageGuard(**guard))
+    assert res.success, res.message
+    assert _node(res, 3)["voltage_magnitude"] == _node(res, 5)["voltage_magnitude"]
+    return _node(res, 3)["voltage_magnitude"]
+
+
+def test_unmeasured_supernode_gets_its_own_box():
+    m = _net()
+    m.measurements.update(3, status=False)
+    m.measurements.update(20, status=False)
+    # A member limit that the own box replaces.
+    m.nodes.update(3, voltage_min=90.0, voltage_max=105.0)
+    assert _v_box_solve(m) < 105.0
+    v = _v_box_solve(m, supernode_unmeasured_box=(1.0, 1.5))
+    assert v == pytest.approx(110.0, abs=0.01)
+    assert v >= 110.0 * (1 - 1e-6)
+
+
+def test_measured_members_give_the_box():
+    m = _net()
+    m.measurements.update(3, status=False)
+    # Node 3 is not measured: its limit counts with "all" only.
+    m.nodes.update(3, voltage_min=110.0, voltage_max=130.0)
+    assert _v_box_solve(m) == pytest.approx(110.0, abs=0.01)
+    free = _v_box_solve(m, supernode_box_from="measured")
+    assert free < 109.0
+    # The own box of unmeasured supernodes does not apply to a measured one.
+    assert _v_box_solve(
+        m, supernode_box_from="measured", supernode_unmeasured_box=(0.7, 0.8)
+    ) == pytest.approx(free, abs=1e-6)
+    # The limit of the measured node 5 counts.
+    m.nodes.update(5, voltage_min=110.0, voltage_max=130.0)
+    assert _v_box_solve(m, supernode_box_from="measured") == pytest.approx(110.0, abs=0.01)
+
+
+def test_v_box_options_in_the_pipeline():
+    from gridstate.pipeline.passes import _ipm_kwargs
+
+    cfg = PipelineConfig(
+        algorithm="ipm_pd",
+        ipm_merge_breakers=True,
+        ipm_merge_breakers_v_box_from="measured",
+        ipm_merge_breakers_unmeasured_v_box=True,
+    )
+    guard = _ipm_kwargs(cfg)["voltage_guard_settings"]
+    assert guard.supernode_box_from == "measured"
+    assert guard.supernode_unmeasured_box == (0.7, 1.5)
+    default = _ipm_kwargs(PipelineConfig(algorithm="ipm_pd"))["voltage_guard_settings"]
+    assert (default.supernode_box_from, default.supernode_unmeasured_box) == ("all", None)
+    with pytest.raises(ValueError, match="ipm_merge_breakers_unmeasured_v_lo"):
+        PipelineConfig(
+            ipm_merge_breakers_unmeasured_v_lo=1.0, ipm_merge_breakers_unmeasured_v_hi=1.0
+        )
+    with pytest.raises(ValueError, match="ipm_merge_breakers_v_box_from"):
+        PipelineConfig(ipm_merge_breakers_v_box_from="some")

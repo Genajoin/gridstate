@@ -81,7 +81,13 @@ from gridstate.units import (
 )
 from gridstate.utils import floored_sigma2, id_to_pos_map
 from gridstate.ybus import build_ybus
-from gridstate.z_vector import MeasurementIndex, build_z_and_r, measurement_bounds_pu
+from gridstate.z_vector import (
+    KIND_VOLTAGE,
+    OBJ_NODE,
+    MeasurementIndex,
+    build_z_and_r,
+    measurement_bounds_pu,
+)
 
 
 if TYPE_CHECKING:
@@ -867,6 +873,14 @@ class VoltageGuard:
       ``hi_fallback``;
     * a node with neither limit set: ``unset_lo`` … ``unset_hi``.
 
+    Box of a supernode of several nodes (``group``, see
+    :func:`_voltage_guard_kwargs`): the intersection of the boxes of its
+    members (``supernode_box_from="all"``) or of its members with a voltage
+    measurement, pseudo-measurements included (``"measured"``; all members
+    when none is measured). ``supernode_unmeasured_box`` (``(lo, hi)`` p.u.,
+    ``None`` — off) replaces the box of a supernode without a voltage
+    measurement; the member limits are then not used.
+
     Step limits of one iteration: ``|αp·ΔV| ≤ v_step_rel·V``,
     ``|αp·Δδ| ≤ angle_step_rad`` and ``|αp·(Δδ_i − Δδ_j)| ≤
     branch_angle_step_rad`` over a branch (``0`` switches a limit off).
@@ -878,9 +892,19 @@ class VoltageGuard:
     hi_fallback: float = 1.8
     unset_lo: float = 0.55
     unset_hi: float = 1.8
+    supernode_box_from: str = "all"
+    supernode_unmeasured_box: tuple[float, float] | None = None
     v_step_rel: float = 0.2
     angle_step_rad: float = 0.6
     branch_angle_step_rad: float = 0.35
+
+
+def _voltage_measured(meas_index: MeasurementIndex, n_bus: int) -> np.ndarray:
+    """Bool per bus: the bus has a voltage row in ``z``."""
+    out = np.zeros(n_bus, dtype=bool)
+    rows = (meas_index.kind == KIND_VOLTAGE) & (meas_index.object_kind == OBJ_NODE)
+    out[meas_index.object_pos[rows]] = True
+    return out
 
 
 def _voltage_guard_kwargs(
@@ -891,6 +915,7 @@ def _voltage_guard_kwargs(
     *,
     group: np.ndarray | None = None,
     v_scale: np.ndarray | None = None,
+    v_measured: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """``solve_ipm_pd`` kwargs of the voltage guard: V boxes and step limits.
 
@@ -904,6 +929,9 @@ def _voltage_guard_kwargs(
     ``v_scale`` (``V_bus = v_scale · V_rep``): the box of a supernode is the
     intersection of its members' boxes (the fallback box when it is empty);
     the branch angle limit applies to the branches between supernodes.
+    ``v_measured`` (bool per bus: the bus has a voltage row) selects the
+    members by :attr:`VoltageGuard.supernode_box_from` and finds the
+    supernodes without a voltage measurement.
     """
     g = guard if guard is not None else VoltageGuard()
     nodes = model.nodes.to_numpy()
@@ -931,11 +959,25 @@ def _voltage_guard_kwargs(
         # A member's box in the p.u. of its representative: V_member = scale · V_rep.
         scale = v_scale if v_scale is not None else np.ones(n)
         n = layout.n_bus
+        measured = v_measured if v_measured is not None else np.zeros(group.shape[0], bool)
+        size = np.bincount(group, minlength=n)
+        has_v = np.bincount(group, weights=measured, minlength=n) > 0
+        member = np.ones(group.shape[0], dtype=bool)
+        if g.supernode_box_from == "measured":
+            # Only the measured members of a measured supernode give its box.
+            member = measured | ~has_v[group]
+        elif g.supernode_box_from != "all":
+            raise ValueError(
+                f"supernode_box_from={g.supernode_box_from!r} is not one of all/measured"
+            )
         lo_g, hi_g = np.full(n, -np.inf), np.full(n, np.inf)
-        np.maximum.at(lo_g, group, lo / scale)
-        np.minimum.at(hi_g, group, hi / scale)
+        np.maximum.at(lo_g, group[member], (lo / scale)[member])
+        np.minimum.at(hi_g, group[member], (hi / scale)[member])
         bad = lo_g >= hi_g
         lo_g[bad], hi_g[bad] = g.lo_fallback, g.hi_fallback
+        if g.supernode_unmeasured_box is not None:
+            free = (size > 1) & ~has_v
+            lo_g[free], hi_g[free] = g.supernode_unmeasured_box
         lo, hi = lo_g, hi_g
         between = group[from_idx] != group[to_idx]
         from_idx, to_idx = group[from_idx[between]], group[to_idx[between]]
@@ -1192,6 +1234,7 @@ def _run_ipm(
                     voltage_guard_settings,
                     group=supernodes.group if supernodes is not None else None,
                     v_scale=supernodes.v_scale if supernodes is not None else None,
+                    v_measured=_voltage_measured(meas_index, network_pu.n_bus),
                 )
                 if voltage_guard
                 else {}
