@@ -9,6 +9,19 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## Unreleased
+
+### Feat
+
+- Supernode V box (ipm_pd voltage guard, `ipm_merge_breakers`), defaults keep
+  the current behavior: `ipm_merge_breakers_v_box_from` — the box of a
+  supernode is the intersection of the boxes of all its members (`"all"`,
+  default) or of its members with a voltage measurement, pseudo-measurements
+  included (`"measured"`); `ipm_merge_breakers_unmeasured_v_box` (default off)
+  with `ipm_merge_breakers_unmeasured_v_lo` / `_hi` (0.7 / 1.5 p.u.) — the box
+  of a supernode without a voltage measurement, the member limits are then not
+  used (`VoltageGuard.supernode_box_from` / `supernode_unmeasured_box`).
+
 ## v2.10.0 (2026-10-20)
 
 ### Feat

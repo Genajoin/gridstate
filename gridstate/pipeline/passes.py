@@ -69,6 +69,12 @@ def _ipm_kwargs(cfg: PipelineConfig) -> dict:
             hi_fallback=cfg.ipm_voltage_guard_hi_fallback,
             unset_lo=cfg.ipm_voltage_guard_unset_lo,
             unset_hi=cfg.ipm_voltage_guard_unset_hi,
+            supernode_box_from=cfg.ipm_merge_breakers_v_box_from,
+            supernode_unmeasured_box=(
+                (cfg.ipm_merge_breakers_unmeasured_v_lo, cfg.ipm_merge_breakers_unmeasured_v_hi)
+                if cfg.ipm_merge_breakers_unmeasured_v_box
+                else None
+            ),
             v_step_rel=cfg.ipm_voltage_guard_v_step,
             angle_step_rad=cfg.ipm_voltage_guard_angle_step,
             branch_angle_step_rad=cfg.ipm_voltage_guard_branch_angle_step,

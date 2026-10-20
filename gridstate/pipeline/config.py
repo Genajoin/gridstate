@@ -801,6 +801,47 @@ class PipelineConfig:
         "X the breaker normalization gives (normalize_breakers with breaker_x_pu "
         "unset). For another min_x: 110·min_x.",
     )
+    ipm_merge_breakers_v_box_from: str = _param(
+        "all",
+        group=_G_IPM,
+        label="Supernode V box: members",
+        control="select",
+        choices=["all", "measured"],
+        depends={"ipm_merge_breakers": True},
+        help="ipm_merge_breakers, ipm_pd voltage guard: the V box of a supernode is the "
+        "intersection of the boxes of all its members (all) or of its members with a "
+        "voltage measurement, pseudo-measurements included (measured; all members when "
+        "none is measured). Default all.",
+    )
+    ipm_merge_breakers_unmeasured_v_box: bool = _toggle(
+        False,
+        group=_G_IPM,
+        label="Own V box of unmeasured supernodes",
+        help="ipm_merge_breakers, ipm_pd voltage guard: a supernode of several nodes "
+        "without a voltage measurement gets the box ipm_merge_breakers_unmeasured_v_lo "
+        "… ipm_merge_breakers_unmeasured_v_hi; the member limits are not used. "
+        "Default OFF.",
+    )
+    ipm_merge_breakers_unmeasured_v_lo: float = _param(
+        0.7,
+        group=_G_IPM,
+        label="Unmeasured supernode: lower V, p.u.",
+        control="number",
+        min=0.0,
+        max=1.0,
+        depends={"ipm_merge_breakers_unmeasured_v_box": True},
+        help="Lower side of the V box of a supernode without a voltage measurement.",
+    )
+    ipm_merge_breakers_unmeasured_v_hi: float = _param(
+        1.5,
+        group=_G_IPM,
+        label="Unmeasured supernode: upper V, p.u.",
+        control="number",
+        min=1.0,
+        max=10.0,
+        depends={"ipm_merge_breakers_unmeasured_v_box": True},
+        help="Upper side of the V box of a supernode without a voltage measurement.",
+    )
     ipm_hint_iterations: int = _param(
         100,
         group=_G_IPM,
@@ -1270,6 +1311,7 @@ class PipelineConfig:
         for lo_name, hi_name in (
             ("ipm_voltage_guard_lo_fallback", "ipm_voltage_guard_hi_fallback"),
             ("ipm_voltage_guard_unset_lo", "ipm_voltage_guard_unset_hi"),
+            ("ipm_merge_breakers_unmeasured_v_lo", "ipm_merge_breakers_unmeasured_v_hi"),
         ):
             lo, hi = getattr(self, lo_name), getattr(self, hi_name)
             if isinstance(lo, numbers.Real) and isinstance(hi, numbers.Real) and lo >= hi:
