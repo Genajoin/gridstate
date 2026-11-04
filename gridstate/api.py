@@ -598,7 +598,8 @@ def _populate_quality_summary(
     All errors in the summary are swallowed into the logs: report quality is not an indicator of
     SE success, and a failure here must not break ``estimate()``.
 
-    ``solved`` (a supernode solve, see :class:`gridstate.supernodes.SolvedRows`):
+    ``solved`` (a supernode or injection-role solve, see
+    :class:`gridstate.supernodes.SolvedRows`):
     the summary is computed on the rows and the state the solver ran on
     (balance and prior rows count as pseudo-measurements); the network
     arguments and ``z`` / ``r_matrix`` / ``meas_index`` / ``layout`` are then
@@ -611,7 +612,11 @@ def _populate_quality_summary(
             meas_index, layout = solved.meas_index, solved.layout
             sigma2 = floored_sigma2(solved.sigma2)
             sn = solved.supernodes
-            obs_network = replace(network_pu, n_bus=sn.n_group, bus_ids=network_pu.bus_ids[sn.rep])
+            obs_network = (
+                network_pu
+                if sn is None
+                else replace(network_pu, n_bus=sn.n_group, bus_ids=network_pu.bus_ids[sn.rep])
+            )
         if z.shape[0] == 0:
             # No measurements — leave the default empty.
             result.worst_imbalance = top_worst_imbalance(model, n=top_n)
@@ -643,7 +648,9 @@ def _populate_quality_summary(
             own = np.asarray(meas_index.meas_id) < 0
             is_pseudo_z = own if is_pseudo_z is None else is_pseudo_z | own
 
-        result.chi2 = compute_chi2(r_vec, sigma2, n_state=int(layout.size))
+        # A solved H may leave out dependent box columns (see _run_ipm).
+        n_state = int(H.shape[1]) if solved is not None else int(layout.size)
+        result.chi2 = compute_chi2(r_vec, sigma2, n_state=n_state)
         rows_mask = residual_scope_mask(scope, is_pseudo_z)
         if rows_mask is None or rows_mask.any():
             normalized = compute_normalized_residuals(
@@ -712,8 +719,9 @@ def populate_quality_summary(
 
     ``top_n`` / ``scope`` / ``rn_method`` / ``rn_refine_below`` /
     ``near_critical`` have the meaning of the ``quality_summary_*`` arguments
-    of :func:`estimate`. A supernode solve keeps the rows it ran on
-    (``result.solved_rows``); the summary is computed on them.
+    of :func:`estimate`. A supernode solve and an IPM solve with injection
+    part rows keep the rows they ran on (``result.solved_rows``); the summary
+    is computed on them.
 
     Raises:
         ValueError: unknown ``rn_method`` or an invalid ``rn_refine_below``.
@@ -1440,6 +1448,44 @@ def _run_ipm(
                 zip(setup.role_meas_ids.tolist(), (h_role * BASE_MVA).tolist(), strict=True)
             )
         role_estimates.update(dict.fromkeys(setup.role_dropped_ids.tolist(), float("nan")))
+
+    if (
+        merge_out is not None
+        and supernodes is None
+        and (setup.role_rows.size > 0 or setup.role_dropped_ids.size > 0)
+    ):
+        # The part rows measure box variables and replace the node's net rows:
+        # the quality summary has to see the rows the solver ran on. The load
+        # column of a node whose generation and load only the balance ties is
+        # the generation column negated: dropping it keeps the column space of
+        # H (so Ω) and makes G non-singular.
+        free = [
+            layout_ipm.offset_pnag
+            + _free_injection_pairs(
+                setup.meas_index,
+                layout_ipm.pgen_node_pos,
+                layout_ipm.pnag_node_pos,
+                (KIND_BOX_PRIOR_PGEN, KIND_BOX_PRIOR_PNAG),
+            )[1],
+            layout_ipm.offset_qnag
+            + _free_injection_pairs(
+                setup.meas_index,
+                layout_ipm.qgen_node_pos,
+                layout_ipm.qnag_node_pos,
+                (KIND_BOX_PRIOR_QGEN, KIND_BOX_PRIOR_QNAG),
+            )[1],
+        ]
+        jac = jacobian_fn(result.x)
+        kept = np.setdiff1d(np.arange(jac.shape[1]), np.concatenate(free))
+        merge_out["solved"] = SolvedRows(
+            residual=node_residual(result.x),
+            jacobian=cast("csr_matrix", jac.tocsc()[:, kept].tocsr()),
+            sigma2=setup.r_matrix.diagonal(),
+            z=setup.z,
+            meas_index=setup.meas_index,
+            layout=layout_ipm,
+            network_pu=network_pu,
+        )
 
     if pgen.size > 0:
         write_node_estimates(

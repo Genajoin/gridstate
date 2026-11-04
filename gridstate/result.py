@@ -384,9 +384,10 @@ class SEResult:
     observability_warnings: list[int] = field(default_factory=list)
     near_critical_measurements: list[NearCriticalRow] = field(default_factory=list)
     normalized_residuals: MeasurementNormalizedResiduals | None = None
-    # Supernode solve (``merge_breakers_z_ohm_per_kv``): the rows and the state
-    # the solver ran on (:class:`gridstate.supernodes.SolvedRows`), for the
-    # quality summary. ``None`` otherwise.
+    # Supernode solve (``merge_breakers_z_ohm_per_kv``) or IPM solve with
+    # injection part rows (``ipm_injection_roles``): the rows and the state the
+    # solver ran on (:class:`gridstate.supernodes.SolvedRows`), for the quality
+    # summary. ``None`` otherwise.
     solved_rows: Any = field(default=None, repr=False, compare=False)
 
 
