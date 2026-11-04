@@ -287,3 +287,33 @@ def test_unmeasured_part_prior_can_be_switched_off():
     assert not ((mi.kind == KIND_BOX_PRIOR_PGEN) & (mi.object_pos == 2)).any()
     assert PipelineConfig.no_extras().ipm_unmeasured_part_prior is False
     assert PipelineConfig().ipm_unmeasured_part_prior is True
+
+
+def test_quality_summary_reports_the_part_row_against_its_box_variable():
+    m = _build_net_with_transit()
+    # Node 4 gets a generation range: with its net rows only, its generation and
+    # load are tied by the balance alone (a dependent pair of H columns).
+    m.nodes.update(
+        4,
+        {"exist_gen": 1, "generation_p_min": 0.0, "generation_p_max": 50.0},
+    )
+    _as_load_part(m, 5, 30.0)
+    res = estimate(m, algorithm="ipm", reconcile_balance=False, injection_roles=True)
+    assert res.success
+    assert res.solved_rows is not None and res.solved_rows.supernodes is None
+    meas = m.measurements.to_numpy()
+    row = int(np.flatnonzero(meas["id"] == 5)[0])
+    rows = [r for r in res.worst_residuals if r.measurement_id == 5]
+    if rows:
+        assert rows[0].expected * BASE_MVA == pytest.approx(meas["estimated_si"][row], abs=1e-6)
+    nr = res.normalized_residuals
+    assert nr is not None
+    k = int(np.flatnonzero(nr.measurement_id == 5)[0])
+    assert np.isfinite(nr.normalized_residual[k])
+    # χ² of the measurement rows: the summary sees the part row as solved.
+    real = meas["status"] & ~meas["is_pseudo"] & np.isfinite(meas["estimated_si"])
+    table = float(
+        np.sum((meas["value"][real] - meas["estimated_si"][real]) ** 2 / meas["variance"][real])
+    )
+    assert res.chi2 is not None
+    assert res.chi2.value == pytest.approx(table, rel=0.05, abs=1.0)

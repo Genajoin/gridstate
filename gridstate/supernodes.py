@@ -303,11 +303,13 @@ def reduce_state(layout: StateLayout, sn: Supernodes) -> StateReduction:
 
 @dataclass(frozen=True)
 class SolvedRows:
-    """The rows and the state a supernode solve ran on (for the quality summary).
+    """The rows and the state a solve ran on (for the quality summary).
 
     ``residual`` / ``jacobian`` / ``sigma2`` at the solution, ``z`` the value of
     the measured quantity of each row (p.u.), ``meas_index`` the node row each
-    row stands for, ``layout`` the supernode state.
+    row stands for, ``layout`` the solved state. ``supernodes`` is ``None`` for
+    a node solve whose rows differ from the measurement rows (injection part
+    rows measuring box variables).
     """
 
     residual: np.ndarray
@@ -317,7 +319,7 @@ class SolvedRows:
     meas_index: MeasurementIndex
     layout: StateLayout
     network_pu: NetworkPU
-    supernodes: Supernodes
+    supernodes: Supernodes | None = None
 
 
 @dataclass(frozen=True)
