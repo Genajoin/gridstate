@@ -389,6 +389,10 @@ class SEResult:
     # solver ran on (:class:`gridstate.supernodes.SolvedRows`), for the quality
     # summary. ``None`` otherwise.
     solved_rows: Any = field(default=None, repr=False, compare=False)
+    # WLS with node boxes: the final active set of the bound rows
+    # (:class:`gridstate.algorithms.wls_box.BoxWarmStart`), the start of the
+    # warm re-solves of the pipeline. ``None`` otherwise.
+    wls_box_warm_start: Any = field(default=None, repr=False, compare=False)
 
 
 def label_for_kind(kind_code: int) -> str:

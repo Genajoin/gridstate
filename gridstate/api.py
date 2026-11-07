@@ -29,6 +29,7 @@ from gridstate.algorithms.status import (
     success_from_status,
 )
 from gridstate.algorithms.wls import solve_wls
+from gridstate.algorithms.wls_box import BoxWarmStart, node_injection_boxes, voltage_boxes
 from gridstate.ipm_hints import has_dominant_limiter, ipm_convergence_hints
 from gridstate.post_processing import (
     apply_load_characteristic,
@@ -133,6 +134,9 @@ def estimate(
     success_policy: SuccessPolicy = "legacy",
     implausible_v_ratio: float = 0.3,
     merge_breakers_z_ohm_per_kv: float | None = None,
+    wls_node_box: bool = False,
+    wls_node_box_variance_mw: float = 1e-2,
+    wls_node_box_warm_start: BoxWarmStart | None = None,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Run state estimation for a model and telemetry.
@@ -232,6 +236,20 @@ def estimate(
             keep their other measurements and box variables. The flows of the
             merged branches are recovered from the member balances. ``None``
             (default): no merging.
+        wls_node_box: ``wls`` only. Keep every node injection within the box
+            of its generation and load limits (a transit node at zero) and
+            every node voltage within the box of the ipm_pd voltage guard
+            (:class:`VoltageGuard` defaults), :mod:`gridstate.algorithms.wls_box`:
+            an active set of bound rows
+            joins once the unconstrained solve has converged, tightening in
+            three stages. ``False`` (default): no boxes.
+        wls_node_box_variance_mw: variance of the bound rows in the last
+            stage, MW² (Mvar² for Q); the earlier stages are ×1e4 and ×1e2.
+            The rounds of the active set converge at 100 × ``tolerance``,
+            the solve at ``tolerance``.
+        wls_node_box_warm_start: active set of the boxes from a previous
+            solve of the same network (``SEResult.wls_box_warm_start``): the
+            warm re-solves of the pipeline start from it.
         **ipm_kwargs: IPM-mode knobs, ignored for WLS. ``trust_region_scope``
             (``"state"`` default | ``"all"``) selects the coordinates the IPM
             trust region is measured on (see ``_run_ipm``); everything else is
@@ -295,6 +313,7 @@ def estimate(
 
     role_estimates: dict[int, float] = {}
     merge_out: dict[str, Any] = {}
+    box_warm_start: BoxWarmStart | None = None
     if algorithm in ("ipm", "ipm_pd"):
         # IPM mode: extend layout/state/measurements with box variables and
         # nodal balance equations. ipm_kwargs are passed on to build_ipm_setup
@@ -335,6 +354,13 @@ def estimate(
         delta, v_pu = unpack(e_final[: 2 * network_pu.n_bus - 1], layout)
     else:
         # 5. WLS
+        node_box = None
+        if wls_node_box:
+            # Injection boxes plus the V box of the ipm_pd voltage guard.
+            node_box = node_injection_boxes(
+                model.nodes.to_numpy(), network_pu, base_mva=network_pu.base_mva
+            ).concat(voltage_boxes(*_voltage_box_pu(model, network_pu, VoltageGuard())))
+        box_s2 = float(wls_node_box_variance_mw) / network_pu.base_mva**2
         wls_res = solve_wls(
             e_init=e_init,
             z=z,
@@ -350,7 +376,13 @@ def estimate(
             huber_c=huber_c,
             huber_use_mad=huber_use_mad,
             kkt_solver=kkt,
+            node_box=node_box,
+            box_sigma2_schedule=(box_s2 * 1e4, box_s2 * 1e2, box_s2),
+            box_tol=0.01 / network_pu.base_mva,
+            box_round_tolerance=100.0 * tolerance,
+            box_warm_start=wls_node_box_warm_start,
         )
+        box_warm_start = wls_res.box_warm_start
         e_final = wls_res.x
         success = wls_res.success
         iterations = wls_res.iterations
@@ -359,6 +391,12 @@ def estimate(
         # 6. Unpack the state and write it back into the model
         delta, v_pu = unpack(e_final, layout)
         algo_message = ""
+        if wls_res.box_stats is not None:
+            bs = wls_res.box_stats
+            algo_message = (
+                f"node boxes: {bs['rows']} rows, stage {bs['stage']}, {bs['active']} active "
+                f"({bs['activated']} pinned, {bs['released']} released)"
+            )
         convergence_status = "converged" if success else "not_converged"
         solve_status = wls_res.solve_status
     # Solver-independent objective: the plain WLS objective of the base
@@ -476,6 +514,7 @@ def estimate(
         # extracted from the model after writing. The canonical Output contract.
         outputs=extract_output_tables(model),
         solved_rows=merge_out.get("solved"),
+        wls_box_warm_start=box_warm_start,
     )
 
     if include_quality_summary:
@@ -920,6 +959,33 @@ def _voltage_measured(meas_index: MeasurementIndex, n_bus: int) -> np.ndarray:
     return out
 
 
+def _voltage_box_pu(
+    model: Working, network_pu: NetworkPU, g: VoltageGuard
+) -> tuple[np.ndarray, np.ndarray]:
+    """Node V box in p.u. per bus (``network_pu`` order), as :class:`VoltageGuard` says."""
+    nodes = model.nodes.to_numpy()
+    id_to_pos = id_to_pos_map(network_pu.bus_ids)
+    n = network_pu.n_bus
+    umin = np.zeros(n)
+    umax = np.zeros(n)
+    for row in nodes[nodes["status"]]:
+        pos = id_to_pos.get(int(row["id"]))
+        if pos is not None:
+            umin[pos] = float(row["voltage_min"])
+            umax[pos] = float(row["voltage_max"])
+    vn = np.asarray(network_pu.bus_vn_kv, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lo_pu = np.where(vn > 0, umin / vn, 0.0)
+        hi_pu = np.where(vn > 0, umax / vn, 0.0)
+    lo = np.where((umin > 0) & (lo_pu >= g.lo_min), lo_pu, g.lo_fallback)
+    hi = np.where((umax > 0) & (hi_pu <= g.hi_max), hi_pu, g.hi_fallback)
+    unset = (umin <= 0) & (umax <= 0)
+    lo[unset], hi[unset] = g.unset_lo, g.unset_hi
+    bad = lo >= hi
+    lo[bad], hi[bad] = g.lo_fallback, g.hi_fallback
+    return lo, hi
+
+
 def _voltage_guard_kwargs(
     model: Working,
     network_pu: NetworkPU,
@@ -947,26 +1013,8 @@ def _voltage_guard_kwargs(
     supernodes without a voltage measurement.
     """
     g = guard if guard is not None else VoltageGuard()
-    nodes = model.nodes.to_numpy()
-    id_to_pos = id_to_pos_map(network_pu.bus_ids)
+    lo, hi = _voltage_box_pu(model, network_pu, g)
     n = network_pu.n_bus
-    umin = np.zeros(n)
-    umax = np.zeros(n)
-    for row in nodes[nodes["status"]]:
-        pos = id_to_pos.get(int(row["id"]))
-        if pos is not None:
-            umin[pos] = float(row["voltage_min"])
-            umax[pos] = float(row["voltage_max"])
-    vn = np.asarray(network_pu.bus_vn_kv, dtype=np.float64)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        lo_pu = np.where(vn > 0, umin / vn, 0.0)
-        hi_pu = np.where(vn > 0, umax / vn, 0.0)
-    lo = np.where((umin > 0) & (lo_pu >= g.lo_min), lo_pu, g.lo_fallback)
-    hi = np.where((umax > 0) & (hi_pu <= g.hi_max), hi_pu, g.hi_fallback)
-    unset = (umin <= 0) & (umax <= 0)
-    lo[unset], hi[unset] = g.unset_lo, g.unset_hi
-    bad = lo >= hi
-    lo[bad], hi[bad] = g.lo_fallback, g.hi_fallback
     from_idx, to_idx = network_pu.from_idx, network_pu.to_idx
     if group is not None:
         # A member's box in the p.u. of its representative: V_member = scale · V_rep.
