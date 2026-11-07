@@ -375,6 +375,30 @@ class PipelineConfig:
         help="add_pseudo_measurements: P/Q injection priors of the nodes without an "
         "injection measurement (zero on transit nodes, the operating point elsewhere).",
     )
+    transit_zero_injection_mode: Literal["soft", "tight"] = _param(
+        "soft",
+        group=_G_PSEUDO,
+        label="Transit zero injection",
+        control="select",
+        choices=["soft", "tight"],
+        depends={"pseudo_injections": True},
+        help="Zero injection prior of a transit node (no exist_gen/exist_load). soft — "
+        "the previous rule: variance 100 MW², no prior where a real injection "
+        "measurement exists, so the solver may move a data conflict into a fictitious "
+        "transit injection; tight — zero P and Q on every transit node, measured or not, "
+        "with transit_zero_injection_variance, as the IPM transit balance row. "
+        "Meant for wls; with the IPM solvers it adds to their own balance rows.",
+    )
+    transit_zero_injection_variance: float = _param(
+        1e-2,
+        group=_G_PSEUDO,
+        label="Transit zero injection variance, MW²",
+        control="number",
+        min=1e-8,
+        max=1e4,
+        depends={"transit_zero_injection_mode": "tight"},
+        help="Variance of the tight transit zero injection (MW² for P, Mvar² for Q).",
+    )
     loosen_unknown_load_pseudo: bool = _toggle(
         True,
         group=_G_PSEUDO,

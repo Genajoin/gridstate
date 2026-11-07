@@ -92,6 +92,12 @@ class PseudoMeasConfig:
     # ``v_out_of_scope_loose_factor``.
     v_scope_nodes: frozenset[int] | None = None
     v_out_of_scope_loose_factor: float = 1e4
+    # Zero injection of the nodes marked transit by exist_load/exist_gen:
+    # "soft" — the zero_inj_variance prior, skipped where a real injection
+    # measurement exists; "tight" — zero P and Q always, variance
+    # transit_zero_injection_variance.
+    transit_zero_injection_mode: Literal["soft", "tight"] = "soft"
+    transit_zero_injection_variance: float = 1e-2
 
 
 def _generation_range_variance(row: np.void, lo_col: str, hi_col: str, fallback: float) -> float:
@@ -239,6 +245,7 @@ def _build_pseudo_rows(
     n_unobs_v = 0
     n_unknown_load = 0
     n_v_loose = 0
+    n_transit_tight = 0
 
     new_rows: list[dict] = []
     for row in nodes_arr:
@@ -297,9 +304,24 @@ def _build_pseudo_rows(
         # The Q pseudo requires the node to have neither a real P_inj NOR a real Q_inj: a node with a
         # real P_inj is skipped entirely (want_pinj=False), so it does NOT get
         # a Q pseudo either, even if it has no Q_inj; this is the recorded behavior.
-        want_pinj = config.add_zero_injections and nid not in have_pinj
-        want_qinj = want_pinj and nid not in have_qinj
-        if want_pinj:
+        # The tight transit mode overrides it on the nodes marked transit by
+        # exist_load/exist_gen: zero P and Q always, as the IPM balance row.
+        tight_transit = (
+            config.transit_zero_injection_mode == "tight"
+            and node_load_props is not None
+            and nid in node_load_props
+            and not bool(node_load_props[nid].get("exist_load"))
+            and not bool(node_load_props[nid].get("exist_gen"))
+        )
+        want_pinj = config.add_zero_injections and (tight_transit or nid not in have_pinj)
+        want_qinj = want_pinj and (tight_transit or nid not in have_qinj)
+        if want_pinj and tight_transit:
+            var_t = float(config.transit_zero_injection_variance)
+            for kind in (KIND_POWER_INJECTION_P, KIND_POWER_INJECTION_Q):
+                new_rows.append(pseudo_node_measurement(ids.next(), nid, kind, 0.0, var_t))
+            n_zinj_added += 1
+            n_transit_tight += 1
+        elif want_pinj:
             pg = float(row["generation_p"])
             pn = float(row["load_p"])
             qg = float(row["generation_q"])
@@ -365,6 +387,8 @@ def _build_pseudo_rows(
     }
     if config.v_scope_nodes is not None:
         stats["v_priors_loose"] = n_v_loose
+    if config.transit_zero_injection_mode == "tight":
+        stats["transit_zero_tight"] = n_transit_tight
     return new_rows, stats
 
 
@@ -444,6 +468,8 @@ def add_pseudo_measurements(
     loosen_unknown_load: bool = False,
     voltage_scope: Literal["all", "generation", "none"] = "all",
     v_out_of_scope_loose_factor: float = 1e4,
+    transit_zero_injection_mode: Literal["soft", "tight"] = "soft",
+    transit_zero_injection_variance: float = 1e-2,
 ) -> dict:
     """Augment the model with pseudo-measurements to remove under-observability.
 
@@ -529,11 +555,23 @@ def add_pseudo_measurements(
         v_out_of_scope_loose_factor: variance multiplier of the V prior outside
             ``voltage_scope``. Default 1e4 (σ × 100) keeps the prior in the
             system only for observability.
+        transit_zero_injection_mode: zero injection of the nodes marked
+            transit by ``exist_load``/``exist_gen`` (``node_load_props``).
+            ``"soft"`` (default): the rules above — the value from the node
+            table, ``zero_inj_variance``, no prior where a real injection
+            measurement exists. ``"tight"``: zero P and Q on every such node,
+            measured or not, with ``transit_zero_injection_variance``; this
+            is the transit balance row of the IPM solvers. Without
+            ``node_load_props`` the mode has no effect (the fallback transit
+            criterion stays soft).
+        transit_zero_injection_variance: variance (MW², Mvar²) of the tight
+            transit zero injection. Default 1e-2.
 
     Returns:
         ``{"v_priors_added": N, "zero_inj_added": N, "unobservable_v_tight": N,
         "unknown_load_loose": N}`` — counters, plus ``"v_priors_loose": N`` with
-        ``voltage_scope`` other than ``"all"``.
+        ``voltage_scope`` other than ``"all"`` and ``"transit_zero_tight": N``
+        (nodes) with ``transit_zero_injection_mode="tight"``.
     """
     nodes_arr = model.nodes.to_numpy()
     meas_arr = model.measurements.to_numpy()
@@ -546,6 +584,16 @@ def add_pseudo_measurements(
     ):
         node_load_props = extract_node_load_props_from_model(model)
 
+    if transit_zero_injection_mode not in ("soft", "tight"):
+        raise ValueError(
+            f"transit_zero_injection_mode={transit_zero_injection_mode!r} is not one of "
+            "['soft', 'tight']"
+        )
+    if not (np.isfinite(transit_zero_injection_variance) and transit_zero_injection_variance > 0):
+        raise ValueError(
+            f"transit_zero_injection_variance={transit_zero_injection_variance!r}: "
+            "expected a finite positive variance"
+        )
     if voltage_scope not in ("all", "generation", "none"):
         raise ValueError(
             f"voltage_scope={voltage_scope!r} is not one of ['all', 'generation', 'none']"
@@ -578,6 +626,8 @@ def add_pseudo_measurements(
         loosen_unknown_load=loosen_unknown_load,
         v_scope_nodes=v_scope_nodes,
         v_out_of_scope_loose_factor=v_out_of_scope_loose_factor,
+        transit_zero_injection_mode=transit_zero_injection_mode,
+        transit_zero_injection_variance=transit_zero_injection_variance,
     )
 
     new_rows, stats = _add_pseudo_measurements_on_arrays(
