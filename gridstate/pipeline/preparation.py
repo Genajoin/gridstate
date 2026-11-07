@@ -263,6 +263,8 @@ def _s_add_pseudo(ctx: _Ctx) -> dict:
             unmeasured_gen_q_nodes=ctx.released_injections.get("Q", frozenset()),
             loosen_unknown_load=ctx.cfg.loosen_unknown_load_pseudo,
             voltage_scope=ctx.cfg.pseudo_voltage_scope,
+            transit_zero_injection_mode=ctx.cfg.transit_zero_injection_mode,
+            transit_zero_injection_variance=ctx.cfg.transit_zero_injection_variance,
         )
         or {}
     )
