@@ -399,6 +399,29 @@ class PipelineConfig:
         depends={"transit_zero_injection_mode": "tight"},
         help="Variance of the tight transit zero injection (MW² for P, Mvar² for Q).",
     )
+    wls_node_box: bool = _toggle(
+        False,
+        group=_G_PSEUDO,
+        label="Node injection boxes (wls)",
+        help="wls only: every node injection stays within the box of its generation "
+        "and load limits (generation range minus load range of the parts the node "
+        "has; a transit node at zero; an unset side stays open), and every node voltage "
+        "within the box of the ipm_pd voltage guard (defaults). An active set of "
+        "bound rows joins once the unconstrained solve has converged: a node that "
+        "leaves its box is pinned to the bound, released when the solution pulls it "
+        "back inside; the bound weight tightens in three stages.",
+    )
+    wls_node_box_variance_mw: float = _param(
+        1e-2,
+        group=_G_PSEUDO,
+        label="Node box bound variance, MW²",
+        control="number",
+        min=1e-8,
+        max=1e4,
+        depends={"wls_node_box": True},
+        help="Variance of the bound rows in the last stage (MW² for P, Mvar² for Q); "
+        "the earlier stages are ×1e4 and ×1e2.",
+    )
     loosen_unknown_load_pseudo: bool = _toggle(
         True,
         group=_G_PSEUDO,

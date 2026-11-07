@@ -116,6 +116,9 @@ def _estimate_kwargs(cfg: PipelineConfig, *, init: str, **overrides: Any) -> dic
     kw.update(overrides)
     if cfg.algorithm in ("ipm", "ipm_pd"):
         kw.update(_ipm_kwargs(cfg))
+    elif cfg.wls_node_box:
+        kw["wls_node_box"] = True
+        kw["wls_node_box_variance_mw"] = cfg.wls_node_box_variance_mw
     return kw
 
 
