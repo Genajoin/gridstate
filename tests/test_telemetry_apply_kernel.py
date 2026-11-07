@@ -267,6 +267,58 @@ def test_sign_consistency_keeps_meas():
     assert stats["applied"] == 2
 
 
+def _branch_four_meas() -> np.ndarray:
+    return _meas(
+        [
+            {
+                "id": 10 + i,
+                "object_type": OT_BRANCH,
+                "object_id": 7,
+                "measurement_type": mt,
+                "branch_side": side,
+            }
+            for i, (mt, side) in enumerate(((MT_P, 0), (MT_P, 1), (MT_Q, 0), (MT_Q, 1)))
+        ]
+    )
+
+
+def test_sign_check_ignores_bad_values():
+    # BAD p_from/p_to with |sum|=382 are not applied and must not drop the GOOD q_to.
+    nodes = _nodes([{"id": 1, "voltage_nominal": 500.0}])
+    branches = _branches([{"id": 7, "from_node": 1, "status": True}])
+    meas = _branch_four_meas()
+    resolved = {
+        (7, "p_from"): (672.0, 1, "g", MeasurementQuality.BAD),
+        (7, "p_to"): (-290.0, 1, "g", MeasurementQuality.BAD),
+        (7, "q_from"): (-310.0, 1, "g", MeasurementQuality.BAD),
+        (7, "q_to"): (236.0, 1, "g", MeasurementQuality.GOOD),
+    }
+    stats, _ = _run(meas, nodes, branches, resolved, sign_inconsistency_threshold_mw=100.0)
+    assert stats["sign_inconsistent_branches"] == 0
+    assert stats["applied"] == 1 and bool(meas[3]["status"])
+    assert not any(bool(meas[i]["status"]) for i in range(3))
+
+
+def test_q_loss_check_ignores_bad_values():
+    # A BAD q_from makes the Q pair unchecked: the GOOD q_to keeps its variance.
+    nodes = _nodes([{"id": 1, "voltage_nominal": 500.0}])
+    branches = _branches([{"id": 7, "from_node": 1, "status": True}])
+    resolved_bad = {
+        (7, "q_from"): (-310.0, 1, "g", MeasurementQuality.BAD),
+        (7, "q_to"): (236.0, 1, "g", MeasurementQuality.GOOD),
+    }
+    resolved_none = {
+        (7, "q_from"): (None, 0, "g", 0),
+        (7, "q_to"): (236.0, 1, "g", MeasurementQuality.GOOD),
+    }
+    out = []
+    for resolved in (resolved_bad, resolved_none):
+        meas = _branch_four_meas()
+        _run(meas, nodes, branches, resolved, q_loss_filter_enabled=True)
+        out.append((bool(meas[3]["status"]), float(meas[3]["variance"])))
+    assert out[0] == out[1] and out[0][0]
+
+
 # ---------------------------------------------------------------- (5) node-inj accumulation
 
 

@@ -207,6 +207,15 @@ def apply_telemetry_resolved(
     return stats
 
 
+def _usable_value(entry: tuple[float | None, int, str, int]) -> float | None:
+    """Value of a resolved entry for the consistency pre-passes; ``None`` when BAD.
+
+    A BAD measurement is not applied, so its value must not condemn the other
+    measurements of the branch either.
+    """
+    return None if entry[3] == _Q_BAD else entry[0]
+
+
 def _detect_sign_inconsistent_branches(
     arg_keys: list[tuple[int, str]],
     resolved: dict[tuple[int, str], tuple[float | None, int, str, int]],
@@ -216,7 +225,7 @@ def _detect_sign_inconsistent_branches(
     (p_from and p_to both flowing into the line, i.e. of the same sign after
     accounting for invert) -- this indicates a measurement bound to the wrong
     branch or stale telemetry. The branch measurements of such branches are
-    not activated.
+    not activated. BAD measurements take no part in the check.
     """
     inconsistent_branches: set[int] = set()
     if threshold_mw is None:
@@ -226,8 +235,8 @@ def _detect_sign_inconsistent_branches(
             continue
         if (obj_id, KIND_P_TO) not in resolved:
             continue
-        v_beg = resolved[(obj_id, KIND_P_FROM)][0]
-        v_end = resolved[(obj_id, KIND_P_TO)][0]
+        v_beg = _usable_value(resolved[(obj_id, KIND_P_FROM)])
+        v_end = _usable_value(resolved[(obj_id, KIND_P_TO)])
         if v_beg is None or v_end is None:
             continue
         # p_from/p_to values arrive with the sign already applied (the inversion
@@ -255,7 +264,8 @@ def _detect_q_inconsistent_branches(
     ``branch.{susceptance, reactance}``; an outlier is a deviation above
     ``max(floor, rel_pct/100 * expected)``. See
     :func:`gridstate.telemetry.loss_filter.is_branch_q_consistent_with_physics`.
-    Branches without a nominal voltage are not checked.
+    Branches without a nominal voltage are not checked; BAD measurements take no
+    part in the check.
 
     Returns ``(q_inconsistent_branches, q_inconsistent_hv_branches)``: branches
     to drop and branches to downweight (by ``q_loss_filter_action``).
@@ -271,8 +281,8 @@ def _detect_q_inconsistent_branches(
             continue
         if (obj_id, KIND_Q_TO) not in resolved:
             continue
-        v_beg = resolved[(obj_id, KIND_Q_FROM)][0]
-        v_end = resolved[(obj_id, KIND_Q_TO)][0]
+        v_beg = _usable_value(resolved[(obj_id, KIND_Q_FROM)])
+        v_end = _usable_value(resolved[(obj_id, KIND_Q_TO)])
         if v_beg is None or v_end is None:
             continue
         vn = branch_vn.get(int(obj_id), 0.0)
@@ -283,7 +293,7 @@ def _detect_q_inconsistent_branches(
         for p_kind in (KIND_P_FROM, KIND_P_TO):
             if (obj_id, p_kind) not in resolved:
                 continue
-            pv = resolved[(obj_id, p_kind)][0]
+            pv = _usable_value(resolved[(obj_id, p_kind)])
             if pv is not None:
                 p_typical = max(p_typical, abs(pv))
         is_ok, _, _, _ = is_branch_q_consistent_with_physics(
