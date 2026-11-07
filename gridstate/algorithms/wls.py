@@ -54,7 +54,7 @@ from gridstate.algebra.base import BaseAlgebra
 from gridstate.algebra.estimators import HuberReweighter, build_branch_pq_huber_mask
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.status import SolveStatus
-from gridstate.algorithms.wls_box import BoxActiveSet
+from gridstate.algorithms.wls_box import BoxActiveSet, BoxWarmStart
 from gridstate.state import unpack
 from gridstate.utils import floored_sigma2, scale_csr_rows, sparse_diag
 
@@ -88,6 +88,9 @@ class WLSResult:
         box_stats: node box counters (``node_box`` given):
             ``rows``, ``stage``, ``active``, ``activated``, ``released``;
             ``None`` without boxes.
+        box_warm_start: the final active set of the node boxes, the start of
+            a warm re-solve (``box_warm_start`` of :func:`solve_wls`);
+            ``None`` without boxes or when they never started.
     """
 
     x: np.ndarray
@@ -96,6 +99,7 @@ class WLSResult:
     objective: float
     solve_status: SolveStatus = SolveStatus.ERROR
     box_stats: dict[str, int] | None = None
+    box_warm_start: BoxWarmStart | None = None
 
 
 def _solve_damped(
@@ -252,6 +256,9 @@ def solve_wls(
     box_sigma2_schedule: tuple[float, ...] = (1e-2, 1e-4, 1e-6),
     box_tol: float = 1e-4,
     box_max_releases: int = 2,
+    box_max_corrections: int = 3,
+    box_round_tolerance: float | None = None,
+    box_warm_start: BoxWarmStart | None = None,
 ) -> WLSResult:
     """Run trust-region Gauss-Newton WLS (optionally SHGM-IRLS).
 
@@ -301,6 +308,18 @@ def solve_wls(
         box_max_releases: times a pinned row may be released (at converged
             points, when the solution pulls it inside its box); then it stays
             pinned.
+        box_max_corrections: times the target of a pinned row may be shifted
+            in the last stage (where the boxes cannot all hold, the shift
+            would grow without bound).
+        box_round_tolerance: ``max|ΔE|`` at which a round of the active set
+            counts as converged for the next set change (``None`` —
+            ``tolerance``). The rounds before the last only steer the set, so
+            a looser value saves iterations; the solve still ends at
+            ``tolerance``.
+        box_warm_start: the active set of a previous solve of the same
+            network (``WLSResult.box_warm_start``): the solve starts with it
+            in the last stage instead of converging without boxes first.
+            Ignored when its rows differ from ``node_box``.
 
     Returns:
         :class:`WLSResult` (``x``, ``success``, ``iterations``, ``objective``).
@@ -321,6 +340,7 @@ def solve_wls(
             sigma2_schedule=box_sigma2_schedule,
             tol=box_tol,
             max_releases=box_max_releases,
+            max_corrections=box_max_corrections,
         )
         if node_box is not None and len(node_box) > 0
         else None
@@ -414,27 +434,47 @@ def solve_wls(
     last_step_plain_gn = False
 
     # Node boxes: the bound rows join after the unconstrained solve converged
-    # (see gridstate.algorithms.wls_box). Every round of the active set (a new
-    # stage or a changed set at a converged point) gets 2 × max_iterations,
-    # the whole solve at most (1 + 2 · stages) × max_iterations.
+    # (see gridstate.algorithms.wls_box), or from the start with the set of a
+    # previous solve. Every round of the active set (a new stage or a changed
+    # set at a converged point) gets 2 × max_iterations, the whole solve at
+    # most (1 + 2 · stages) × max_iterations. A round counts as converged at
+    # box_round_tolerance; once the set has settled, the solve goes on to
+    # tolerance.
     it_limit = max_iterations
     it_cap = max_iterations * (1 + 2 * len(box_sigma2_schedule))
     h_box_cur = np.zeros(0)
+    stop_tol = tolerance
+    if box_set is not None:
+        stop_tol = max(tolerance, box_round_tolerance or tolerance)
+        if box_warm_start is not None:
+            h_box_cur = box_set.injections(v, delta)
+            if box_set.resume(box_warm_start, h_box_cur):
+                objective = float(r_cur @ (r_inv @ r_cur)) + box_set.penalty(h_box_cur)
 
     def _box_next() -> bool:
         """Converged: start the boxes, re-solve with a changed set, tighten or stop."""
-        nonlocal current_error, it_limit, objective, h_box_cur, tr_radius, lam
-        if box_set is None or current_error > tolerance or cur_it >= it_cap:
+        nonlocal current_error, it_limit, objective, h_box_cur, tr_radius, lam, stop_tol
+        if box_set is None or current_error > stop_tol or cur_it >= it_cap:
             return False
         h_box_cur = box_set.injections(v, delta)
         if box_set.stage == 0:
-            if not box_set.start(h_box_cur):
+            changed = box_set.start(h_box_cur)
+        else:
+            changed = box_set.pin(h_box_cur) | box_set.release(h_box_cur)
+            if not changed:
+                if not box_set.last_stage:
+                    box_set.advance()
+                    changed = True
+                else:
+                    changed = box_set.correct(h_box_cur)
+        if not changed:
+            if current_error <= tolerance:
                 return False
-        elif not (box_set.pin(h_box_cur) | box_set.release(h_box_cur)):
-            if not box_set.last_stage:
-                box_set.advance()
-            elif not box_set.correct(h_box_cur):
-                return False
+            # The set has settled at a round tolerance: finish at the solve one.
+            stop_tol = tolerance
+            if box_set.stage > 0:
+                it_limit = min(cur_it + 2 * max_iterations, it_cap)
+            return True
         objective = float(r_cur @ (r_inv @ r_cur)) + box_set.penalty(h_box_cur)
         current_error = float("inf")
         it_limit = min(cur_it + 2 * max_iterations, it_cap)
@@ -444,7 +484,7 @@ def solve_wls(
         lam = 0.0
         return True
 
-    while (current_error > tolerance and cur_it < it_limit) or _box_next():
+    while (current_error > stop_tol and cur_it < it_limit) or _box_next():
         # SHGM-IRLS: recompute weights from the last residual. Warmup
         # iterations run as pure WLS — flat-start residuals are not
         # informative for outlier detection.
@@ -689,4 +729,5 @@ def solve_wls(
         objective=objective,
         solve_status=solve_status,
         box_stats=box_stats,
+        box_warm_start=None if box_set is None else box_set.warm_start(),
     )

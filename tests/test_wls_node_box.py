@@ -12,6 +12,7 @@ import pytest
 
 from gridstate.algorithms.wls_box import (
     BoxActiveSet,
+    BoxWarmStart,
     NodeBox,
     node_injection_boxes,
     voltage_boxes,
@@ -165,7 +166,7 @@ def test_solution_inside_the_boxes_is_plain_wls_bit_for_bit():
     assert "stage 0" in r2.message
 
 
-def _set(lo: list[float], hi: list[float]) -> BoxActiveSet:
+def _set(lo: list[float], hi: list[float], **kw: int) -> BoxActiveSet:
     n = len(lo)
     box = NodeBox(
         bus_pos=np.arange(n, dtype=np.int64),
@@ -173,7 +174,7 @@ def _set(lo: list[float], hi: list[float]) -> BoxActiveSet:
         lo=np.asarray(lo),
         hi=np.asarray(hi),
     )
-    return BoxActiveSet(box, None, sigma2_schedule=(1.0,), tol=1e-3, max_releases=1)  # type: ignore[arg-type]
+    return BoxActiveSet(box, None, sigma2_schedule=(1.0,), tol=1e-3, max_releases=1, **kw)  # type: ignore[arg-type]
 
 
 def test_active_set_pins_and_releases():
@@ -188,6 +189,50 @@ def test_active_set_pins_and_releases():
     # max_releases reached: the row stays pinned
     assert not s.release(np.array([0.3, 0.5, -0.1]))
     assert s.state.tolist() == [-1, 0, 1]
+
+
+def test_corrections_are_limited_per_row():
+    s = _set([0.0], [1.0], max_corrections=2)
+    assert s.start(np.array([1.5]))
+    h = np.array([1.01])  # an unreachable bound: the miss stays
+    assert s.correct(h)
+    assert s.correct(h)
+    assert not s.correct(h)
+    assert s.shift[0] == pytest.approx(-0.02)
+
+
+def test_warm_start_resumes_the_set_in_the_last_stage():
+    s = _set([0.0, 0.0], [1.0, 1.0])
+    assert s.warm_start() is None
+    s.start(np.array([1.5, 0.5]))
+    s.shift[0] = -0.1
+    warm = s.warm_start()
+    assert warm is not None
+    t = _set([0.0, 0.0], [1.0, 1.0])
+    assert t.resume(warm, np.array([0.5, -0.5]))  # the free row 1 is pinned at once
+    assert t.last_stage
+    assert t.state.tolist() == [1, -1]
+    assert t.shift.tolist() == [-0.1, 0.0]
+    other = _set([0.0], [1.0])
+    assert not other.resume(warm, np.array([0.5]))
+    assert other.stage == 0
+
+
+def test_warm_re_solve_keeps_the_box():
+    first = _chain(30.0, 60.0)
+    r1 = estimate(first, algorithm="wls", huber_c=0.0, wls_node_box=True)
+    assert isinstance(r1.wls_box_warm_start, BoxWarmStart)
+    r2 = estimate(
+        first,
+        algorithm="wls",
+        init="results",
+        huber_c=0.0,
+        wls_node_box=True,
+        wls_node_box_warm_start=r1.wls_box_warm_start,
+    )
+    assert r2.success
+    assert r2.iterations <= r1.iterations
+    assert -50.0 - 0.05 <= _p_inj(first, 2) <= 0.05
 
 
 def test_no_start_inside_the_boxes():
@@ -223,3 +268,25 @@ def test_pipeline_config_fields():
     assert kw["wls_node_box_variance_mw"] == 0.1
     assert "wls_node_box" not in _estimate_kwargs(PipelineConfig(algorithm="wls"), init="flat")
     assert not PipelineConfig().wls_node_box
+
+
+def test_warm_passes_get_the_previous_set(monkeypatch):
+    from types import SimpleNamespace
+
+    from gridstate.pipeline import passes
+    from gridstate.pipeline.config import PipelineConfig
+
+    seen = []
+    monkeypatch.setattr(
+        passes, "estimate", lambda model, **kw: seen.append(kw) or SimpleNamespace()
+    )
+    warm = object()
+    for box in (True, False):
+        ctx = SimpleNamespace(
+            cfg=PipelineConfig(algorithm="wls", wls_node_box=box),
+            model=None,
+            result=SimpleNamespace(wls_box_warm_start=warm),
+        )
+        passes._warm_resolve(ctx)  # type: ignore[arg-type]
+    assert seen[0]["wls_node_box_warm_start"] is warm
+    assert "wls_node_box_warm_start" not in seen[1]

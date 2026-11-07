@@ -173,6 +173,10 @@ def _warm_resolve(ctx: _Ctx, **overrides: Any) -> SEResult:
     V/δ of the previous pass are already in the working layer, hence
     ``init="results"``.
     """
+    warm = getattr(ctx.result, "wls_box_warm_start", None)
+    if ctx.cfg.wls_node_box and warm is not None:
+        # The boxes start from the active set of the previous pass.
+        overrides.setdefault("wls_node_box_warm_start", warm)
     ctx.result = estimate(ctx.model, **_estimate_kwargs(ctx.cfg, init="results", **overrides))
     return ctx.result
 

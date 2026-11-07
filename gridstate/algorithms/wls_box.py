@@ -20,14 +20,19 @@ WLS has no inequalities, so they are enforced with an active set of bound rows:
   would steer the iterations badly;
 * in the last stage the target of a pinned row is shifted by what the
   injection still misses (the method of multipliers), so the bound holds to
-  ``tol`` without a heavier weight.
+  ``tol`` without a heavier weight. A row is shifted at most
+  ``max_corrections`` times: where the boxes cannot all hold together (line
+  charging in a pocket of nodes that may not take Q), the shift would grow
+  without bound and drag the solution along.
 
 The same rows can bound the node voltage (:func:`voltage_boxes`): a load
 pinned at its maximum on a weak feeder can otherwise only be served on the
 collapsed branch of the voltage solution.
 
 The set starts once the unconstrained WLS has converged; a solve whose
-solution respects every box is therefore bit for bit the plain WLS.
+solution respects every box is therefore bit for bit the plain WLS. A warm
+re-solve of the same network (the passes after bad data, refinement) starts
+from the set of the previous solve (:class:`BoxWarmStart`) in the last stage.
 """
 
 from __future__ import annotations
@@ -91,6 +96,27 @@ class NodeBox:
             branch_side=np.full(n, -1, dtype=np.int64),
             meas_id=np.full(n, -1, dtype=np.int64),
         )
+
+
+@dataclass(frozen=True)
+class BoxWarmStart:
+    """Active set of a finished solve, the start of a warm re-solve.
+
+    Attributes:
+        bus_pos, kind: rows of the box it belongs to (a box with other rows
+            ignores it).
+        state: ``-1`` / ``0`` / ``+1`` per row (see :class:`BoxActiveSet`).
+        shift: target shifts of the pinned rows (p.u.).
+    """
+
+    bus_pos: np.ndarray
+    kind: np.ndarray
+    state: np.ndarray
+    shift: np.ndarray
+
+    def fits(self, box: NodeBox) -> bool:
+        """Same rows as ``box``."""
+        return np.array_equal(self.bus_pos, box.bus_pos) and np.array_equal(self.kind, box.kind)
 
 
 def _part_bounds(row: np.void, axis: str) -> tuple[float, float]:
@@ -182,6 +208,7 @@ class BoxActiveSet:
         sigma2_schedule: tuple[float, ...],
         tol: float,
         max_releases: int,
+        max_corrections: int = 3,
     ) -> None:
         if not sigma2_schedule or any(not (s > 0.0) for s in sigma2_schedule):
             raise ValueError(f"sigma2_schedule must be positive variances, got {sigma2_schedule}")
@@ -190,9 +217,11 @@ class BoxActiveSet:
         self.schedule = tuple(float(s) for s in sigma2_schedule)
         self.tol = float(tol)
         self.max_releases = int(max_releases)
+        self.max_corrections = int(max_corrections)
         n = len(box)
         self.state = np.zeros(n, dtype=np.int8)
         self.n_released = np.zeros(n, dtype=np.int64)
+        self.n_corrected = np.zeros(n, dtype=np.int64)
         # Target shift of the pinned rows (method of multipliers, last stage).
         self.shift = np.zeros(n, dtype=np.float64)
         self.point = box.lo == box.hi
@@ -254,6 +283,27 @@ class BoxActiveSet:
         self.pin(h)
         return True
 
+    def resume(self, warm: BoxWarmStart, h: np.ndarray) -> bool:
+        """Start in the last stage from the set of a previous solve; ``False`` if it does not fit."""
+        if not warm.fits(self.box):
+            return False
+        self.stage = len(self.schedule)
+        self.state[:] = warm.state
+        self.shift[:] = warm.shift
+        self.pin(h)
+        return True
+
+    def warm_start(self) -> BoxWarmStart | None:
+        """The current set for a warm re-solve; ``None`` before the set started."""
+        if self.stage == 0:
+            return None
+        return BoxWarmStart(
+            bus_pos=self.box.bus_pos,
+            kind=self.box.kind,
+            state=self.state.copy(),
+            shift=self.shift.copy(),
+        )
+
     def pin(self, h: np.ndarray) -> bool:
         """Pin the free rows whose injection left the box; ``True`` if any."""
         free = self.state == 0
@@ -292,14 +342,18 @@ class BoxActiveSet:
 
         A finite bound weight lets the injection stop short of its bound by
         ``force · σ²``; moving the target by the miss (the method of
-        multipliers) closes it without a heavier weight. ``True`` if any pinned
-        row misses its bound by more than ``tol``.
+        multipliers) closes it without a heavier weight. A row is shifted at
+        most ``max_corrections`` times. ``True`` if any row was shifted.
         """
-        act = self.state != 0
+        act = (self.state != 0) & (self.n_corrected < self.max_corrections)
         miss = np.where(act, self._bounds() - h, 0.0)
-        if not np.any(np.abs(miss) > self.tol):
+        big = np.abs(miss) > self.tol
+        if not np.any(big):
             return False
+        # Every pinned row follows its miss (the multipliers converge
+        # together); only a row that missed by more than tol uses up a correction.
         self.shift += miss
+        self.n_corrected[big] += 1
         return True
 
     def advance(self) -> None:

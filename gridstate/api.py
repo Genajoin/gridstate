@@ -29,7 +29,7 @@ from gridstate.algorithms.status import (
     success_from_status,
 )
 from gridstate.algorithms.wls import solve_wls
-from gridstate.algorithms.wls_box import node_injection_boxes, voltage_boxes
+from gridstate.algorithms.wls_box import BoxWarmStart, node_injection_boxes, voltage_boxes
 from gridstate.ipm_hints import has_dominant_limiter, ipm_convergence_hints
 from gridstate.post_processing import (
     apply_load_characteristic,
@@ -136,6 +136,7 @@ def estimate(
     merge_breakers_z_ohm_per_kv: float | None = None,
     wls_node_box: bool = False,
     wls_node_box_variance_mw: float = 1e-2,
+    wls_node_box_warm_start: BoxWarmStart | None = None,
     **ipm_kwargs: Any,
 ) -> SEResult:
     """Run state estimation for a model and telemetry.
@@ -244,6 +245,11 @@ def estimate(
             three stages. ``False`` (default): no boxes.
         wls_node_box_variance_mw: variance of the bound rows in the last
             stage, MW² (Mvar² for Q); the earlier stages are ×1e4 and ×1e2.
+            The rounds of the active set converge at 100 × ``tolerance``,
+            the solve at ``tolerance``.
+        wls_node_box_warm_start: active set of the boxes from a previous
+            solve of the same network (``SEResult.wls_box_warm_start``): the
+            warm re-solves of the pipeline start from it.
         **ipm_kwargs: IPM-mode knobs, ignored for WLS. ``trust_region_scope``
             (``"state"`` default | ``"all"``) selects the coordinates the IPM
             trust region is measured on (see ``_run_ipm``); everything else is
@@ -307,6 +313,7 @@ def estimate(
 
     role_estimates: dict[int, float] = {}
     merge_out: dict[str, Any] = {}
+    box_warm_start: BoxWarmStart | None = None
     if algorithm in ("ipm", "ipm_pd"):
         # IPM mode: extend layout/state/measurements with box variables and
         # nodal balance equations. ipm_kwargs are passed on to build_ipm_setup
@@ -372,7 +379,10 @@ def estimate(
             node_box=node_box,
             box_sigma2_schedule=(box_s2 * 1e4, box_s2 * 1e2, box_s2),
             box_tol=0.01 / network_pu.base_mva,
+            box_round_tolerance=100.0 * tolerance,
+            box_warm_start=wls_node_box_warm_start,
         )
+        box_warm_start = wls_res.box_warm_start
         e_final = wls_res.x
         success = wls_res.success
         iterations = wls_res.iterations
@@ -504,6 +514,7 @@ def estimate(
         # extracted from the model after writing. The canonical Output contract.
         outputs=extract_output_tables(model),
         solved_rows=merge_out.get("solved"),
+        wls_box_warm_start=box_warm_start,
     )
 
     if include_quality_summary:
