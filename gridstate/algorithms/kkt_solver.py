@@ -88,7 +88,9 @@ LARGE_SYSTEM = 5000
 
 @functools.cache
 def _warn_no_cvxopt() -> None:
-    """Once per process: a large system is solved without cvxopt."""
+    """Once per process (the import is tried once): a large system without cvxopt."""
+    if _cvxopt_available():
+        return
     logger.warning(
         "kkt_solver='auto': cvxopt is not installed — every Newton system goes to "
         "spsolve and the normalized residuals to SuperLU; on networks of thousands "
@@ -468,7 +470,7 @@ class KKTSolver:
     def _factor(self, G: csc_matrix, *, scipy_lu: bool) -> Callable[[np.ndarray], np.ndarray]:
         """Factorize ``G`` (see :meth:`solve`); return the solve for a rhs."""
         if self.backend == "scipy":
-            if G.shape[0] >= LARGE_SYSTEM and not _cvxopt_available():
+            if G.shape[0] >= LARGE_SYSTEM:
                 _warn_no_cvxopt()
             return factorized(G.tocsc()) if scipy_lu else _spsolve_with(G)
         if self._mode == "gram":
