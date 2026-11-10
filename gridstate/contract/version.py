@@ -52,7 +52,9 @@ from dataclasses import dataclass
 #   (piecewise load characteristics).
 # 3.3.0 (MINOR): the optional derived tables ``measurement_sigma2`` and
 #   ``pseudo_measurements`` (external measurement variances and pseudo-measurements).
-CONTRACT_VERSION = "3.3.0"
+# 3.4.0 (MINOR): the optional derived table ``measurement_sigma2_scale`` (the
+#   producer's variance factor of a telemetry value, applied last).
+CONTRACT_VERSION = "3.4.0"
 
 # Major of the data the explicit legacy path of the ``.npz`` loader still reads
 # (``load_se_input_npz(path, trusted=True)``).
