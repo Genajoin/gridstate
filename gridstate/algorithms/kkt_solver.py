@@ -82,9 +82,13 @@ def _cvxopt_available() -> bool:
     return True
 
 
+# System size from which a missing cvxopt is worth a warning.
+LARGE_SYSTEM = 5000
+
+
 @functools.cache
 def _warn_no_cvxopt() -> None:
-    """Once per process: the automatic choice fell back to scipy."""
+    """Once per process: a large system is solved without cvxopt."""
     logger.warning(
         "kkt_solver='auto': cvxopt is not installed — every Newton system goes to "
         "spsolve and the normalized residuals to SuperLU; on networks of thousands "
@@ -115,10 +119,7 @@ def resolve_backend(backend: str) -> str:
             )
         return "cholmod"
     if backend == "auto":
-        if _cvxopt_available():
-            return "cholmod"
-        _warn_no_cvxopt()
-        return "scipy"
+        return "cholmod" if _cvxopt_available() else "scipy"
     raise ValueError(f"unknown kkt_solver: {backend!r}; available: 'auto', 'cholmod', 'scipy'")
 
 
@@ -467,6 +468,8 @@ class KKTSolver:
     def _factor(self, G: csc_matrix, *, scipy_lu: bool) -> Callable[[np.ndarray], np.ndarray]:
         """Factorize ``G`` (see :meth:`solve`); return the solve for a rhs."""
         if self.backend == "scipy":
+            if G.shape[0] >= LARGE_SYSTEM and not _cvxopt_available():
+                _warn_no_cvxopt()
             return factorized(G.tocsc()) if scipy_lu else _spsolve_with(G)
         if self._mode == "gram":
             self._gram_to_matrix_mode()
