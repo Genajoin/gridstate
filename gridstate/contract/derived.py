@@ -67,6 +67,12 @@ class DerivedInputs:
       components summed into one row (injection components, repeated hits)
       sum their variances. What the later steps may do with it is set by
       ``PipelineConfig.external_sigma2``. ``None`` = the built-in rules;
+    * ``measurement_sigma2_scale`` — ``{TelemetryKey: factor}``, the producer's
+      factor of the variance of a telemetry value (<1 more trust, >1 less). It
+      multiplies the variance of the row the value feeds after every built-in
+      rule of the preparation (the QUESTIONABLE multiplier, the scale plans, the
+      flow σ floor) and also a final external variance; a row fed by several
+      values takes the largest factor among them. ``None`` = no factors;
     * ``pseudo_measurements`` — ``{PseudoKey: PseudoValue}``, pseudo-measurements
       added as given (``is_pseudo``, variance final) by the ``external_pseudo``
       step, before the built-in ``add_pseudo``. ``None`` = none.
@@ -87,4 +93,5 @@ class DerivedInputs:
     flow_sigma2_scale: dict[FlowKey, float] | None = None
     telemetry_bounds: dict[TelemetryKey, TelemetryBounds] | None = None
     measurement_sigma2: dict[TelemetryKey, float] | None = None
+    measurement_sigma2_scale: dict[TelemetryKey, float] | None = None
     pseudo_measurements: dict[PseudoKey, PseudoValue] | None = None

@@ -54,6 +54,7 @@ table and is absent from ``fields`` in the metadata):
 ``flow_sigma2_scale``  ``flow_sigma2_scale``  one branch flow variance factor
 ``telemetry_bounds``   ``telemetry_bounds``   one plausible range of a telemetry value
 ``measurement_sigma2`` ``measurement_sigma2`` one absolute variance of a telemetry value
+``measurement_sigma2_scale`` ``measurement_sigma2_scale`` one variance factor of a telemetry value
 ``pseudo_measurements`` ``pseudo_measurements`` one external pseudo-measurement
 ``telemetry_total_args``  (metadata)          integer, statistics only
 =====================  =====================  ======================================
@@ -364,6 +365,21 @@ MEASUREMENT_SIGMA2 = TableSchema(
     ),
 )
 
+MEASUREMENT_SIGMA2_SCALE = TableSchema(
+    name="measurement_sigma2_scale",
+    key=("object_id", "kind", "component"),
+    doc=(
+        "Producer's variance factor of telemetry values "
+        "(DerivedInputs.measurement_sigma2_scale). In memory: {(object_id, kind): factor}."
+    ),
+    columns=(
+        _col("object_id", "i4", "Object id (as in the telemetry table)."),
+        _col("kind", "i1", "Telemetry kind code (TELEMETRY_KINDS)."),
+        _col("component", "i4", "Component number of an injection kind; -1 for none."),
+        _col("factor", "f8", "Multiplier of the final variance (<1 more trust, >1 less)."),
+    ),
+)
+
 PSEUDO_MEASUREMENTS = TableSchema(
     name="pseudo_measurements",
     key=("node_id", "kind"),
@@ -390,6 +406,7 @@ DERIVED_TABLES: tuple[TableSchema, ...] = (
     FLOW_SIGMA2_SCALE,
     TELEMETRY_BOUNDS,
     MEASUREMENT_SIGMA2,
+    MEASUREMENT_SIGMA2_SCALE,
     PSEUDO_MEASUREMENTS,
 )
 
@@ -404,6 +421,7 @@ FIELD_TABLES: dict[str, str] = {
     "flow_sigma2_scale": FLOW_SIGMA2_SCALE.name,
     "telemetry_bounds": TELEMETRY_BOUNDS.name,
     "measurement_sigma2": MEASUREMENT_SIGMA2.name,
+    "measurement_sigma2_scale": MEASUREMENT_SIGMA2_SCALE.name,
     "pseudo_measurements": PSEUDO_MEASUREMENTS.name,
 }
 
@@ -542,6 +560,14 @@ def derived_to_tables(derived: DerivedInputs) -> tuple[dict[str, np.ndarray], di
         put(
             "measurement_sigma2",
             ((*_key_columns(o, k), float(s2)) for (o, k), s2 in derived.measurement_sigma2.items()),
+        )
+    if derived.measurement_sigma2_scale is not None:
+        put(
+            "measurement_sigma2_scale",
+            (
+                (*_key_columns(o, k), float(f))
+                for (o, k), f in derived.measurement_sigma2_scale.items()
+            ),
         )
     if derived.pseudo_measurements is not None:
         put(
@@ -689,6 +715,15 @@ def _measurement_sigma2(arr: np.ndarray) -> dict[tuple[int, str], float]:
     return out
 
 
+def _measurement_sigma2_scale(arr: np.ndarray) -> dict[tuple[int, str], float]:
+    out: dict[tuple[int, str], float] = {}
+    for object_id, code, comp, factor in arr.tolist():
+        out[(object_id, _kind_name(code, comp))] = factor
+    if len(out) != len(arr):
+        raise ValueError("derived table 'measurement_sigma2_scale': duplicate keys")
+    return out
+
+
 def _pseudo_measurements(arr: np.ndarray) -> dict[tuple[int, str], tuple[float, float]]:
     out: dict[tuple[int, str], tuple[float, float]] = {}
     for node_id, code, value, sigma2 in arr.tolist():
@@ -750,6 +785,8 @@ def derived_from_tables(tables: Mapping[str, np.ndarray], meta: Mapping[str, Any
         derived.telemetry_bounds = _telemetry_bounds(arr)
     if (arr := table("measurement_sigma2")) is not None:
         derived.measurement_sigma2 = _measurement_sigma2(arr)
+    if (arr := table("measurement_sigma2_scale")) is not None:
+        derived.measurement_sigma2_scale = _measurement_sigma2_scale(arr)
     if (arr := table("pseudo_measurements")) is not None:
         derived.pseudo_measurements = _pseudo_measurements(arr)
     return derived

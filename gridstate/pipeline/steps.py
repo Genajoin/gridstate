@@ -49,6 +49,7 @@ from gridstate.pipeline.preparation import (
     _s_gen_v_calibration,
     _s_generator_status,
     _s_materialize,
+    _s_measurement_sigma2_scale,
     _s_mirror_voltage,
     _s_normalize_breakers,
     _s_reactors,
@@ -333,12 +334,21 @@ STEPS: list[Step] = [
         after=("add_pseudo",),
     ),
     Step(
+        "measurement_sigma2_scale",
+        "Producer's variance factors",
+        _G_INPUT,
+        "variance ×factor of DerivedInputs.measurement_sigma2_scale, after every rule above.",
+        _s_measurement_sigma2_scale,
+        needs_derived=True,
+        after=("flow_sigma_floor",),
+    ),
+    Step(
         "estimate",
         "Оценка состояния (WLS/IPM)",
         _G_EST,
         "gridstate.estimate: solve_wls / solve_ipm.",
         _s_estimate,
-        after=("flow_sigma_floor",),
+        after=("measurement_sigma2_scale",),
     ),
     # ORDER INVARIANT (after=): bad_data_repass → v_refine → v_mirror →
     # v_mirror_chain → refine_merged → anti_overshoot strictly BETWEEN estimate

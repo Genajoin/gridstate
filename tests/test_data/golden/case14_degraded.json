@@ -259,6 +259,10 @@
     }
    },
    {
+    "type": "step_skipped",
+    "name": "measurement_sigma2_scale"
+   },
+   {
     "type": "step_start",
     "name": "estimate"
    },
@@ -581,6 +585,10 @@
      "checked": 76,
      "floored": 40
     }
+   },
+   {
+    "type": "step_skipped",
+    "name": "measurement_sigma2_scale"
    },
    {
     "type": "step_start",
@@ -952,6 +960,10 @@
     }
    },
    {
+    "type": "step_skipped",
+    "name": "measurement_sigma2_scale"
+   },
+   {
     "type": "step_start",
     "name": "estimate"
    },
@@ -1312,6 +1324,10 @@
      "checked": 76,
      "floored": 40
     }
+   },
+   {
+    "type": "step_skipped",
+    "name": "measurement_sigma2_scale"
    },
    {
     "type": "step_start",
@@ -1691,6 +1707,10 @@
      "checked": 76,
      "floored": 40
     }
+   },
+   {
+    "type": "step_skipped",
+    "name": "measurement_sigma2_scale"
    },
    {
     "type": "step_start",
@@ -2076,6 +2096,10 @@
      "checked": 76,
      "floored": 40
     }
+   },
+   {
+    "type": "step_skipped",
+    "name": "measurement_sigma2_scale"
    },
    {
     "type": "step_start",

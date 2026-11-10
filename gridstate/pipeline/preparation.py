@@ -33,6 +33,7 @@ from gridstate.telemetry.load_only_injection import (
 )
 from gridstate.telemetry.on_line import apply_topology_resolved
 from gridstate.telemetry.rpn import apply_rpn_resolved
+from gridstate.telemetry.sigma2_scale import apply_measurement_sigma2_scale
 from gridstate.telemetry.voltage_nominal import apply_voltage_nominal_resolved
 from gridstate.topology import (
     disable_disconnected_components,
@@ -281,3 +282,11 @@ def _s_flow_sigma_floor(ctx: _Ctx) -> dict:
     return dict(
         apply_flow_sigma_floor(ctx.model, kv_frac=float(frac), skip_ids=ctx.fixed_sigma2_ids) or {}
     )
+
+
+def _s_measurement_sigma2_scale(ctx: _Ctx) -> dict:
+    # The producer's factor of a value's variance, last: after every built-in
+    # rule above (the flow floor included) and over a final external variance.
+    if ctx.derived is None or ctx.derived.measurement_sigma2_scale is None:
+        return {"skipped": "no factors (derived.measurement_sigma2_scale)"}
+    return apply_measurement_sigma2_scale(ctx.model, ctx.derived.measurement_sigma2_scale)

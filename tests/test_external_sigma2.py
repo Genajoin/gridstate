@@ -371,6 +371,7 @@ def test_every_variance_writer_is_known():
         "telemetry/voltage_filter.py",  # gen-V calibration (skip_ids)
         "telemetry/load_only_injection.py",  # widening (skip_ids)
         "telemetry/sigma_floor.py",  # flow floor (skip_ids)
+        "telemetry/sigma2_scale.py",  # producer's factor, last on purpose
         "bad_data_repass.py",  # solve-time pass, own switch
         "v_refine.py",  # solve-time pass, own switch
     }
