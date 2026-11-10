@@ -80,6 +80,10 @@ SELINV_REFINE_BELOW = 1e-2
 #: rankings (see :func:`near_critical_mask`).
 NEAR_CRITICAL_THRESHOLD = 1e-4
 
+#: Largest state count for which the no-cvxopt ``"solve"`` path forms a dense
+#: ``G`` (~70 MB); above it :func:`hgh_diag_splu` keeps ``G`` sparse.
+DENSE_MAX_STATES = 3000
+
 
 @dataclass(frozen=True)
 class NormalizedResiduals:
@@ -288,23 +292,59 @@ def hgh_diag_cholmod(
     """
     import cvxopt  # noqa: F401  (ImportError before assembling G)
 
-    A = _cholmod_lower(_gain(H_csr, sigma2))
+    G = _gain(H_csr, sigma2)
     hgh = np.full(H_csr.shape[0], np.nan, dtype=np.float64)
     with _supernodal_cholmod() as cholmod:
-        F = _cholmod_numeric(cholmod, A)
-        if F is None:
+        factorized = _cholmod_factorize(cholmod, G)
+        if factorized is None:
             return None
+        _A, F = factorized
         _cholmod_hgh_rows(cholmod, F, H_csr, row_idx, hgh, block)
     return hgh
 
 
-def _cholmod_numeric(cholmod: Any, A: Any) -> Any | None:
+def _cholmod_factorize(cholmod: Any, G: csc_matrix) -> tuple[Any, Any] | None:
+    """CHOLMOD factor of ``G``, of ``G + eps·diag(G)`` when ``G`` is not PD.
+
+    A gain whose diagonal spans many orders of magnitude (weights up to ~1e19
+    against unit ones) may break LLᵀ by rounding although it is positive
+    definite in exact arithmetic; a relative diagonal shift of
+    :data:`~gridstate.algorithms.kkt_solver.REG_SHIFTS` (1e-14 first) then
+    goes through and changes ``(H G⁻¹ Hᵀ)_ii`` far below the precision the
+    ranking needs. Returns ``(A, F)``: the factorized lower triangle (refactorize
+    ``A`` for a second identical factor) and its numeric factor; ``None`` when
+    ``G`` is not PD even with the largest shift.
+    """
+    from gridstate.algorithms.kkt_solver import REG_SHIFTS
+
+    A = _cholmod_lower(G)
+    F = _cholmod_numeric(cholmod, A, warn=False)
+    if F is not None:
+        return A, F
+    d = G.diagonal()
+    if d.size and np.all(d > 0.0):
+        from scipy.sparse import diags
+
+        for eps in REG_SHIFTS:
+            A = _cholmod_lower((G + diags(eps * d)).tocsc())
+            F = _cholmod_numeric(cholmod, A, warn=False)
+            if F is not None:
+                logger.warning(
+                    "r_N: G is not positive definite by rounding — factorized G + %g·diag(G)", eps
+                )
+                return A, F
+    logger.warning("r_N: G is not positive definite — r_N = inf")
+    return None
+
+
+def _cholmod_numeric(cholmod: Any, A: Any, *, warn: bool = True) -> Any | None:
     """Symbolic and numeric CHOLMOD factorization; ``None`` — not positive definite."""
     F = cholmod.symbolic(A, uplo="L")
     try:
         cholmod.numeric(A, F)
     except ArithmeticError as exc:
-        logger.warning("r_N: G is not positive definite — r_N = inf (%s)", exc)
+        if warn:
+            logger.warning("r_N: G is not positive definite — r_N = inf (%s)", exc)
         return None
     return F
 
@@ -343,11 +383,15 @@ def _cholmod_hgh_rows(
 def hgh_diag_dense(H_csr: csr_matrix, sigma2: np.ndarray, row_idx: np.ndarray) -> np.ndarray | None:
     """``diag(H G⁻¹ Hᵀ)`` for ``row_idx`` via dense Cholesky + blocked trsm.
 
-    Fallback without cvxopt. Returns ``None`` when ``G`` is singular.
+    Fallback without cvxopt. Returns ``None`` when ``G`` is singular. Above
+    :data:`DENSE_MAX_STATES` states ``G`` stays sparse (:func:`hgh_diag_splu`):
+    a dense ``G`` of a 20k-node network alone takes ~14 GB.
     """
     from scipy.linalg import cho_factor, solve_triangular
     from scipy.sparse import diags
 
+    if H_csr.shape[1] > DENSE_MAX_STATES:
+        return hgh_diag_splu(H_csr, sigma2, row_idx)
     G = np.asarray((H_csr.T @ diags(1.0 / sigma2) @ H_csr).todense())
     try:
         L, lower = cho_factor(G, lower=True, overwrite_a=True, check_finite=False)
@@ -361,6 +405,30 @@ def hgh_diag_dense(H_csr: csr_matrix, sigma2: np.ndarray, row_idx: np.ndarray) -
         sel = row_idx[s : s + block]
         Y = solve_triangular(L, H_csr[sel, :].toarray().T, lower=lower, check_finite=False)
         hgh[sel] = np.einsum("ij,ij->j", Y, Y)
+    return hgh
+
+
+def hgh_diag_splu(
+    H_csr: csr_matrix, sigma2: np.ndarray, row_idx: np.ndarray, block: int = 256
+) -> np.ndarray | None:
+    """``diag(H G⁻¹ Hᵀ)`` for ``row_idx`` via a sparse SuperLU factor of ``G``.
+
+    The large-network form of :func:`hgh_diag_dense` (no cvxopt): blocks of
+    ``block`` rows are solved at once, so the memory is ``n_state × block``.
+    Returns ``None`` when ``G`` is singular.
+    """
+    from scipy.sparse.linalg import splu
+
+    try:
+        lu = splu(_gain(H_csr, sigma2))
+    except RuntimeError as exc:  # singular
+        logger.warning("r_N: G is singular — r_N = inf (%s)", exc)
+        return None
+    hgh = np.full(H_csr.shape[0], np.nan, dtype=np.float64)
+    for s in range(0, row_idx.size, block):
+        sel = row_idx[s : s + block]
+        B = H_csr[sel, :].toarray().T
+        hgh[sel] = np.einsum("ij,ij->j", B, lu.solve(B))
     return hgh
 
 
@@ -524,12 +592,13 @@ def cholmod_factor(G: csc_matrix) -> CholeskyFactor | None:
     Returns:
         ``None`` when ``G`` is not positive definite.
     """
-    A = _cholmod_lower(G)
+    import cvxopt  # noqa: F401  (ImportError before factorizing)
+
     with _supernodal_cholmod() as cholmod:
-        F = _cholmod_numeric(cholmod, A)
-        if F is None:
+        factorized = _cholmod_factorize(cholmod, G)
+        if factorized is None:
             return None
-        return _factor_of_cholmod(cholmod, F, G.shape[0])
+        return _factor_of_cholmod(cholmod, factorized[1], G.shape[0])
 
 
 def _factor_of_cholmod(cholmod: Any, F: Any, n: int) -> CholeskyFactor:
@@ -662,13 +731,14 @@ def hgh_diag_selinv(
             raise SelectedInversionUnavailableError("numba kernels unavailable")
     G = _gain(H_csr, sigma2)
     try:
-        A = _cholmod_lower(G)
+        import cvxopt  # noqa: F401
     except ImportError:
         return _hgh_selinv_superlu(G, H_csr, sigma2, row_idx, kernels, refine_below)
     with _supernodal_cholmod() as cholmod:
-        F = _cholmod_numeric(cholmod, A)
-        if F is None:
+        factorized = _cholmod_factorize(cholmod, G)
+        if factorized is None:
             return None
+        A, F = factorized
         factor = _factor_of_cholmod(cholmod, F, G.shape[0])
     hgh = _selinv_hgh(factor, H_csr, row_idx, kernels)
     if hgh is None:

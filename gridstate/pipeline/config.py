@@ -576,6 +576,16 @@ class PipelineConfig:
         "(also when the trust region collapsed), IPM barrier schedule run through. "
         "status — from the solver-independent status: kkt or mu_schedule_done only.",
     )
+    quality_summary: bool = _toggle(
+        True,
+        group=_G_EST,
+        label="Quality summary",
+        help="Compute the quality summary on the final solution: χ², normalized "
+        "residuals r_N, worst residuals and imbalances, near-critical measurements. "
+        "On a large network r_N cost about as much as the solve itself; a cyclic "
+        "estimation that does not read them can switch it off (the summary fields "
+        "stay empty). Never computed on a solution that did not converge.",
+    )
     top_residuals_n: int = _param(
         20,
         group=_G_EST,

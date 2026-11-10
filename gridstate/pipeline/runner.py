@@ -350,7 +350,19 @@ def run(
     t0 = time.monotonic()
     qs_stats: dict[str, Any] = {}
     violation = state_range_violation(ctx.model.nodes.to_numpy())
-    if violation is None:
+    if violation is not None:
+        # The main estimate left a state that cannot be converted back to p.u.
+        # (already marked failed by the estimate step): no summary, no crash.
+        if ctx.result.success:
+            fail_out_of_range(ctx.result, violation)
+        qs_stats["skipped"] = f"state out of range: {violation}"
+    elif not cfg.quality_summary:
+        qs_stats["skipped"] = "switched off (quality_summary=False)"
+    elif not ctx.result.success:
+        # Residuals of a solution that did not converge say nothing about the
+        # measurements, and on a large network they cost minutes.
+        qs_stats["skipped"] = "the solution did not converge"
+    else:
         populate_quality_summary(
             ctx.result,
             top_n=cfg.top_residuals_n,
@@ -358,12 +370,6 @@ def run(
             rn_refine_below=cfg.selected_inversion_refine_below,
             near_critical=cfg.near_critical_threshold,
         )
-    else:
-        # The main estimate left a state that cannot be converted back to p.u.
-        # (already marked failed by the estimate step): no summary, no crash.
-        if ctx.result.success:
-            fail_out_of_range(ctx.result, violation)
-        qs_stats["skipped"] = f"state out of range: {violation}"
     _emit(
         on_event,
         {
