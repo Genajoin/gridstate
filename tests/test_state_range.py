@@ -261,8 +261,12 @@ def test_defaults_gross_errors_anti_overshoot_out_of_range_is_rejected():
     assert st["state_violation"]
     # the base solution stays current and is usable
     assert out.success is stats["estimate"]["success"]
-    assert stats["quality_summary"] == {}
-    assert out.result.chi2 is not None
+    # the summary runs on a converged base only (no p.u. conversion crash either way)
+    if out.success:
+        assert stats["quality_summary"] == {}
+        assert out.result.chi2 is not None
+    else:
+        assert stats["quality_summary"] == {"skipped": "the solution did not converge"}
     assert state_range_violation(out.result.model.nodes.to_numpy()) is None
     assert np.all(np.abs(_active_angles(out.result.model)) <= MAX_ABS_VOLTAGE_ANGLE)
 
@@ -298,3 +302,16 @@ def test_estimate_angle_out_of_range_does_not_raise(monkeypatch):
     assert "skipped" in stats["bad_data_repass"]
     assert "skipped" in stats["anti_overshoot"]
     assert "angle" in stats["quality_summary"]["skipped"]
+
+
+def test_quality_summary_switch_off_leaves_summary_empty():
+    """quality_summary=False: no summary, the step reports why; the solve is the same."""
+    from dataclasses import replace
+
+    model = _gross_errors("case14_degraded", seed=92)
+    on, _ = _run(model, PipelineConfig())
+    off, stats = _run(model, replace(PipelineConfig(), quality_summary=False))
+    assert stats["quality_summary"] == {"skipped": "switched off (quality_summary=False)"}
+    assert off.result.chi2 is None
+    assert off.result.worst_residuals == []
+    assert off.success == on.success

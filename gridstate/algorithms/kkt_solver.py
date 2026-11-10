@@ -15,8 +15,14 @@ pattern + ``cholmod.numeric`` per iteration, simplicial LDLᵀ mode
 (``options['supernodal']=0``): late IPM iterations are quasi-definite
 (barrier ~1e14 on the diagonal) and supernodal LLᵀ breaks down on them with a
 reused fill order. On a 16k-node production model (339 systems, n=16k,
-nnz=237k): 17.4 s spsolve → 1.2 s (×14). Fallback on a singular matrix (loss of
-observability) — a single ``spsolve`` with a warning.
+nnz=237k): 17.4 s spsolve → 1.2 s (×14). When LLᵀ breaks down even on a fresh
+analysis, the matrix is factorized once more with a tiny relative diagonal
+shift (:data:`REG_SHIFTS`) and the solution gets one step of iterative
+refinement against the unshifted matrix. On a 10k-node CIM model the diagonal
+spans 3e2..1e19 and LLᵀ fails on hundreds of systems while a shift of 1e-14 of
+the diagonal goes through; spsolve on those systems took ~75 % of the solve.
+Only a matrix that breaks down with the largest shift as well (loss of
+observability) goes to a single ``spsolve`` with a warning.
 
 Pattern stabilisation pitfall: scipy prunes numerical zeros both in sparse
 matmul and in addition, so the pattern of G jitters by a few entries between
@@ -63,6 +69,10 @@ NUMBA_ENV = "GRIDSTATE_NUMBA"
 # well beyond the double precision of any real value of G.
 PATTERN_EPS = 1e-300
 
+# Relative diagonal shifts (``G + eps·diag(G)``) tried after LLᵀ fails on a
+# fresh analysis, before falling back to spsolve.
+REG_SHIFTS = (1e-14, 1e-12, 1e-10)
+
 
 def _cvxopt_available() -> bool:
     try:
@@ -70,6 +80,16 @@ def _cvxopt_available() -> bool:
     except ImportError:
         return False
     return True
+
+
+@functools.cache
+def _warn_no_cvxopt() -> None:
+    """Once per process: the automatic choice fell back to scipy."""
+    logger.warning(
+        "kkt_solver='auto': cvxopt is not installed — every Newton system goes to "
+        "spsolve and the normalized residuals to SuperLU; on networks of thousands "
+        "of nodes that is minutes instead of seconds (pip install gridstate[fast])"
+    )
 
 
 def resolve_backend(backend: str) -> str:
@@ -95,7 +115,10 @@ def resolve_backend(backend: str) -> str:
             )
         return "cholmod"
     if backend == "auto":
-        return "cholmod" if _cvxopt_available() else "scipy"
+        if _cvxopt_available():
+            return "cholmod"
+        _warn_no_cvxopt()
+        return "scipy"
     raise ValueError(f"unknown kkt_solver: {backend!r}; available: 'auto', 'cholmod', 'scipy'")
 
 
@@ -337,10 +360,7 @@ class KKTSolver:
             self._factor_gram_cholmod(gram, values)
             return self._cholmod_solve
         except ArithmeticError:
-            logger.warning(
-                "kkt cholmod: matrix is not PD even on a fresh analysis — falling back to spsolve"
-            )
-            return _spsolve_with(gram_scipy(H, w, diag, HtW))
+            return _regularized_or_spsolve(gram_scipy(H, w, diag, HtW))
 
     def _gram_pattern_for(self, H: Any) -> _GramPattern | None:
         """Fixed Gram structure for ``H`` when the numba path applies."""
@@ -461,10 +481,7 @@ class KKTSolver:
             self._factor_cholmod(G)
             return self._cholmod_solve
         except ArithmeticError:
-            logger.warning(
-                "kkt cholmod: matrix is not PD even on a fresh analysis — falling back to spsolve"
-            )
-            return _spsolve_with(G)
+            return _regularized_or_spsolve(G)
 
     def _factor_cholmod(self, G: csc_matrix) -> None:
         from cvxopt import cholmod, matrix, spmatrix
@@ -504,6 +521,48 @@ class KKTSolver:
         cholmod.numeric(self._A, self._F)
 
 
+def _regularized_or_spsolve(G: Any) -> Callable[[np.ndarray], np.ndarray]:
+    """Solve for a G on which LLᵀ broke down even on a fresh analysis.
+
+    Tries ``G + eps·diag(G)`` for ``eps`` in :data:`REG_SHIFTS` with its own
+    one-off CHOLMOD factor (the solver's cached factor and pattern are left
+    alone), then refines the solution once against ``G`` itself. A matrix
+    that is not PD with the largest shift either (or has a non-positive
+    diagonal) goes to ``spsolve``.
+    """
+    from cvxopt import cholmod, matrix, spmatrix
+
+    G = csc_matrix(G)
+    d = G.diagonal()
+    if d.size and np.all(d > 0):
+        for eps in REG_SHIFTS:
+            coo = (G + diags(eps * d)).tocoo()
+            A = spmatrix(coo.data, coo.row.astype(np.int64), coo.col.astype(np.int64), G.shape)
+            try:
+                F = cholmod.symbolic(A)
+                cholmod.numeric(A, F)
+            except ArithmeticError:
+                continue
+            logger.debug("kkt cholmod: not PD — solved with a diagonal shift of %g", eps)
+
+            def _solve(rhs: np.ndarray, F: Any = F) -> np.ndarray:
+                def _apply(b: np.ndarray) -> np.ndarray:
+                    m = matrix(np.asarray(b, dtype=np.float64))
+                    cholmod.solve(F, m)
+                    return np.asarray(m, dtype=np.float64).ravel()
+
+                rhs = np.asarray(rhs, dtype=np.float64).ravel()
+                x = _apply(rhs)
+                refined: np.ndarray = x + _apply(rhs - np.asarray(G @ x, dtype=np.float64))
+                return refined
+
+            return _solve
+    logger.warning(
+        "kkt cholmod: matrix is not PD even on a fresh analysis — falling back to spsolve"
+    )
+    return _spsolve_with(G)
+
+
 def _spsolve_with(G: csc_matrix) -> Callable[[np.ndarray], np.ndarray]:
     """``rhs → spsolve(G, rhs)`` (the former single-solve path, bit for bit)."""
 
@@ -516,6 +575,7 @@ def _spsolve_with(G: csc_matrix) -> Callable[[np.ndarray], np.ndarray]:
 __all__ = [
     "NUMBA_ENV",
     "PATTERN_EPS",
+    "REG_SHIFTS",
     "KKTSolver",
     "gram_scipy",
     "numba_gram_available",

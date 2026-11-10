@@ -9,6 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from scipy.sparse import csc_matrix
+from scipy.sparse import eye as _eye
 from scipy.sparse import random as sparse_random
 from scipy.sparse.linalg import spsolve
 
@@ -93,6 +94,23 @@ class TestCholmodBackend:
         rhs = np.array([1.0, 2.0, 4.0])
         solver = KKTSolver("cholmod")
         np.testing.assert_allclose(solver.solve(G, rhs), [1.0, -2.0, 2.0])
+
+    def test_semidefinite_by_rounding_solved_with_shift(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gram with weights 1 and 1e19: LLᵀ breaks down, a diagonal shift does not.
+
+        The solve stays on CHOLMOD (no spsolve) and is accurate after refinement.
+        """
+        H = (sparse_random(80, 40, density=0.1, random_state=1) + _eye(80, 40)).tocsr()
+        w = np.ones(80)
+        w[:5] = 1e19
+        G = (H.T @ (H.multiply(w[:, None]))).tocsc()
+        x0 = np.random.default_rng(0).standard_normal(40)
+        rhs = G @ x0
+        monkeypatch.setattr(ks, "_spsolve_with", lambda _G: pytest.fail("spsolve fallback"))
+        x = KKTSolver("cholmod").solve(G, rhs)
+        assert np.linalg.norm(G @ x - rhs) <= 1e-12 * np.linalg.norm(rhs)
 
     def test_pattern_eps_does_not_change_values(self) -> None:
         """Projection onto the superset does not distort the data (ε is below the precision)."""
