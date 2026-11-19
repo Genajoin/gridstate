@@ -9,6 +9,17 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.15.1 (2026-11-19)
+
+### Fix
+
+- Measurement ids of the added rows (mirror V, external pseudo, pseudo priors,
+  anti-overshoot) step over the ids already taken instead of raising
+  `MeasurementIdCollisionError`: input ids may lie anywhere (CIM models carry
+  hashed ids up to 2**30), and a large model hit one inside the pseudo sequence.
+  The error is left for an exhausted int32 id space (`MAX_MEASUREMENT_ID`);
+  `IdAllocator`'s `skip_taken_start` flag is removed.
+
 ## v2.12.0 (2026-10-20)
 
 ### Feat
