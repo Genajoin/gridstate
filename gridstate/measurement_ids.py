@@ -12,11 +12,12 @@ start:
   (760 000 000).
 
 The ids grow by one per row. :class:`IdAllocator` checks every id it hands out
-against the ids that already exist and raises :class:`MeasurementIdCollisionError`
-instead of letting a duplicate reach the measurement table, where it would fail
-later with a less telling message. Steps whose base may be taken skip forward to
-the first free id once, at the start (``skip_taken_start``); after that the
-sequence is checked, not skipped.
+against the ids that already exist and steps over the taken ones, so a duplicate
+never reaches the measurement table. The bases are where a step starts, not a range
+it owns: input ids may lie anywhere (CIM models carry hashed ids spread up to
+2**30), and the added rows are told apart by their flags (``is_pseudo``,
+``source_code``), not by the id. :class:`MeasurementIdCollisionError` is raised
+only when no free id is left below the int32 limit of the id column.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ANTI_OVERSHOOT_ID_BASE",
     "EXTERNAL_PSEUDO_ID_BASE",
+    "MAX_MEASUREMENT_ID",
     "MIRROR_V_ID_BASE",
     "PSEUDO_ID_BASE",
     "IdAllocator",
@@ -49,19 +51,21 @@ PSEUDO_ID_BASE = 300_000_000
 ANTI_OVERSHOOT_ID_BASE = 760_000_000
 
 
+#: Largest id the measurement table holds (``int32`` id column).
+MAX_MEASUREMENT_ID = 2**31 - 1
+
+
 class MeasurementIdCollisionError(ValueError):
-    """A new measurement id is already used by an existing measurement."""
+    """No free measurement id is left for a step (past :data:`MAX_MEASUREMENT_ID`)."""
 
 
 class IdAllocator:
-    """Sequential measurement ids from a base, checked against existing ids.
+    """Sequential measurement ids from a base, stepping over existing ids.
 
     Args:
         existing_ids: ids present in the measurement table when the step starts.
-        start: first id to hand out.
+        start: first id to try.
         name: step name for the error message.
-        skip_taken_start: advance ``start`` past ids that are already taken
-            (once, before the first id is handed out).
     """
 
     def __init__(
@@ -70,15 +74,10 @@ class IdAllocator:
         start: int,
         *,
         name: str,
-        skip_taken_start: bool = False,
     ) -> None:
         self._taken = {int(x) for x in existing_ids}
         self._name = name
-        nxt = int(start)
-        if skip_taken_start:
-            while nxt in self._taken:
-                nxt += 1
-        self._next = nxt
+        self._next = int(start)
 
     @classmethod
     def after_max(cls, existing_ids: Iterable[int] | np.ndarray, *, name: str) -> IdAllocator:
@@ -89,15 +88,20 @@ class IdAllocator:
     def next(self) -> int:
         """Hand out the next id.
 
+        The next free id from the current position: ids taken by existing
+        measurements are stepped over.
+
         Raises:
-            MeasurementIdCollisionError: the id is already taken by an existing
-                measurement.
+            MeasurementIdCollisionError: no free id is left up to
+                :data:`MAX_MEASUREMENT_ID`.
         """
         mid = self._next
-        if mid in self._taken:
+        while mid in self._taken:
+            mid += 1
+        if mid > MAX_MEASUREMENT_ID:
             raise MeasurementIdCollisionError(
-                f"{self._name}: measurement id {mid} is already used; "
-                "the input ids overlap the range reserved for this step"
+                f"{self._name}: no free measurement id left (next would be {mid}, "
+                f"limit {MAX_MEASUREMENT_ID})"
             )
         self._next = mid + 1
         return mid

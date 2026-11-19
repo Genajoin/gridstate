@@ -85,7 +85,7 @@ def _mirror_voltage_on_arrays(
     # Free id: scan the set of existing ids (== the live collection at the moment
     # meas_arr was taken) once at the start, then increment-only inside the pass
     # (a collision further along the range is an error, not a skip).
-    ids = IdAllocator(meas_arr["id"], mid_start, name="mirror_voltage", skip_taken_start=True)
+    ids = IdAllocator(meas_arr["id"], mid_start, name="mirror_voltage")
 
     new_rows: list[dict] = []
 
