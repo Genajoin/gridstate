@@ -34,9 +34,9 @@ if TYPE_CHECKING:
 __all__ = [
     "ANTI_OVERSHOOT_ID_BASE",
     "EXTERNAL_PSEUDO_ID_BASE",
+    "MAX_MEASUREMENT_ID",
     "MIRROR_V_ID_BASE",
     "PSEUDO_ID_BASE",
-    "MAX_MEASUREMENT_ID",
     "IdAllocator",
     "MeasurementIdCollisionError",
 ]
