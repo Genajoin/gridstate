@@ -668,7 +668,6 @@ def add_external_pseudo_measurements(
         model.measurements.to_numpy()["id"],
         EXTERNAL_PSEUDO_ID_BASE,
         name="external_pseudo",
-        skip_taken_start=True,
     )
     new_rows: list[dict] = []
     stats = {"added_v": 0, "added_p_inj": 0, "added_q_inj": 0, "skipped_inactive": 0}

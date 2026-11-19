@@ -10,6 +10,7 @@ from gridstate.measurement_ids import (
     ANTI_OVERSHOOT_ID_BASE,
     MIRROR_V_ID_BASE,
     PSEUDO_ID_BASE,
+    MAX_MEASUREMENT_ID,
     IdAllocator,
     MeasurementIdCollisionError,
 )
@@ -44,19 +45,17 @@ def test_sequential_ids_from_start() -> None:
     assert [ids.next() for _ in range(3)] == [10, 11, 12]
 
 
-def test_collision_raises() -> None:
-    ids = IdAllocator(np.array([11]), 10, name="step")
-    assert ids.next() == 10
-    with pytest.raises(MeasurementIdCollisionError, match="step: measurement id 11"):
+def test_taken_ids_are_skipped() -> None:
+    ids = IdAllocator(np.array([10, 11, 13, 15]), 10, name="t")
+    assert [ids.next() for _ in range(3)] == [12, 14, 16]
+
+
+def test_exhausted_id_space_raises() -> None:
+    ids = IdAllocator([MAX_MEASUREMENT_ID], MAX_MEASUREMENT_ID - 1, name="step")
+    assert ids.next() == MAX_MEASUREMENT_ID - 1
+    with pytest.raises(MeasurementIdCollisionError, match="step: no free measurement id"):
         ids.next()
     assert issubclass(MeasurementIdCollisionError, ValueError)
-
-
-def test_skip_taken_start_only_at_start() -> None:
-    ids = IdAllocator([10, 11, 13], 10, name="t", skip_taken_start=True)
-    assert ids.next() == 12
-    with pytest.raises(MeasurementIdCollisionError):
-        ids.next()  # 13 is taken: past the start the sequence is checked, not skipped
 
 
 def test_after_max() -> None:
@@ -79,19 +78,20 @@ def _nodes(n: int) -> np.ndarray:
     )
 
 
-def test_pseudo_ids_collide_with_input_raise() -> None:
+def test_pseudo_ids_step_over_input_ids() -> None:
+    # Hashed input ids (CIM) may land inside the pseudo range: they are stepped over.
     nodes = _nodes(2)
     branches = _table(SE_INPUT.branches.input_dtype(), [])
     meas = _table(SE_INPUT.measurements.input_dtype(), [{"id": PSEUDO_ID_BASE + 1}])
     cfg = PseudoMeasConfig(add_zero_injections=False)
-    with pytest.raises(MeasurementIdCollisionError):
-        _add_pseudo_measurements_on_arrays(nodes, branches, meas, None, cfg)
+    rows, _ = _add_pseudo_measurements_on_arrays(nodes, branches, meas, None, cfg)
+    assert [r["id"] for r in rows] == [PSEUDO_ID_BASE, PSEUDO_ID_BASE + 2]
     ok = _table(SE_INPUT.measurements.input_dtype(), [{"id": 5}])
     rows, _ = _add_pseudo_measurements_on_arrays(nodes, branches, ok, None, cfg)
     assert [r["id"] for r in rows] == [PSEUDO_ID_BASE, PSEUDO_ID_BASE + 1]
 
 
-def test_mirror_ids_skip_taken_start_then_check() -> None:
+def test_mirror_ids_step_over_taken() -> None:
     nodes = _nodes(4)
     branches = _table(
         SE_INPUT.branches.input_dtype(),
@@ -128,9 +128,6 @@ def test_mirror_ids_skip_taken_start_then_check() -> None:
             {**real_v, "id": MIRROR_V_ID_BASE + 2, "object_id": 3},
         ],
     )
-    # The start is taken -> first free id; the next id in the sequence is taken too.
-    with pytest.raises(MeasurementIdCollisionError):
-        _mirror_voltage_on_arrays(nodes, branches, meas)
-    meas["id"][1] = 9
+    # The start and the id after the first mirror are taken: both are stepped over.
     rows = _mirror_voltage_on_arrays(nodes, branches, meas)
-    assert [r["id"] for r in rows] == [MIRROR_V_ID_BASE + 1, MIRROR_V_ID_BASE + 2]
+    assert [r["id"] for r in rows] == [MIRROR_V_ID_BASE + 1, MIRROR_V_ID_BASE + 3]
