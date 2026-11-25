@@ -41,6 +41,7 @@ from gridstate.algebra.normalized_residuals import (
     normalized_residuals,
 )
 from gridstate.api import estimate
+from gridstate.cancel import checkpoint
 from gridstate.constants import MeasurementQuality
 from gridstate.result import SEResult
 from gridstate.validation._diagnostics import compute_diagnostics
@@ -334,6 +335,7 @@ def remove_bad_data(
     se_result = _run_estimate()
 
     for it in range(max_iterations + 1):
+        checkpoint()
         if not se_result.success:
             logger.warning(
                 "rn_max: SE did not converge at iteration %d — aborting the clean-up", it

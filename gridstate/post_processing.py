@@ -34,6 +34,7 @@ from gridstate.algebra.base import (
     BaseAlgebra,
 )
 from gridstate.bounds import is_reactive_only_generation, resolve_bounds
+from gridstate.cancel import checkpoint
 from gridstate.load_characteristics import QUANTITY_P, QUANTITY_Q, segment_factor, segment_plan
 from gridstate.measurement_ids import ANTI_OVERSHOOT_ID_BASE, IdAllocator
 from gridstate.preprocessing.meas_rows import pseudo_node_measurement
@@ -873,6 +874,7 @@ def refine_anti_overshoot(
     refined = result
     violation: str | None = None
     for _ in range(max_iters):
+        checkpoint()
         nd = model.nodes.to_numpy()
         newly: list[tuple[int, float, float]] = []
         for i in range(len(nd)):

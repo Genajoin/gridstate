@@ -71,6 +71,7 @@ from dataclasses import replace
 from typing import Any
 
 from gridstate.api import populate_quality_summary
+from gridstate.cancel import cancel_scope, checkpoint
 from gridstate.contract.derived import DerivedInputs
 from gridstate.pipeline.config import PipelineConfig
 from gridstate.pipeline.context import Step, _Ctx, _no_solution
@@ -157,6 +158,7 @@ def _execute_step(step: Step, ctx: _Ctx, on_event: Callable[[dict], None] | None
             {"type": "step_skipped", "name": step.name, "reason": "no derived inputs"},
         )
         return
+    checkpoint()
     _emit(on_event, {"type": "step_start", "name": step.name})
     t0 = time.monotonic()
     try:
@@ -253,6 +255,7 @@ def run(
     derived: DerivedInputs | None = None,
     on_event: Callable[[dict], None] | None = None,
     init_state: Any = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> SEResult:
     """Run the full SE pipeline and return an ``SEResult``. **The input is read-only.**
 
@@ -291,11 +294,20 @@ def run(
             them into the working copy before preprocessing, so they are both
             the start and the V operating point of the pseudo-V priors.
             ``None``: cold start from ``cfg.init``.
+        cancel: stop request (``() -> bool``), polled between steps and on every
+            solver iteration (:mod:`gridstate.cancel`); ``True`` stops the run
+            with :class:`~gridstate.cancel.Cancelled`. Same as running inside
+            :func:`~gridstate.cancel.cancel_scope`.
 
     Returns:
         ``SEResult`` (``ctx.result``); the result is in ``result.model`` (the
         working copy) and ``result.outputs``. The input ``model`` is unchanged.
     """
+    if cancel is not None:
+        with cancel_scope(cancel):
+            return run(
+                model, config=config, derived=derived, on_event=on_event, init_state=init_state
+            )
     cfg = config or PipelineConfig()
     # Re-check: a config may have been edited after construction.
     cfg.validate()

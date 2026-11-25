@@ -55,6 +55,7 @@ from gridstate.algebra.estimators import HuberReweighter, build_branch_pq_huber_
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.status import SolveStatus
 from gridstate.algorithms.wls_box import BoxActiveSet, BoxWarmStart
+from gridstate.cancel import checkpoint
 from gridstate.state import unpack
 from gridstate.utils import floored_sigma2, scale_csr_rows, sparse_diag
 
@@ -485,6 +486,7 @@ def solve_wls(
         return True
 
     while (current_error > stop_tol and cur_it < it_limit) or _box_next():
+        checkpoint()
         # SHGM-IRLS: recompute weights from the last residual. Warmup
         # iterations run as pure WLS — flat-start residuals are not
         # informative for outlier detection.

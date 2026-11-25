@@ -54,6 +54,7 @@ from scipy.sparse import csr_matrix
 from gridstate.algebra.estimators import HuberReweighter
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.status import SolveStatus
+from gridstate.cancel import checkpoint
 from gridstate.utils import scale_csr_rows, sparse_diag
 
 
@@ -480,6 +481,7 @@ def solve_ipm(
         return int(tr_pos[np.argmax(np.abs(step[tr_pos]))]) if tr_pos.size else 0
 
     for outer_iter in range(outer_max):
+        checkpoint()
         any_inner_step = False  # Lazy outer: if no step was made → break.
         # inner exited by tolerance (grad/step < inner_tol) — a stationary
         # point of Φ(·; μ) was reached. This is CONVERGENCE of inner for the current μ,
@@ -497,6 +499,7 @@ def solve_ipm(
         reweighter.reset_adaptive()
         # Inner Newton converges to min Φ(·; μ).
         for inner in range(inner_max):
+            checkpoint()
             if r_at_x is None:
                 r_at_x = residual_fn(x)
             r = r_at_x
