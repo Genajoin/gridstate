@@ -9,6 +9,18 @@ types of the merged pull requests; breaking and behavior-changing items are
 listed separately under "Breaking changes" and "Behavior changes". A release is
 cut by tagging the merged main commit; the version is derived from that tag.
 
+## v2.16.0 (2026-11-25)
+
+### Feat
+
+- Cooperative cancellation of a run (`gridstate.cancel`): the caller installs a
+  stop check with `cancel_scope(check)` or passes `run(..., cancel=check)`; the
+  pipeline polls it between steps and on every iteration of WLS, IPM, IPM-PD,
+  the bad-data clean-up and anti-overshoot, and stops with `Cancelled` (a
+  `BaseException`, so the re-solve fallbacks do not swallow it). The check is a
+  context variable: a consumer calling gridstate through another package
+  installs it around that call.
+
 ## v2.15.1 (2026-11-19)
 
 ### Fix

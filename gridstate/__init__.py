@@ -9,6 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from gridstate.algorithms.status import SolveStatus
 from gridstate.api import estimate, populate_quality_summary
+from gridstate.cancel import Cancelled, cancel_scope
 from gridstate.contract import (
     SEInput,
     SEOutput,
@@ -81,6 +82,7 @@ __version__ = _resolve_version()
 __all__ = [
     "BadDataResult",
     "BranchLossRow",
+    "Cancelled",
     "Chi2Result",
     "Chi2Summary",
     "ImbalanceRow",
@@ -98,6 +100,7 @@ __all__ = [
     "SystemLosses",
     "__version__",
     "analyze_observability",
+    "cancel_scope",
     "chi2_analysis",
     "compute_normalized_residuals_report",
     "compute_system_losses",

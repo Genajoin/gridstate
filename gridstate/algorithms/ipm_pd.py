@@ -82,6 +82,7 @@ from gridstate.algebra.estimators import HuberReweighter
 from gridstate.algorithms.ipm import IPMResult, _count, _project_to_interior
 from gridstate.algorithms.kkt_solver import KKTSolver
 from gridstate.algorithms.status import SolveStatus
+from gridstate.cancel import checkpoint
 
 
 logger = logging.getLogger(__name__)
@@ -500,6 +501,7 @@ def solve_ipm_pd(
     it = 0
     mu_last = float("inf")
     for it in range(max_iter):
+        checkpoint()
         if use_huber and it >= huber_warmup_iters and mu_last > huber_freeze_mu:
             reweighter.reset_adaptive()
             w = w_base * reweighter.weights(r)
